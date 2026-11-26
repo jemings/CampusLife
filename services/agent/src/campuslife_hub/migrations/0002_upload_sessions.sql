@@ -11,3 +11,6 @@ CREATE TABLE upload_sessions (
     UNIQUE (device_id, sha256)
 );
 CREATE INDEX upload_sessions_by_touch ON upload_sessions (touched_at);
+
+-- blobs.stored_at is when the Blob's bytes last reached the store; collection counts from it (D2).
+CREATE INDEX blobs_by_stored_at ON blobs (stored_at);

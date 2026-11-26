@@ -38,6 +38,14 @@ from .devices import DeviceId
 COPY_CHUNK = 1024 * 1024
 DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024
 SESSION_LIFETIME = timedelta(days=7)
+UNCOMMITTED_LIFETIME = timedelta(days=7)
+# A collection takes a Blob only while its row is old, and a store that lost its file to one writes a new row.
+STORE_ATTEMPTS = 2
+# Every (table, column) that refers to a Blob by sha256 (D2: Attachment now, Artifact and AnnotationLayer later).
+BLOB_REFERENCES = (("attachments", "blob_sha256"),)
+COLLECTABLE = "SELECT sha256 FROM blobs WHERE stored_at < ?" + "".join(
+    f" AND NOT EXISTS (SELECT 1 FROM {table} WHERE {table}.{column} = blobs.sha256)" for table, column in BLOB_REFERENCES
+)
 STAGING_SUFFIX = ".part"
 CHUNK_NAME = re.compile(r"0|[1-9][0-9]*")
 READ_ONLY = stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH
@@ -115,6 +123,16 @@ class Incomplete(UploadRefused):
         super().__init__(f"{len(missing)} chunks are missing", {"missing_chunks": missing})
 
 
+class BlobVanished(Exception):
+    """A collection took the Blob's file after the store found it in place."""
+
+
+class _InUse(Exception):
+    def __init__(self, leftover: KeptLeftover):
+        super().__init__(leftover.reason)
+        self.leftover = leftover
+
+
 def _refuse_outside_contract(schema_id: str, instance: object) -> None:
     violations = validate(schema_id, instance)
     if violations:
@@ -143,6 +161,10 @@ def _open_session(runner: Tx | Snapshot, device: DeviceId, sha256: str) -> _Sess
 def _stored_blob(runner: Tx | Snapshot, sha256: str) -> StoredBlob | None:
     row = runner.execute("SELECT size FROM blobs WHERE sha256 = ?", (sha256,)).fetchone()
     return None if row is None else StoredBlob(sha256, row[0])
+
+
+def _restart_collection_clock(tx: Tx, sha256: str) -> None:
+    tx.execute("UPDATE blobs SET stored_at = ? WHERE sha256 = ?", (now_instant(), sha256))
 
 
 def _end_sessions(tx: Tx, where: str, params: Sequence[object]) -> list[str]:
@@ -286,7 +308,10 @@ class BlobStore:
             final.parent.mkdir(parents=True, exist_ok=True)
             self._files.replace(staging, final)
             _fsync_directory(final.parent)
-        os.chmod(final, READ_ONLY)
+        try:
+            os.chmod(final, READ_ONLY)
+        except FileNotFoundError:
+            raise BlobVanished(final) from None
 
     def _store_from(self, sources: Sequence[Path], expect: StoredBlob | None) -> StoredBlob:
         staging = self._new_staging_path()
@@ -301,19 +326,26 @@ class BlobStore:
             raise
         return stored
 
+    def _register(self, tx: Tx, stored: StoredBlob, ending: str | None) -> None:
+        if not self.path_of(stored.sha256).exists():
+            raise BlobVanished(self.path_of(stored.sha256))
+        tx.execute(
+            "INSERT INTO blobs (sha256, size, stored_at) VALUES (?, ?, ?) ON CONFLICT (sha256) DO UPDATE SET stored_at = excluded.stored_at",
+            (stored.sha256, stored.size, now_instant()),
+        )
+        if ending is not None:
+            _end_sessions(tx, "id = ?", (ending,))
+
     async def _store_and_register(self, sources: Sequence[Path], expect: StoredBlob | None = None, *, ending: str | None = None) -> StoredBlob:
-        stored = await asyncio.to_thread(self._store_from, sources, expect)
-
-        def register(tx: Tx) -> None:
-            tx.execute(
-                "INSERT INTO blobs (sha256, size, stored_at) VALUES (?, ?, ?) ON CONFLICT (sha256) DO NOTHING",
-                (stored.sha256, stored.size, now_instant()),
-            )
-            if ending is not None:
-                _end_sessions(tx, "id = ?", (ending,))
-
-        await self._db.write(register)
-        return stored
+        for attempt in range(STORE_ATTEMPTS):
+            try:
+                stored = await asyncio.to_thread(self._store_from, sources, expect)
+                await self._db.write(lambda tx, stored=stored: self._register(tx, stored, ending))
+                return stored
+            except BlobVanished:
+                if attempt == STORE_ATTEMPTS - 1:
+                    raise
+        raise AssertionError("unreachable: the last attempt returns or raises")
 
     async def put_file(self, src: Path) -> StoredBlob:
         return await self._store_and_register([Path(src)])
@@ -354,7 +386,8 @@ class BlobStore:
     async def open_upload(self, device: DeviceId, sha256: str, size: int) -> StoredBlob | UploadSession:
         """Open or resume the device's upload of one Blob (D7, E19); a Blob already stored needs none.
 
-        A new upload must fit in the space free on the data root's volume when it opens.
+        A new upload must fit in the space free on the data root's volume when it opens. Answering that
+        the Blob is stored restarts its collection clock, so it outlives the commit the device sends next.
         """
         _refuse_outside_contract("blob/upload_request", {"sha256": sha256, "size": size})
 
@@ -363,6 +396,7 @@ class BlobStore:
             if stored is not None:
                 if stored.size != size:
                     raise InvalidUpload(f"the stored Blob {sha256} is {stored.size} bytes, not {size}")
+                _restart_collection_clock(tx, sha256)
                 return stored
             session = _open_session(tx, device, sha256)
             if session is None:
@@ -424,12 +458,23 @@ class BlobStore:
         await self._db.write(record)
 
     async def finalize(self, device: DeviceId, sha256: str) -> StoredBlob:
-        """Combine the device's chunks of `sha256` and store the Blob (D7); a Blob already stored answers at once."""
+        """Combine the device's chunks of `sha256` and store the Blob (D7).
+
+        A Blob already stored answers at once, ends the device's session for it and restarts its collection clock.
+        """
         _refuse_outside_contract("common/sha256", sha256)
-        stored, session = await self._db.read(lambda snap: (_stored_blob(snap, sha256), _open_session(snap, device, sha256)))
+
+        def settle(tx: Tx) -> tuple[StoredBlob | None, _Session | None]:
+            stored, session = _stored_blob(tx, sha256), _open_session(tx, device, sha256)
+            if stored is not None:
+                _restart_collection_clock(tx, sha256)
+                if session is not None:
+                    _end_sessions(tx, "id = ?", (session.id,))
+            return stored, session
+
+        stored, session = await self._db.write(settle)
         if stored is not None:
             if session is not None:
-                await self._db.write(lambda tx: _end_sessions(tx, "id = ?", (session.id,)))
                 await self._discard_sessions([session.id])
             return stored
         if session is None:
@@ -476,3 +521,52 @@ class BlobStore:
         cutoff = instant(now - SESSION_LIFETIME)
         await self._db.write(lambda tx: _end_sessions(tx, "touched_at < ?", (cutoff,)))
         return await self._sweep_orphan_sessions()
+
+    def _put_back(self, trash: Path, final: Path) -> None:
+        """Undo a collection whose transaction failed after the move, since its row is back."""
+        if trash.exists() and not final.exists():
+            self._files.replace(trash, final)
+            os.chmod(final, READ_ONLY)
+
+    async def _collect(self, sha256: str, cutoff: str) -> list[KeptLeftover]:
+        final = self.path_of(sha256)
+        trash = self._new_staging_path()
+
+        def take(tx: Tx) -> bool:
+            if tx.execute(f"{COLLECTABLE} AND sha256 = ?", (cutoff, sha256)).fetchone() is None:
+                return False
+            tx.execute("DELETE FROM blobs WHERE sha256 = ?", (sha256,))
+            if not final.exists():
+                return False
+            os.chmod(final, stat.S_IRUSR | stat.S_IWUSR)
+            try:
+                self._files.replace(final, trash)
+            except OSError as error:
+                os.chmod(final, READ_ONLY)
+                if is_sharing_violation(error):
+                    raise _InUse(KeptLeftover(final, f"in use, left for the next collection: {error}")) from error
+                raise
+            return True
+
+        try:
+            moved = await self._db.write(take)
+        except _InUse as in_use:
+            return [in_use.leftover]
+        except BaseException:
+            await asyncio.to_thread(self._put_back, trash, final)
+            raise
+        return await asyncio.to_thread(self._unlink_once, trash) if moved else []
+
+    async def collect_garbage(self, now: datetime) -> list[KeptLeftover]:
+        """Remove the Blobs no Attachment refers to whose bytes last arrived UNCOMMITTED_LIFETIME before `now` (D2).
+
+        The file leaves blobs/ in the same transaction as its row, so a store that found it in place
+        sees it gone and stores the bytes again. Each Blob is tried once; one in use stays for the next
+        collection.
+        """
+        cutoff = instant(now - UNCOMMITTED_LIFETIME)
+        candidates = await self._db.read(lambda snap: [sha256 for (sha256,) in snap.execute(COLLECTABLE, (cutoff,))])
+        kept = []
+        for sha256 in candidates:
+            kept += await self._collect(sha256, cutoff)
+        return kept

@@ -84,7 +84,8 @@ async def open_core(root: Path, *, create: bool, sync_roots: Iterable[Path] | No
         try:
             identity, hub_device = await db.write(_issue_identity_and_hub_device)
             blobs = BlobStore(db, blobs_dir=layout.blobs, staging_dir=layout.staging, uploads_dir=layout.uploads)
-            kept = blobs.discard_staging_leftovers() + await blobs.expire_sessions(datetime.now(UTC))
+            now = datetime.now(UTC)
+            kept = blobs.discard_staging_leftovers() + await blobs.expire_sessions(now) + await blobs.collect_garbage(now)
             for leftover in kept:
                 log.warning("left %s for a later clean-up: %s", leftover.path, leftover.reason)
             yield Core(layout, db, blobs, identity, hub_device)
