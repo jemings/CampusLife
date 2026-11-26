@@ -7,6 +7,9 @@ those shapes accept extra members. capture.commit is input and refuses them.
 import pytest
 
 from campuslife_contracts import SchemaViolation, bundled_contract, contract_root
+from campuslife_contracts.contract import schema_uri
+from campuslife_contracts.dialect import ContractValidator
+from campuslife_contracts.errors import violations_from
 from campuslife_contracts.fixtures import FixtureKind, discover
 from campuslife_contracts.jsonio import read_strict
 
@@ -28,6 +31,7 @@ OPEN = {
     "device/pair_response", "device/pair_failure_headers",
     "blob/upload_session", "blob/stored", "blob/download_request_headers", "blob/download_response_headers",
     "blob/range_not_satisfiable_headers",
+    "locator/locator",
     *(schema_id for schema_id in CONTRACT.schema_ids if schema_id.startswith("item/fields/")),
 }
 
@@ -185,3 +189,28 @@ def test_every_object_inside_a_mutation_is_closed(name, at):
     assert CONTRACT.validate("mutation/mutation", with_member_at(sample, at, "zz_unknown")) == [
         SchemaViolation(f"{pointer}/zz_unknown", "additionalProperties")
     ]
+
+
+def view(schema_id, pointer):
+    return ContractValidator({"$ref": f"{schema_uri(schema_id)}#{pointer}"}, registry=CONTRACT.registry)
+
+
+@pytest.mark.parametrize(
+    ("instance", "expected"),
+    [
+        ({"v": 1, "kind": "document", "blob": "ab" * 32}, set()),
+        ({"v": 1, "kind": "annotation", "blob": "ab" * 32}, {("/kind", "enum")}),
+        ({"v": 2, "kind": "document", "blob": "ab" * 32}, {("/v", "maximum")}),
+    ],
+    ids=["known", "unknown-kind", "newer-version"],
+)
+def test_the_locator_input_view_takes_only_known_kinds_of_version_one(instance, expected):
+    found = {(v.path, v.keyword) for v in violations_from(view("locator/locator", "/$defs/input").iter_errors(instance))}
+    assert found == expected
+
+
+@pytest.mark.parametrize(("schema_id", "name"), [("locator/locator", "kind")])
+def test_an_open_union_names_its_known_branches_as_examples(schema_id, name):
+    document = schema(schema_id)
+    known = document["$defs"]["known"]
+    assert document["properties"][name]["examples"] == known["properties"][name]["enum"] == list(known["discriminator"]["mapping"])

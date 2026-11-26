@@ -133,6 +133,24 @@ def _relation_not_self(validator, enabled, instance, schema):
         yield ValidationError("a relation cannot link an entity to itself", path=["to"])
 
 
+A1_CELL = re.compile(r"([A-Z]+)([0-9]+)")
+
+
+def _a1_column(letters: str) -> int:
+    number = 0
+    for letter in letters:
+        number = number * 26 + ord(letter) - ord("A") + 1
+    return number
+
+
+def _a1_order(validator, enabled, instance, schema):
+    if not (isinstance(instance, str) and _fits_own_pattern(instance, schema) and ":" in instance):
+        return
+    (first_column, first_row), (last_column, last_row) = (A1_CELL.fullmatch(cell).groups() for cell in instance.split(":"))
+    if _a1_column(first_column) > _a1_column(last_column) or int(first_row) > int(last_row):
+        yield ValidationError(f"{instance!r} does not go from the top-left cell to the bottom-right one")
+
+
 def _batch_order(validator, enabled, instance, schema):
     if not isinstance(instance, list):
         return
@@ -247,6 +265,7 @@ RULE_KEYWORDS = {
     "x-raw-form": RuleKeyword(Rule.RAW_FORM, _raw_form),
     "x-relation-id": RuleKeyword(Rule.RELATION_ID, _relation_id),
     "x-relation-not-self": RuleKeyword(Rule.RELATION_SELF, _relation_not_self),
+    "x-a1-order": RuleKeyword(Rule.A1_ORDER, _a1_order),
     "x-batch-order": RuleKeyword(Rule.BATCH_ORDER, _batch_order),
     "x-original-id": RuleKeyword(Rule.ORIGINAL_ID, _original_id),
     "x-feed-order": RuleKeyword(Rule.FEED_ORDER, _feed_order),

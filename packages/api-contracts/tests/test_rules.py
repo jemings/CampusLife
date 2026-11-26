@@ -450,3 +450,22 @@ BYTE_RANGE = {"type": "string", "pattern": "^bytes[= ]([0-9]+-[0-9]*|-[0-9]+)(/[
 )
 def test_byte_range_runs_forward_inside_the_size(make_contract, text, expected):
     assert make_contract({"t/r": BYTE_RANGE}).validate("t/r", text) == [RuleViolation("", rule) for rule in expected]
+
+
+A1 = {"type": "string", "pattern": "^[A-Z]+[1-9][0-9]*(:[A-Z]+[1-9][0-9]*)?$", "x-a1-order": True}
+
+
+@pytest.mark.parametrize(
+    ("a1", "expected"),
+    [
+        ("B2", []),
+        ("A1:A1", []),
+        ("Z1:AA1", []),
+        ("AA1:Z1", [RuleViolation(path="", rule=Rule.A1_ORDER)]),
+        ("A10:A9", [RuleViolation(path="", rule=Rule.A1_ORDER)]),
+        ("b9:a1", [SchemaViolation(path="", keyword="pattern")]),
+    ],
+)
+def test_a1_order_wants_top_left_to_bottom_right(make_contract, a1, expected):
+    assert make_contract({"t/a1": A1}).validate("t/a1", a1) == expected
+
