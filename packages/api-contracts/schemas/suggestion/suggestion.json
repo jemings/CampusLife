@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/suggestion/suggestion.json",
+  "title": "Suggestion",
+  "description": "A proposal the AI pipeline made from an Artifact (D10). It is not an entity: an Item or Relation exists only after the user accepts it with suggestion.accept. The user decides state with suggestion.accept or suggestion.dismiss and the Hub records it; the Hub writes every column. On accept of create_item or patch_item the Hub makes one item:<id> -evidence-> blob:<sha> | capture:<id> Relation per anchor among the evidence and puts that anchor's Locators, joined with any it already has, in its locators. On accept of add_relation the evidence goes in the created Relation's own locators. Open, as the Hub sends it, inside proposed too: a known action is checked by its branch (known), and an unknown action matching the name pattern is kept; a client shows it and offers no accept. Clients ignore members they do not know.",
+  "type": "object",
+  "required": ["id", "source_artifact_id", "action", "proposed", "evidence", "fingerprint", "state"],
+  "properties": {
+    "id": { "$ref": "../common/uuid.json", "x-owner": "hub" },
+    "source_artifact_id": { "description": "The Artifact the proposal came from.", "$ref": "../common/uuid.json", "x-owner": "hub" },
+    "action": {
+      "description": "Known actions are the examples; a newer Hub may send others.",
+      "type": "string",
+      "pattern": "^[a-z][a-z_]*$",
+      "examples": ["create_item", "patch_item", "add_relation"],
+      "x-open": true,
+      "x-owner": "hub"
+    },
+    "proposed": { "description": "What accepting does; its shape follows action.", "type": "object", "x-owner": "hub" },
+    "evidence": {
+      "description": "Where the proposal comes from, as Locators the Hub made from the ContentBlock ids the model cited (D13). Empty when no cited id survived the Hub's check: the proposal then shows as without evidence.",
+      "type": "array",
+      "items": { "$ref": "../locator/locator.json" },
+      "x-owner": "hub"
+    },
+    "fingerprint": { "description": "hash(action, kind, normalized key fields) as lowercase hex SHA-256: a dismissed fingerprint does not open again when the source is processed again.", "$ref": "../common/sha256.json", "x-owner": "hub" },
+    "state": { "description": "The user's decision as the Hub recorded it.", "enum": ["open", "accepted", "dismissed", "superseded"], "x-owner": "hub" },
+    "conflicts_with": {
+      "description": "Other open Suggestions that contradict this one, such as two different due dates; the user picks one. Never its own id (rule conflict_self).",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "../common/uuid.json" },
+      "x-owner": "hub"
+    }
+  },
+  "if": { "properties": { "action": { "$ref": "#/$defs/known/properties/action" } }, "required": ["action"] },
+  "x-conflict-not-self": true,
+  "then": { "$ref": "#/$defs/known" },
+  "$defs": {
+    "known": {
+      "description": "The known actions as a discriminated union.",
+      "type": "object",
+      "required": ["action", "proposed"],
+      "properties": {
+        "action": { "enum": ["create_item", "patch_item", "add_relation"] }
+      },
+      "oneOf": [
+        { "$ref": "#/$defs/create_item" },
+        { "$ref": "#/$defs/patch_item" },
+        { "$ref": "#/$defs/add_relation" }
+      ],
+      "discriminator": {
+        "propertyName": "action",
+        "mapping": {
+          "create_item": "#/$defs/create_item",
+          "patch_item": "#/$defs/patch_item",
+          "add_relation": "#/$defs/add_relation"
+        }
+      }
+    },
+    "create_item": {
+      "type": "object",
+      "required": ["action", "proposed"],
+      "properties": {
+        "action": { "const": "create_item" },
+        "proposed": { "$ref": "#/$defs/item_proposal" }
+      }
+    },
+    "patch_item": {
+      "type": "object",
+      "required": ["action", "proposed"],
+      "properties": {
+        "action": { "const": "patch_item" },
+        "proposed": { "$ref": "#/$defs/item_patch" }
+      }
+    },
+    "add_relation": {
+      "type": "object",
+      "required": ["action", "proposed"],
+      "properties": {
+        "action": { "const": "add_relation" },
+        "proposed": { "description": "The Relation accepting creates.", "$ref": "../relation/relation.json" }
+      }
+    },
+    "item_proposal": {
+      "description": "The Item columns accepting creates: what a client's create sends (mutation item_data), but open like the Item, fields of a known kind included. The Hub picks the new Item's id.",
+      "type": "object",
+      "required": ["kind", "title", "fields"],
+      "properties": {
+        "kind": { "$ref": "../item/item.json#/properties/kind" },
+        "title": { "$ref": "../item/item.json#/properties/title" },
+        "body": { "$ref": "../item/item.json#/properties/body" },
+        "starts_at": { "$ref": "../item/item.json#/properties/starts_at" },
+        "due_at": { "$ref": "../item/item.json#/properties/due_at" },
+        "all_day": { "$ref": "../item/item.json#/properties/all_day" },
+        "fields": { "$ref": "../item/item.json#/properties/fields" },
+        "status": { "$ref": "../item/item.json#/properties/status" }
+      },
+      "allOf": [
+        { "$ref": "../item/item.json#/$defs/dates_follow_all_day" },
+        { "$ref": "../item/item.json#/$defs/fields_of_kind" }
+      ]
+    },
+    "item_patch": {
+      "description": "The patch of an existing Item the Hub applies on accept, compare-and-set like a client's (D18). set writes only user columns (rule owner) with values that fit them (rule set_type). Open, its set entries included.",
+      "type": "object",
+      "required": ["entity", "id", "set"],
+      "properties": {
+        "entity": { "const": "item" },
+        "id": { "$ref": "../common/uuid.json" },
+        "set": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "../mutation/mutation.json#/$defs/set_key" },
+          "additionalProperties": { "$ref": "#/$defs/proposed_change" }
+        }
+      },
+      "x-set-targets": {
+        "item": {
+          "schema": "../item/item.json",
+          "fields": [
+            "../item/fields/term.json", "../item/fields/course.json", "../item/fields/lecture_session.json",
+            "../item/fields/note.json", "../item/fields/task.json", "../item/fields/assignment.json", "../item/fields/exam.json"
+          ]
+        }
+      },
+      "x-set-owner": true,
+      "x-set-type": true
+    },
+    "proposed_change": {
+      "description": "A set entry as in a patch (mutation change), but open.",
+      "type": "object",
+      "required": ["to"],
+      "properties": {
+        "from": true,
+        "from_hash": { "anyOf": [{ "$ref": "../common/sha256.json" }, { "type": "null" }] },
+        "to": true
+      },
+      "if": { "required": ["from_hash"] },
+      "then": { "not": { "required": ["from"] } },
+      "else": { "required": ["from"] }
+    }
+  }
+}

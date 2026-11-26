@@ -31,7 +31,7 @@ OPEN = {
     "device/pair_response", "device/pair_failure_headers",
     "blob/upload_session", "blob/stored", "blob/download_request_headers", "blob/download_response_headers",
     "blob/range_not_satisfiable_headers",
-    "locator/locator", "artifact/artifact",
+    "locator/locator", "artifact/artifact", "suggestion/suggestion",
     *(schema_id for schema_id in CONTRACT.schema_ids if schema_id.startswith("item/fields/")),
 }
 
@@ -192,6 +192,15 @@ def test_every_object_inside_a_mutation_is_closed(name, at):
     ]
 
 
+SUGGESTION = schema("suggestion/suggestion")["$defs"]
+
+
+def test_a_proposal_names_the_members_of_the_input_it_mirrors():
+    """Suggestion's proposals are open copies of the closed Mutation input, status refusal included."""
+    assert names(SUGGESTION["item_proposal"]) == names(MUTATION["item_data"]) | {"status"}
+    assert names(SUGGESTION["proposed_change"]) == names(MUTATION["change"])
+
+
 def view(schema_id, pointer):
     return ContractValidator({"$ref": f"{schema_uri(schema_id)}#{pointer}"}, registry=CONTRACT.registry)
 
@@ -210,7 +219,7 @@ def test_the_locator_input_view_takes_only_known_kinds_of_version_one(instance, 
     assert found == expected
 
 
-@pytest.mark.parametrize(("schema_id", "name"), [("locator/locator", "kind")])
+@pytest.mark.parametrize(("schema_id", "name"), [("locator/locator", "kind"), ("suggestion/suggestion", "action")])
 def test_an_open_union_names_its_known_branches_as_examples(schema_id, name):
     document = schema(schema_id)
     known = document["$defs"]["known"]

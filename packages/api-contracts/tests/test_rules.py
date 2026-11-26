@@ -498,3 +498,14 @@ A1 = {"type": "string", "pattern": "^[A-Z]+[1-9][0-9]*(:[A-Z]+[1-9][0-9]*)?$", "
 def test_a1_order_wants_top_left_to_bottom_right(make_contract, a1, expected):
     assert make_contract({"t/a1": A1}).validate("t/a1", a1) == expected
 
+
+NOT_SELF = {"type": "object", "properties": {"id": {"type": "string", "minLength": 2}}, "x-conflict-not-self": True}
+
+
+def test_conflict_self_refuses_the_own_id_and_skips_a_broken_one(make_contract):
+    contract = make_contract({"t/s": NOT_SELF})
+    assert contract.validate("t/s", {"id": "s1", "conflicts_with": ["s2"]}) == []
+    assert contract.validate("t/s", {"id": "s1", "conflicts_with": ["s2", "s1"]}) == [
+        RuleViolation(path="/conflicts_with/1", rule=Rule.CONFLICT_SELF)
+    ]
+    assert contract.validate("t/s", {"id": "s", "conflicts_with": ["s"]}) == [SchemaViolation(path="/id", keyword="minLength")]
