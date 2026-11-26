@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/device/pair_failure_headers.json",
+  "title": "Pair failure headers",
+  "description": "Headers on 401 from POST /v1/pair, besides the ones every response carries. Open.",
+  "type": "object",
+  "properties": {
+    "Retry-After": { "description": "Seconds to wait, sent once failed attempts are rate limited (D6).", "type": "string", "pattern": "^(0|[1-9][0-9]{0,9})$" }
+  }
+}

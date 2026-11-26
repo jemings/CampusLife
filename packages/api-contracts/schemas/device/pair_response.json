@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/device/pair_response.json",
+  "title": "Pair response",
+  "description": "The Device's id and token, returned once (D6). The Hub keeps only SHA-256(token). Open.",
+  "type": "object",
+  "required": ["device_id", "token"],
+  "properties": {
+    "device_id": { "$ref": "../common/uuid.json" },
+    "token": { "$ref": "#/$defs/token" }
+  },
+  "$defs": {
+    "token": {
+      "description": "Opaque bearer token (E19): a client stores and sends it as Authorization: Bearer <token> and never parses it. The characters are those a bearer credential may hold (RFC 6750).",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~+/-]+=*$",
+      "maxLength": 512
+    }
+  }
+}

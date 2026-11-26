@@ -243,6 +243,9 @@ REQUIRED = {
     "relation/relation#": {"id", "from", "type", "to"},
     "common/error#/allOf/0/then": {"details"},
     "common/error#/$defs/incomplete_details": {"missing_chunks"},
+    "device/pair_request#": {"secret", "platform", "device_name", "app_version"},
+    "device/pair_response#": {"device_id", "token"},
+    "device/status#": {"app_version", "pending_upload_count", "pending_mutation_count", "open_conflict_count"},
     "mutation/batch_request#": {"mutations"},
     "mutation/batch_response#": {"results"},
     "mutation/mutation#": {"mutation_id", "op"},
@@ -303,4 +306,8 @@ LENGTHS = {
     "mutation/result#/properties/missing_blobs": {("minItems", 1)},
     "sync/changes_page#/$defs/change/properties/id": NON_EMPTY,
     "common/error#/$defs/incomplete_details/properties/missing_chunks": {("minItems", 1)},
+    "device/pair_request#/properties/app_version": {("minLength", 1), ("maxLength", 64)},
+    "device/pair_request#/properties/device_name": {("minLength", 1), ("maxLength", 64)},
+    "device/pair_response#/$defs/token": {("maxLength", 512)},
+    "device/status#/properties/last_error": {("minLength", 1), ("maxLength", 1000)},
 }

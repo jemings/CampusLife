@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/device/platform.json",
+  "title": "Device platform",
+  "description": "What a Device runs on (A7). windows_hub is the Hub's own Device row, which local import writes as; it is never paired over the sync port, so device/pair_request takes only android and ipados.",
+  "enum": ["android", "ipados", "windows_hub"]
+}
