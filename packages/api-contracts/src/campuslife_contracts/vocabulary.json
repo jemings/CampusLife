@@ -53,11 +53,44 @@
       }
     },
     "x-relation-id": {
-      "description": "Rule relation_id: id equals from|type|to (D18, E14).",
+      "description": "Rule relation_id: id equals from|type|to (D18, E14). true when the three sit next to id, otherwise the name of the member holding them.",
+      "anyOf": [{ "const": true }, { "type": "string", "minLength": 1 }]
+    },
+    "x-batch-order": {
+      "description": "Rule batch_order: in a batch response, every result after the first retry is not_attempted and none before it is (E12).",
+      "const": true
+    },
+    "x-original-id": {
+      "description": "Rule original_id: a result's original carries the same mutation_id as the result (E12).",
+      "const": true
+    },
+    "x-feed-order": {
+      "description": "Rule feed_order: in a changes page, each row's id is its data's id, revs rise strictly, and next_since is at least the highest rev (E18).",
       "const": true
     },
     "x-relation-not-self": {
       "description": "Rule relation_self: from and to are different entities.",
+      "const": true
+    },
+    "x-set-targets": {
+      "description": "Per entity, the entity schema a patch's set writes and, if it has kind fields, the fields schemas a fields.<key> may belong to. Read by rules owner and set_type.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["schema"],
+        "properties": {
+          "schema": { "type": "string" },
+          "fields": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    },
+    "x-set-owner": {
+      "description": "Rule owner: set writes no column the entity schema marks x-owner hub (E5). Needs x-set-targets.",
+      "const": true
+    },
+    "x-set-type": {
+      "description": "Rule set_type: each set key is a column of the entity, from and to fit it, to is null only for an optional column, and x-text columns compare by from_hash (E6, A3). Needs x-set-targets.",
       "const": true
     },
     "discriminator": {
@@ -77,7 +110,7 @@
   },
   "propertyNames": {
     "if": { "pattern": "^x-" },
-    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self"] }
+    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self", "x-batch-order", "x-original-id", "x-feed-order", "x-set-targets", "x-set-owner", "x-set-type"] }
   },
   "x-discriminated-union": true
 }

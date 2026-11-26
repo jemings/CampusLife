@@ -242,3 +242,131 @@ def test_relation_from_an_entity_to_itself_breaks_relation_self(make_contract):
 def test_relation_self_skips_ends_that_break_their_own_schema(make_contract):
     contract = make_contract({"t/rel": SELF})
     assert contract.validate("t/rel", {"from": "", "to": ""}) == [SchemaViolation(path="/to", keyword="minLength")]
+
+
+def test_relation_id_can_take_its_parts_from_a_member(make_contract):
+    contract = make_contract({"t/create": {"type": "object", "x-relation-id": "data"}})
+    good = {"id": "item:a|about|item:b", "data": {"from": "item:a", "type": "about", "to": "item:b"}}
+    assert contract.validate("t/create", good) == []
+    assert contract.validate("t/create", {**good, "id": "item:a|about|item:c"}) == [
+        RuleViolation(path="/id", rule=Rule.RELATION_ID)
+    ]
+
+
+BATCH = {
+    "type": "array",
+    "items": {"type": "object", "properties": {"result": {"enum": ["applied", "retry", "not_attempted", "rejected"]}}},
+    "x-batch-order": True,
+}
+
+
+@pytest.mark.parametrize(
+    ("results", "broken"),
+    [
+        (["applied", "rejected", "applied"], []),
+        (["applied", "retry", "not_attempted", "not_attempted"], []),
+        (["retry"], []),
+        (["applied", "retry", "applied"], [2]),
+        (["not_attempted", "applied"], [0]),
+        (["applied", "retry", "retry"], [2]),
+    ],
+    ids=["no-retry", "retry-then-rest-skipped", "lone-retry", "applied-after-retry", "skipped-without-retry",
+         "second-retry"],
+)
+def test_only_mutations_after_the_first_retry_are_not_attempted(make_contract, results, broken):
+    contract = make_contract({"t/batch": BATCH})
+    instance = [{"result": result} for result in results]
+    assert contract.validate("t/batch", instance) == [
+        RuleViolation(path=f"/{index}/result", rule=Rule.BATCH_ORDER) for index in broken
+    ]
+
+
+def test_batch_order_skips_results_that_break_their_own_schema(make_contract):
+    contract = make_contract({"t/batch": BATCH})
+    assert contract.validate("t/batch", [{"result": "retry"}, {"result": "skipped"}]) == [
+        SchemaViolation(path="/1/result", keyword="enum")
+    ]
+
+
+def test_batch_order_stops_judging_at_a_result_that_breaks_its_own_schema(make_contract):
+    contract = make_contract({"t/batch": {**BATCH, "items": {**BATCH["items"], "required": ["result", "id"]}}})
+    instance = [{"result": "applied", "id": 1}, {"result": "retry"}, {"result": "not_attempted", "id": 3}]
+    assert contract.validate("t/batch", instance) == [SchemaViolation(path="/1/id", keyword="required")]
+
+
+ORIGINAL = {
+    "type": "object",
+    "properties": {"mutation_id": {"type": "string", "pattern": "^m[0-9]$"}, "original": {"type": "object"}},
+    "x-original-id": True,
+}
+
+
+@pytest.mark.parametrize(
+    ("instance", "expected"),
+    [
+        ({"mutation_id": "m1", "original": {"mutation_id": "m1"}}, []),
+        ({"mutation_id": "m1"}, []),
+        ({"mutation_id": "m1", "original": {"mutation_id": "m2"}}, [RuleViolation("/original/mutation_id", Rule.ORIGINAL_ID)]),
+        ({"mutation_id": "m1", "original": {}}, []),
+    ],
+    ids=["same", "no-original", "other-id", "original-without-id-is-required's"],
+)
+def test_original_id(make_contract, instance, expected):
+    assert make_contract({"t/result": ORIGINAL}).validate("t/result", instance) == expected
+
+
+def test_original_id_skips_ids_that_break_their_schema(make_contract):
+    contract = make_contract({"t/result": ORIGINAL})
+    assert contract.validate("t/result", {"mutation_id": "x", "original": {"mutation_id": "m2"}}) == [
+        SchemaViolation("/mutation_id", "pattern")
+    ]
+    assert contract.validate("t/result", {"mutation_id": "m1", "original": {"mutation_id": "y"}}) == []
+
+
+FEED = {
+    "type": "object",
+    "properties": {
+        "changes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "rev"],
+                "properties": {"id": {"type": "string"}, "rev": {"type": "integer", "minimum": 0}, "data": {"type": "object"}},
+            },
+        },
+        "next_since": {"type": "integer", "minimum": 0},
+    },
+    "x-feed-order": True,
+}
+
+
+def row(id_, rev, data_id=None):
+    return {"id": id_, "rev": rev, **({} if data_id is None else {"data": {"id": data_id}})}
+
+
+@pytest.mark.parametrize(
+    ("instance", "expected"),
+    [
+        ({"changes": [row("a", 1, "a"), row("b", 4)], "next_since": 4}, []),
+        ({"changes": [], "next_since": 0}, []),
+        ({"changes": [row("a", 1, "b")], "next_since": 1}, ["/changes/0/id"]),
+        ({"changes": [row("a", 3), row("b", 2), row("c", 4)], "next_since": 4}, ["/changes/1/rev"]),
+        ({"changes": [row("a", 3), row("b", 3)], "next_since": 3}, ["/changes/1/rev"]),
+        ({"changes": [row("a", 1), row("b", 5)], "next_since": 4}, ["/next_since"]),
+    ],
+    ids=["ordered", "empty", "id-differs-from-data", "rev-goes-back", "rev-repeats", "next-since-below-rev"],
+)
+def test_feed_order(make_contract, instance, expected):
+    assert make_contract({"t/feed": FEED}).validate("t/feed", instance) == [
+        RuleViolation(path, Rule.FEED_ORDER) for path in expected
+    ]
+
+
+def test_feed_order_skips_rows_and_cursors_that_break_their_schema(make_contract):
+    contract = make_contract({"t/feed": FEED})
+    assert contract.validate("t/feed", {"changes": [row("a", 3), row("b", -1), row("c", 4)], "next_since": 4}) == [
+        SchemaViolation("/changes/1/rev", "minimum")
+    ]
+    assert contract.validate("t/feed", {"changes": [row("a", 3)], "next_since": "3"}) == [
+        SchemaViolation("/next_since", "type")
+    ]

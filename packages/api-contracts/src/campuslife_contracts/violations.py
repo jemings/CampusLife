@@ -14,6 +14,11 @@ class Rule(enum.StrEnum):
     RAW_FORM = "raw_form"
     RELATION_ID = "relation_id"
     RELATION_SELF = "relation_self"
+    OWNER = "owner"
+    BATCH_ORDER = "batch_order"
+    FEED_ORDER = "feed_order"
+    ORIGINAL_ID = "original_id"
+    SET_TYPE = "set_type"
     TZ_EXISTS = "tz_exists"
 
 

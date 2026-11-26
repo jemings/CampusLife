@@ -24,6 +24,8 @@ from campuslife_contracts.jsonio import pointer, read_strict
 CONTRACT = bundled_contract()
 CASES = [case for case in discover(contract_root()) if case.kind is FixtureKind.VALID]
 PROBED = ("required", "minLength", "maxLength", "minItems")
+RULES_THAT_VALIDATE_VALUES = ("x-set-type", "x-set-owner")
+"""They validate patch values against column schemas; those evaluations are not the patch schema's own."""
 CONDITIONAL_KEYWORDS = {"if", "not", "anyOf", "oneOf"}
 
 
@@ -92,9 +94,12 @@ def probe():
 
         return check
 
+    originals.update({keyword: ContractValidator.VALIDATORS[keyword] for keyword in RULES_THAT_VALIDATE_VALUES})
     try:
         for keyword in PROBED:
             ContractValidator.VALIDATORS[keyword] = recorder(keyword)
+        for keyword in RULES_THAT_VALIDATE_VALUES:
+            ContractValidator.VALIDATORS[keyword] = lambda *arguments: iter(())
         for case in CASES:
             where = {}
             CONTRACT.validate(case.schema_id, tagged(read_strict(case.path), (), where))
