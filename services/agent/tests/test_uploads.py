@@ -289,13 +289,13 @@ async def test_resuming_is_not_measured_against_the_free_space_again(tmp_path, d
 
 
 async def test_a_chunk_that_fails_to_move_keeps_its_error_and_leaves_no_staging_file(tmp_path, db, phone):
-    def replace(src, dst):
-        raise PermissionError(errno.EACCES, "replace refused", str(dst))
+    def place_new(src, dst):
+        raise PermissionError(errno.EACCES, "place refused", str(dst))
 
-    store = uploads_in(tmp_path, db, FileOps(replace=replace))
+    store = uploads_in(tmp_path, db, FileOps(place_new=place_new))
     await store.open_upload(phone, sha(DATA), len(DATA))
 
-    with pytest.raises(PermissionError, match="replace refused"):
+    with pytest.raises(PermissionError, match="place refused"):
         await store.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])
 
     assert staging_files(tmp_path) == []
@@ -305,11 +305,11 @@ async def test_a_chunk_that_fails_to_move_keeps_its_error_and_leaves_no_staging_
 async def test_a_chunk_is_moved_into_place_while_the_database_writer_stays_free(tmp_path, db, phone):
     loop = asyncio.get_running_loop()
 
-    def replace_while_another_write_runs(src, dst):
+    def place_while_another_write_runs(src, dst):
         asyncio.run_coroutine_threadsafe(db.write(lambda tx: None), loop).result(timeout=5)
-        os.replace(src, dst)
+        FileOps().place_new(src, dst)
 
-    store = uploads_in(tmp_path, db, FileOps(replace=replace_while_another_write_runs))
+    store = uploads_in(tmp_path, db, FileOps(place_new=place_while_another_write_runs))
     await store.open_upload(phone, sha(DATA), len(DATA))
 
     await store.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])
@@ -429,10 +429,10 @@ async def test_a_chunk_for_a_dropped_session_is_refused_and_its_staging_file_dis
     assert staging_files(tmp_path) == []
 
 
-async def test_a_chunk_replace_refused_by_a_sharing_violation_is_retried(tmp_path, db, phone):
-    replace, calls = refused_at_first(2, os.replace)
+async def test_a_chunk_placement_refused_by_a_sharing_violation_is_retried(tmp_path, db, phone):
+    place_new, calls = refused_at_first(2, FileOps().place_new)
     slept = []
-    store = uploads_in(tmp_path, db, FileOps(replace=replace, sleep=slept.append))
+    store = uploads_in(tmp_path, db, FileOps(place_new=place_new, sleep=slept.append))
     await store.open_upload(phone, sha(DATA), len(DATA))
 
     await store.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])

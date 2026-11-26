@@ -175,11 +175,22 @@ def _unlink_if_present(path: Path) -> None:
     path.unlink(missing_ok=True)
 
 
+def _place_new(src: Path, dst: Path) -> None:
+    """Give src's file the name dst too, or raise FileExistsError when dst exists; src may stay behind."""
+    if sys.platform == "win32":
+        # MoveFileEx without MOVEFILE_REPLACE_EXISTING refuses an existing target, on any Windows file system.
+        os.rename(src, dst)
+    else:
+        # rename(2) replaces an existing target; link(2) refuses it.
+        os.link(src, dst)
+
+
 @dataclass(frozen=True)
 class FileOps:
     """The file steps Windows refuses while another handle has the file open, and the wait before trying again."""
 
     replace: Callable[[Path, Path], None] = os.replace
+    place_new: Callable[[Path, Path], None] = _place_new
     unlink: Callable[[Path], None] = _unlink_if_present
     rmdir: Callable[[Path], None] = Path.rmdir
     sleep: Callable[[float], None] = time.sleep
@@ -426,19 +437,23 @@ class BlobStore:
         return staging
 
     def _place_chunk(self, chunk: Path, data: bytes) -> None:
-        """Converges however often the chunk is sent: the file ends up holding `data`, unless it holds other bytes."""
-        if chunk.exists():
-            if chunk.read_bytes() != data:
-                raise ChunkMismatch(f"other bytes are already stored as chunk {chunk.name}")
-            return
-        staging = self._write_staging(data)
-        try:
-            chunk.parent.mkdir(parents=True, exist_ok=True)
-            self._retry_while_locked(lambda: self._files.replace(staging, chunk))
-            _fsync_directory(chunk.parent)
-        except BaseException:
-            self._discard_quietly(staging)
-            raise
+        """Converges however often the chunk is sent: the file ends up holding `data`, unless it holds other bytes.
+
+        Of two sends of one index at once, the first to place its file wins and the other is compared with it.
+        """
+        if not chunk.exists():
+            staging = self._write_staging(data)
+            try:
+                chunk.parent.mkdir(parents=True, exist_ok=True)
+                self._retry_while_locked(lambda: self._files.place_new(staging, chunk))
+                _fsync_directory(chunk.parent)
+                return
+            except FileExistsError:
+                pass
+            finally:
+                self._discard_quietly(staging)
+        if chunk.read_bytes() != data:
+            raise ChunkMismatch(f"other bytes are already stored as chunk {chunk.name}")
 
     async def put_chunk(self, device: DeviceId, sha256: str, index: int, data: bytes) -> None:
         """Store chunk `index` of the device's open upload of `sha256`; the same bytes again change nothing (E19)."""
