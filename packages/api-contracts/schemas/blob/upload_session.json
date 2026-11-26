@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/blob/upload_session.json",
+  "title": "Upload session",
+  "description": "201 from POST /v1/blobs/uploads: the Blob is not stored yet. Chunks are numbered from 0; chunk i holds bytes [i*chunk_size, min((i+1)*chunk_size, size)), so there are ceil(size/chunk_size) of them and an empty Blob has none (E19). PUT them in any order, then finalize. Open.",
+  "type": "object",
+  "required": ["sha256", "size", "chunk_size", "received"],
+  "properties": {
+    "sha256": { "$ref": "../common/sha256.json" },
+    "size": { "$ref": "upload_request.json#/properties/size" },
+    "chunk_size": { "description": "Bytes per chunk, fixed for the session; resuming returns the same value.", "$ref": "../common/int64.json", "minimum": 1 },
+    "received": {
+      "description": "Indexes of the chunks the Hub already holds, so a resumed upload sends only the rest.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "../common/int64.json#/$defs/non_negative" }
+    }
+  }
+}
