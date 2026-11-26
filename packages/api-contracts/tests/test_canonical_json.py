@@ -52,6 +52,14 @@ def test_non_finite_number_is_not_json(number):
         canonical_json([number])
 
 
+def test_number_beyond_double_range_is_not_strict_json_without_exact_numbers():
+    from campuslife_contracts.jsonio import NotStrictJson
+
+    with pytest.raises(NotStrictJson):
+        loads_strict("[1e400]")
+    assert canonical_json(loads_strict("[1e400]", exact_numbers=True)) == b"[1e+400]"
+
+
 def test_integer_too_long_for_python_int_is_not_strict_json():
     from campuslife_contracts.jsonio import NotStrictJson
 
@@ -59,3 +67,16 @@ def test_integer_too_long_for_python_int_is_not_strict_json():
     with pytest.raises(NotStrictJson):
         loads_strict(digits)
     assert canonical_json(loads_strict(digits, exact_numbers=True)) == b"1e+5000"
+
+
+@pytest.mark.parametrize("value", [{1: "a"}, {"a": {None: 1}}, [{("a",): 1}]])
+def test_member_names_must_be_strings(value):
+    with pytest.raises(TypeError):
+        canonical_json(value)
+
+
+def test_nesting_deeper_than_python_can_parse_is_not_strict_json():
+    from campuslife_contracts.jsonio import NotStrictJson
+
+    with pytest.raises(NotStrictJson):
+        loads_strict("[" * 100_000 + "]" * 100_000)

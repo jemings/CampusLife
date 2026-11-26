@@ -94,10 +94,7 @@ def _violation_lines(prefix: str, violations: set[Violation] | list[Violation]) 
 def _round_trip_problems(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     expected = loads_strict(text, exact_numbers=True)
-    try:
-        actual = loads_strict(json.dumps(json.loads(text), ensure_ascii=False), exact_numbers=True)
-    except NotStrictJson as error:
-        return [f"round trip did not produce strict JSON: {error}"]
+    actual = loads_strict(json.dumps(json.loads(text), ensure_ascii=False), exact_numbers=True)
     return [f"round trip changed {at}: {reason}" for at, reason in differences(expected, actual)]
 
 
