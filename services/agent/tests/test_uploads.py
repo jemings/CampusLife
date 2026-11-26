@@ -468,6 +468,33 @@ async def test_a_chunk_for_a_dropped_session_is_refused_and_its_staging_file_dis
     assert staging_files(tmp_path) == []
 
 
+def ended_by(store, device, then):
+    """A place_new that ends the device's sessions, as a revoke or an expiry would, before `then` runs."""
+    loop = asyncio.get_running_loop()
+
+    def end_then(src, dst):
+        asyncio.run_coroutine_threadsafe(store.drop_sessions(device), loop).result(timeout=5)
+        then(src, dst)
+
+    return end_then
+
+
+def placed_by_another_send(src, dst):
+    raise FileExistsError(errno.EEXIST, "placed by another send", str(dst))
+
+
+@pytest.mark.parametrize("then", [FileOps().place_new, placed_by_another_send], ids=["placing", "comparing"])
+async def test_a_chunk_whose_session_ends_after_its_directory_was_made_is_not_found(tmp_path, db, store, phone, then):
+    racing = uploads_in(tmp_path, db, FileOps(place_new=ended_by(store, phone, then)))
+    await store.open_upload(phone, sha(DATA), len(DATA))
+
+    with pytest.raises(NoUploadSession) as refused:
+        await racing.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])
+
+    assert body("common/error", refused.value)["code"] == "not_found"
+    assert session_dirs(tmp_path) == []
+    assert staging_files(tmp_path) == []
+
 async def test_a_chunk_placement_refused_by_a_sharing_violation_is_retried(tmp_path, db, phone):
     place_new, calls = refused_at_first(2, FileOps().place_new)
     slept = []
