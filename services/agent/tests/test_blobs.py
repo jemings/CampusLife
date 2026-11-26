@@ -485,3 +485,19 @@ async def test_a_put_whose_file_a_collection_took_before_its_row_was_written_sto
 
     assert racing.path_of(ABC_SHA256).read_bytes() == b"abc"
     assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+
+
+@windows_only
+async def test_a_blob_another_handle_holds_open_is_kept_and_collected_once_it_closes(tmp_path, db):
+    await store_in(tmp_path, db).put_file(source(tmp_path, "a.txt", b"abc"))
+    blob_store = store_in(tmp_path, db, FileOps(sleep=must_not_wait))
+    final = blob_store.path_of(ABC_SHA256)
+
+    with open(final, "rb"):
+        [kept] = await blob_store.collect_garbage(a_week_and_a_day_on())
+
+    assert kept.path == final
+    assert is_read_only(final)
+    assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+    assert await blob_store.collect_garbage(a_week_and_a_day_on()) == []
+    assert not final.exists()
