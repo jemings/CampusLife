@@ -1,0 +1,19 @@
+{
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "kind": "term",
+  "schema_version": 1,
+  "title": "2026-1학기",
+  "fields": {
+    "year": 2026,
+    "semester": "first",
+    "starts_on": {
+      "date": "2026-03-02",
+      "tz": "Asia/Seoul"
+    },
+    "ends_on": {
+      "date": "2026-06-19",
+      "tz": "Asia/Seoul"
+    }
+  },
+  "rev": 17
+}

@@ -1,0 +1,16 @@
+{
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "kind": "assignment",
+  "schema_version": 1,
+  "title": "자료구조",
+  "fields": {
+    "course_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "due_text": "3월 9일 23:59까지",
+    "submission": "LMS 업로드"
+  },
+  "rev": 17,
+  "due_at": {
+    "date": "2026-03-09",
+    "tz": "Asia/Seoul"
+  }
+}

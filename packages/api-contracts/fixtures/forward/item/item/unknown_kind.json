@@ -1,0 +1,12 @@
+{
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "kind": "club_event",
+  "schema_version": 1,
+  "title": "정기 전시",
+  "fields": {
+    "host": "사진 동아리",
+    "fee": 5000
+  },
+  "rev": 17,
+  "starts_at": "2026-03-02T00:30:00.000Z"
+}

@@ -1,0 +1,10 @@
+[
+  {
+    "path": "/fields/course_id",
+    "keyword": "required"
+  },
+  {
+    "path": "/fields/scope_text",
+    "keyword": "type"
+  }
+]

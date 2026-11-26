@@ -1,0 +1,33 @@
+{
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "created_at": "2026-03-02T00:30:00.000Z",
+  "origin": {
+    "type": "share",
+    "uri": "content://downloads/1",
+    "app": "com.example.lms",
+    "publisher": "학과 LMS",
+    "distributed_by": "담당 교수",
+    "distributed_at": "2026-03-01T15:00:00.000Z",
+    "referrer": "x"
+  },
+  "user_note": "4주차 자료",
+  "device_id": "16fd2706-8baf-433b-82eb-8c7fada847da",
+  "timeline": {
+    "boot_id": "b-2026-03-02-1",
+    "anchors": [
+      {
+        "wall_ms": 1772411400000,
+        "mono_ns": 9007199254740993
+      }
+    ],
+    "start_uncertainty_ms": 40,
+    "events": [
+      {
+        "type": "start",
+        "mono_ns": 9007199254740993,
+        "media_pos_ms": 0,
+        "source": "mic"
+      }
+    ]
+  }
+}

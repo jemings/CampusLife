@@ -1,0 +1,6 @@
+{
+  "explicit": "cloud_allowed",
+  "course_default": "blocked",
+  "global_default": "local_only",
+  "expected": "cloud_allowed"
+}

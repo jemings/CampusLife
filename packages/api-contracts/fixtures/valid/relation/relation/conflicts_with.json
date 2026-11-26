@@ -1,0 +1,6 @@
+{
+  "id": "item:6ba7b810-9dad-41d1-80b4-00c04fd430c8|conflicts_with|item:0f8fad5b-d9cb-469f-a165-70867728950e",
+  "from": "item:6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "type": "conflicts_with",
+  "to": "item:0f8fad5b-d9cb-469f-a165-70867728950e"
+}

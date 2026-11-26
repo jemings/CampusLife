@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/fields/schedule_slots/0/end",
+    "rule": "range_order"
+  }
+]

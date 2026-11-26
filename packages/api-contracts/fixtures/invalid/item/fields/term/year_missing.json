@@ -1,0 +1,11 @@
+{
+  "semester": "first",
+  "starts_on": {
+    "date": "2026-03-02",
+    "tz": "Asia/Seoul"
+  },
+  "ends_on": {
+    "date": "2026-06-19",
+    "tz": "Asia/Seoul"
+  }
+}

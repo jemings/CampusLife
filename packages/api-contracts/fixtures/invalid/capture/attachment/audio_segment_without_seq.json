@@ -1,0 +1,12 @@
+{
+  "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+  "blob_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "role": "audio_segment",
+  "original_filename": "\uc790\ub8cc\uad6c\uc870 4\uc8fc\ucc28.pdf",
+  "original_filename_raw": "\u110c\u1161\u1105\u116d\u1100\u116e\u110c\u1169 4\u110c\u116e\u110e\u1161.pdf",
+  "declared_mime": "application/pdf",
+  "cloud_policy": "local_only",
+  "capture_id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "detected_mime": "application/pdf",
+  "backed_up_at": "2026-03-02T00:31:00.000Z"
+}

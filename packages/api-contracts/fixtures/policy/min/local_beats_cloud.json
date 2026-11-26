@@ -1,0 +1,7 @@
+{
+  "policies": [
+    "cloud_allowed",
+    "local_only"
+  ],
+  "expected": "local_only"
+}
