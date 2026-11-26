@@ -64,6 +64,10 @@
       "description": "Rule original_id: a result's original carries the same mutation_id as the result (E12).",
       "const": true
     },
+    "x-open": {
+      "description": "An enum the Hub may grow: any value matching the pattern decodes, and examples lists the known values, the only ones a client may write (rule set_type).",
+      "const": true
+    },
     "x-feed-order": {
       "description": "Rule feed_order: in a changes page, each row's id is its data's id, revs rise strictly, and next_since is at least the highest rev (E18).",
       "const": true
@@ -110,7 +114,7 @@
   },
   "propertyNames": {
     "if": { "pattern": "^x-" },
-    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self", "x-batch-order", "x-original-id", "x-feed-order", "x-set-targets", "x-set-owner", "x-set-type"] }
+    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self", "x-batch-order", "x-original-id", "x-feed-order", "x-open", "x-set-targets", "x-set-owner", "x-set-type"] }
   },
   "x-discriminated-union": true
 }

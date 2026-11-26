@@ -101,11 +101,11 @@ def test_every_entity_column_names_its_owner():
         assert unmarked == set(), schema_id
 
 
-def test_examples_mark_only_open_enums():
-    """Rule set_type reads examples as the values a client may write; elsewhere they would mean nothing."""
+def test_open_enums_name_their_known_values():
+    """x-open marks a string the Hub may send new values of; set_type lets a patch write only its examples."""
     def walk(node, at):
         if isinstance(node, dict):
-            if "examples" in node:
+            if node.get("x-open") is True:
                 yield at, node
             for key, value in node.items():
                 yield from walk(value, f"{at}/{key}")
@@ -116,7 +116,7 @@ def test_examples_mark_only_open_enums():
     for path in SCHEMAS.rglob("*.json"):
         for at, node in walk(read_strict(path), ""):
             assert node.get("type") == "string" and "pattern" in node, f"{path.name}#{at}"
-            assert all(isinstance(value, str) for value in node["examples"]), f"{path.name}#{at}"
+            assert node.get("examples") and all(isinstance(value, str) for value in node["examples"]), f"{path.name}#{at}"
 
 
 def test_ownership_is_the_contract_table():
