@@ -95,7 +95,15 @@ def vector(name):
 
 @pytest.mark.parametrize(
     ("variants", "canonical"),
-    [(["crlf", "cr", "mixed_line_endings"], "lf"), (["nfd"], "nfc")],
+    [
+        (["crlf", "cr", "mixed_line_endings"], "lf"),
+        (["nfd"], "nfc"),
+        (["combining_acute"], "precomposed_acute"),
+        (["composition_exclusion"], "composition_exclusion_decomposed"),
+        (["angstrom_sign"], "a_with_ring"),
+        (["lf_cr"], "lf_lf"),
+    ],
+    ids=["line-endings", "hangul", "combining", "composition-exclusion", "singleton", "lf-then-cr"],
 )
 def test_golden_vectors_of_the_same_text_share_a_hash(variants, canonical):
     assert {vector(name)["hash"] for name in variants} == {vector(canonical)["hash"]}
@@ -104,3 +112,19 @@ def test_golden_vectors_of_the_same_text_share_a_hash(variants, canonical):
 def test_golden_vectors_include_the_known_literals():
     assert vector("empty") == {"text": "", "hash": EMPTY}
     assert vector("non_bmp")["text"] == "\U0001F4DA 강의"
+
+
+@pytest.mark.parametrize(
+    ("name", "other"),
+    [("ligature_fi", "letters_fi"), ("line_separator", "lf"), ("next_line", "lf")],
+    ids=["nfc-not-nfkc", "u2028-is-not-a-line-ending", "nel-is-not-a-line-ending"],
+)
+def test_golden_vectors_that_only_look_alike_hash_differently(name, other):
+    assert vector(name)["hash"] != vector(other)["hash"]
+
+
+def test_golden_vectors_keep_the_texts_they_test():
+    assert vector("composition_exclusion")["text"] == "\u0958"
+    assert vector("angstrom_sign")["text"] == "\u212b"
+    assert vector("line_separator")["text"] == "a\u2028b"
+    assert vector("next_line")["text"] == "a\u0085b"
