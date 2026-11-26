@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/mutation/result.json",
+  "title": "Mutation result",
+  "description": "What the Hub did with one Mutation (D18, E12). Open: clients ignore members they do not know.",
+  "type": "object",
+  "required": ["mutation_id", "result"],
+  "properties": {
+    "mutation_id": { "$ref": "../common/uuid.json" },
+    "result": {
+      "description": "applied: written (ACK). duplicate: this mutation_id was handled before; original repeats that result (D4). conflict: some fields lost compare-and-set (D18). rejected: refused, see reason; the client moves it to its needs-attention list and goes on. retry: not handled yet, send again (missing_blobs says why). not_attempted: skipped because an earlier Mutation of the batch got retry.",
+      "enum": ["applied", "duplicate", "conflict", "rejected", "retry", "not_attempted"]
+    },
+    "reason": {
+      "description": "Why a Mutation was rejected (A4). id_reuse: same id, different content. not_canonical: a string is not NFC (U2). owner: set writes a Hub column. schema: the Mutation breaks the contract. deleted: patch on a soft-deleted entity. link_target_missing: a commit links[] target does not exist. unsupported_entity: the op does not apply to that entity.",
+      "enum": ["id_reuse", "not_canonical", "owner", "schema", "deleted", "link_target_missing", "unsupported_entity"]
+    },
+    "applied_fields": { "type": "array", "uniqueItems": true, "items": { "$ref": "mutation.json#/$defs/set_key" } },
+    "conflicted_fields": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "mutation.json#/$defs/set_key" } },
+    "conflict_record_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "../common/uuid.json" } },
+    "missing_blobs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "../common/sha256.json" } },
+    "original": { "$ref": "#/$defs/first_result" }
+  },
+  "allOf": [
+    { "$ref": "#/$defs/only_when/reason" },
+    { "$ref": "#/$defs/only_when/applied_fields" },
+    { "$ref": "#/$defs/only_when/conflicted_fields" },
+    { "$ref": "#/$defs/only_when/conflict_record_ids" },
+    { "$ref": "#/$defs/only_when/missing_blobs" },
+    { "$ref": "#/$defs/only_when/original" }
+  ],
+  "x-original-id": true,
+  "$defs": {
+    "only_when": {
+      "description": "Each member belongs to one result value: required with it, refused with any other. Neither applies when result itself is missing, which required reports.",
+      "reason": {
+        "allOf": [
+          { "if": { "$ref": "#/$defs/result_is/rejected" }, "then": { "required": ["reason"] } },
+          { "if": { "$ref": "#/$defs/result_is_not/rejected" }, "then": { "properties": { "reason": { "not": {} } } } }
+        ]
+      },
+      "applied_fields": {
+        "description": "Fields written: with applied, and with conflict for the fields that won.",
+        "if": { "required": ["result"], "not": { "anyOf": [{ "$ref": "#/$defs/result_is/applied" }, { "$ref": "#/$defs/result_is/conflict" }] } },
+        "then": { "properties": { "applied_fields": { "not": {} } } }
+      },
+      "conflicted_fields": {
+        "allOf": [
+          { "if": { "$ref": "#/$defs/result_is/conflict" }, "then": { "required": ["conflicted_fields"] } },
+          { "if": { "$ref": "#/$defs/result_is_not/conflict" }, "then": { "properties": { "conflicted_fields": { "not": {} } } } }
+        ]
+      },
+      "conflict_record_ids": {
+        "description": "ConflictRecords keeping what lost: with conflict, and with rejected{deleted}, whose submitted values are kept the same way (D18).",
+        "allOf": [
+          { "if": { "required": ["result"], "not": { "anyOf": [{ "$ref": "#/$defs/result_is/conflict" }, { "$ref": "#/$defs/result_is/rejected" }] } }, "then": { "properties": { "conflict_record_ids": { "not": {} } } } },
+          { "if": { "$ref": "#/$defs/result_is/rejected_not_deleted" }, "then": { "properties": { "conflict_record_ids": { "not": {} } } } }
+        ]
+      },
+      "missing_blobs": {
+        "allOf": [
+          { "if": { "$ref": "#/$defs/result_is/retry" }, "then": { "required": ["missing_blobs"] } },
+          { "if": { "$ref": "#/$defs/result_is_not/retry" }, "then": { "properties": { "missing_blobs": { "not": {} } } } }
+        ]
+      },
+      "original": {
+        "allOf": [
+          { "if": { "$ref": "#/$defs/result_is/duplicate" }, "then": { "required": ["original"] } },
+          { "if": { "$ref": "#/$defs/result_is_not/duplicate" }, "then": { "properties": { "original": { "not": {} } } } }
+        ]
+      }
+    },
+    "result_is": {
+      "applied": { "properties": { "result": { "const": "applied" } }, "required": ["result"] },
+      "rejected": { "properties": { "result": { "const": "rejected" } }, "required": ["result"] },
+      "rejected_not_deleted": { "properties": { "result": { "const": "rejected" }, "reason": { "not": { "const": "deleted" } } }, "required": ["result", "reason"] },
+      "conflict": { "properties": { "result": { "const": "conflict" } }, "required": ["result"] },
+      "retry": { "properties": { "result": { "const": "retry" } }, "required": ["result"] },
+      "duplicate": { "properties": { "result": { "const": "duplicate" } }, "required": ["result"] }
+    },
+    "result_is_not": {
+      "rejected": { "properties": { "result": { "not": { "const": "rejected" } } }, "required": ["result"] },
+      "conflict": { "properties": { "result": { "not": { "const": "conflict" } } }, "required": ["result"] },
+      "retry": { "properties": { "result": { "not": { "const": "retry" } } }, "required": ["result"] },
+      "duplicate": { "properties": { "result": { "not": { "const": "duplicate" } } }, "required": ["result"] }
+    },
+    "first_result": {
+      "description": "The result the Hub gave the first time, for the same mutation_id (rule original_id); a resend never carries another resend's result.",
+      "$ref": "#",
+      "properties": { "result": { "enum": ["applied", "conflict", "rejected"] } }
+    }
+  }
+}

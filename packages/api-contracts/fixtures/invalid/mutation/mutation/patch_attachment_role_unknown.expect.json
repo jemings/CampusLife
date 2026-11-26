@@ -1,0 +1,10 @@
+[
+  {
+    "path": "/set/role",
+    "rule": "owner"
+  },
+  {
+    "path": "/set/role/to",
+    "rule": "set_type"
+  }
+]

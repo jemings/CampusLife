@@ -1,0 +1,12 @@
+{
+  "mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  "op": "patch",
+  "entity": "item",
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "set": {
+    "due_at": {
+      "from": null,
+      "to": "2026-03-09T14:59:00.000Z"
+    }
+  }
+}

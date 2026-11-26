@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/mutation/mutation.json",
+  "title": "Mutation",
+  "description": "One write a client sends to POST /v1/mutations (D18, E11). A union on op; every branch is closed input. mutation_id is a UUIDv4 the client makes once and reuses on every resend (D4). The MVP ops are these seven; later ops are added as new branches.",
+  "type": "object",
+  "required": ["mutation_id", "op"],
+  "properties": {
+    "mutation_id": { "$ref": "../common/uuid.json" },
+    "op": { "enum": ["capture.commit", "create", "patch", "delete", "restore", "suggestion.accept", "suggestion.dismiss"] }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/capture_commit" },
+    { "$ref": "#/$defs/create" },
+    { "$ref": "#/$defs/patch" },
+    { "$ref": "#/$defs/delete" },
+    { "$ref": "#/$defs/restore" },
+    { "$ref": "#/$defs/suggestion_accept" },
+    { "$ref": "#/$defs/suggestion_dismiss" }
+  ],
+  "discriminator": {
+    "propertyName": "op",
+    "mapping": {
+      "capture.commit": "#/$defs/capture_commit",
+      "create": "#/$defs/create",
+      "patch": "#/$defs/patch",
+      "delete": "#/$defs/delete",
+      "restore": "#/$defs/restore",
+      "suggestion.accept": "#/$defs/suggestion_accept",
+      "suggestion.dismiss": "#/$defs/suggestion_dismiss"
+    }
+  },
+  "$defs": {
+    "entity": {
+      "description": "Entities patch, delete and restore name. The schema accepts each of them for every one of those ops; the Hub answers rejected{unsupported_entity} for a pair it does not support (A4), such as a patch on a relation.",
+      "enum": ["item", "attachment", "relation", "tag"]
+    },
+    "id_follows_entity": {
+      "description": "A relation is named by its from|type|to id, every other entity by a UUIDv4. Without an entity there is nothing to check the id against.",
+      "allOf": [
+        { "if": { "properties": { "entity": { "const": "relation" } }, "required": ["entity"] }, "then": { "properties": { "id": { "$ref": "../relation/relation.json#/properties/id" } } } },
+        { "if": { "properties": { "entity": { "not": { "const": "relation" } } }, "required": ["entity"] }, "then": { "properties": { "id": { "$ref": "../common/uuid.json" } } } }
+      ]
+    },
+    "set_key": {
+      "description": "A common column name or fields.<key>, one level deep (A3). fields itself is not a key: kind fields change one key at a time, so concurrent edits of different keys both apply (MULTI-DEVICE S6).",
+      "type": "string",
+      "pattern": "^([a-z][a-z_]*|fields\\.[a-z][a-z_]*)$",
+      "not": { "const": "fields" }
+    },
+    "capture_commit": {
+      "type": "object",
+      "required": ["mutation_id", "op", "capture"],
+      "properties": {
+        "mutation_id": { "$ref": "../common/uuid.json" },
+        "op": { "const": "capture.commit" },
+        "capture": { "$ref": "../capture/commit.json" }
+      },
+      "additionalProperties": false
+    },
+    "create": {
+      "description": "A new row the user made on a client. A union on entity; ids are client-made UUIDv4, a relation's id is from|type|to.",
+      "type": "object",
+      "required": ["mutation_id", "op", "entity", "id", "data"],
+      "properties": {
+        "op": { "const": "create" },
+        "entity": { "enum": ["item", "relation", "tag"] }
+      },
+      "oneOf": [
+        { "$ref": "#/$defs/create_item" },
+        { "$ref": "#/$defs/create_relation" },
+        { "$ref": "#/$defs/create_tag" }
+      ],
+      "discriminator": {
+        "propertyName": "entity",
+        "mapping": { "item": "#/$defs/create_item", "relation": "#/$defs/create_relation", "tag": "#/$defs/create_tag" }
+      }
+    },
+    "create_item": {
+      "type": "object",
+      "required": ["mutation_id", "op", "entity", "id", "data"],
+      "properties": {
+        "mutation_id": { "$ref": "../common/uuid.json" },
+        "op": { "const": "create" },
+        "entity": { "const": "item" },
+        "id": { "$ref": "../common/uuid.json" },
+        "data": { "$ref": "#/$defs/item_data" }
+      },
+      "additionalProperties": false
+    },
+    "item_data": {
+      "description": "The Item columns a client writes; id is the envelope's, schema_version, rev and deleted_at are the Hub's. Closed, fields included.",
+      "type": "object",
+      "required": ["kind", "title", "fields"],
+      "properties": {
+        "kind": { "$ref": "../item/item.json#/properties/kind" },
+        "title": { "$ref": "../item/item.json#/properties/title" },
+        "body": { "$ref": "../item/item.json#/properties/body" },
+        "starts_at": { "$ref": "../item/item.json#/properties/starts_at" },
+        "due_at": { "$ref": "../item/item.json#/properties/due_at" },
+        "all_day": { "$ref": "../item/item.json#/properties/all_day" },
+        "fields": { "$ref": "../item/item.json#/properties/fields" }
+      },
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "../item/item.json#/$defs/dates_follow_all_day" }, { "$ref": "#/$defs/closed_fields_of_kind" }]
+    },
+    "closed_fields_of_kind": {
+      "description": "fields of a known kind, closed: a create sends only members its kind defines. An unknown kind's fields are the Hub's to judge.",
+      "allOf": [
+        { "if": { "$ref": "../item/item.json#/$defs/kind_is/term" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/term" } } } },
+        { "if": { "$ref": "../item/item.json#/$defs/kind_is/course" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/course" } } } },
+        { "if": { "$ref": "../item/item.json#/$defs/kind_is/lecture_session" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/lecture_session" } } } },
+        { "if": { "$ref": "../item/item.json#/$defs/kind_is/note" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/note" } } } },
+        { "if": { "$ref": "../item/item.json#/$defs/kind_is/task" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/task" } } } },
+        { "if": { "$ref": "../item/item.json#/$defs/kind_is/assignment" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/assignment" } } } },
+        { "if": { "$ref": "../item/item.json#/$defs/kind_is/exam" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/exam" } } } }
+      ]
+    },
+    "closed_fields": {
+      "term": { "$ref": "../item/fields/term.json", "properties": { "year": true, "semester": true, "starts_on": true, "ends_on": true }, "additionalProperties": false },
+      "course": { "$ref": "../item/fields/course.json", "properties": { "instructor": true, "room": true, "credits": true, "schedule_slots": true, "default_cloud_policy": true, "confirm_each_send": true }, "additionalProperties": false },
+      "lecture_session": { "$ref": "../item/fields/lecture_session.json", "properties": { "course_id": true, "date": true }, "additionalProperties": false },
+      "note": { "$ref": "../item/fields/note.json", "properties": { "forked_from_artifact": true }, "additionalProperties": false },
+      "task": { "$ref": "../item/fields/task.json", "properties": { "progress": true, "reminders": true }, "additionalProperties": false },
+      "assignment": { "$ref": "../item/fields/assignment.json", "properties": { "course_id": true, "due_text": true, "submission": true }, "additionalProperties": false },
+      "exam": { "$ref": "../item/fields/exam.json", "properties": { "course_id": true, "scope_text": true }, "additionalProperties": false }
+    },
+    "create_relation": {
+      "type": "object",
+      "required": ["mutation_id", "op", "entity", "id", "data"],
+      "properties": {
+        "mutation_id": { "$ref": "../common/uuid.json" },
+        "op": { "const": "create" },
+        "entity": { "const": "relation" },
+        "id": { "$ref": "../relation/relation.json#/properties/id" },
+        "data": { "$ref": "#/$defs/relation_data" }
+      },
+      "additionalProperties": false,
+      "x-relation-id": "data"
+    },
+    "relation_data": {
+      "type": "object",
+      "required": ["from", "type", "to"],
+      "properties": {
+        "from": { "$ref": "../common/entity_ref.json" },
+        "type": { "enum": ["about", "supersedes", "rendition_of", "evidence", "tagged", "conflicts_with"] },
+        "to": { "$ref": "../common/entity_ref.json" }
+      },
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "../relation/relation.json#/$defs/tagged_ends" }],
+      "x-relation-not-self": true
+    },
+    "create_tag": {
+      "type": "object",
+      "required": ["mutation_id", "op", "entity", "id", "data"],
+      "properties": {
+        "mutation_id": { "$ref": "../common/uuid.json" },
+        "op": { "const": "create" },
+        "entity": { "const": "tag" },
+        "id": { "$ref": "../common/uuid.json" },
+        "data": { "$ref": "#/$defs/tag_data" }
+      },
+      "additionalProperties": false
+    },
+    "tag_data": {
+      "type": "object",
+      "required": ["name", "color"],
+      "properties": {
+        "name": { "$ref": "../tag/tag.json#/properties/name" },
+        "color": { "$ref": "../tag/tag.json#/properties/color" }
+      },
+      "additionalProperties": false
+    },
+    "patch": {
+      "description": "Per-field compare-and-set (D18). set writes only columns the entity schema marks x-owner user (rule owner). Each set entry carries the value the client last saw, from, or for an x-text column its from_hash (text_hash of the text; an empty text is hashed like any other, and null means the column was absent). from: null means the column was absent; to: null removes an optional column (A3). Arrays are compared and replaced whole.",
+      "type": "object",
+      "required": ["mutation_id", "op", "entity", "id", "set"],
+      "properties": {
+        "mutation_id": { "$ref": "../common/uuid.json" },
+        "op": { "const": "patch" },
+        "entity": { "$ref": "#/$defs/entity" },
+        "id": true,
+        "set": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/set_key" },
+          "additionalProperties": { "$ref": "#/$defs/change" }
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/id_follows_entity" }],
+      "x-set-targets": {
+        "item": {
+          "schema": "../item/item.json",
+          "fields": [
+            "../item/fields/term.json", "../item/fields/course.json", "../item/fields/lecture_session.json",
+            "../item/fields/note.json", "../item/fields/task.json", "../item/fields/assignment.json", "../item/fields/exam.json"
+          ]
+        },
+        "attachment": { "schema": "../capture/attachment.json" },
+        "relation": { "schema": "../relation/relation.json" },
+        "tag": { "schema": "../tag/tag.json" }
+      },
+      "x-set-owner": true,
+      "x-set-type": true
+    },
+    "change": {
+      "type": "object",
+      "required": ["to"],
+      "properties": {
+        "from": true,
+        "from_hash": { "anyOf": [{ "$ref": "../common/sha256.json" }, { "type": "null" }] },
+        "to": true
+      },
+      "additionalProperties": false,
+      "if": { "required": ["from_hash"] },
+      "then": { "not": { "required": ["from"] } },
+      "else": { "required": ["from"] }
+    },
+    "delete": {
+      "type": "object",
+      "required": ["mutation_id", "op", "entity", "id"],
+      "properties": {
+        "mutation_id": { "$ref": "../common/uuid.json" },
+        "op": { "const": "delete" },
+        "entity": { "$ref": "#/$defs/entity" },
+        "id": true
+      },
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/id_follows_entity" }]
+    },
+    "restore": {
+      "type": "object",
+      "required": ["mutation_id", "op", "entity", "id"],
+      "properties": {
+        "mutation_id": { "$ref": "../common/uuid.json" },
+        "op": { "const": "restore" },
+        "entity": { "$ref": "#/$defs/entity" },
+        "id": true
+      },
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/id_follows_entity" }]
+    },
+    "suggestion_accept": {
+      "type": "object",
+      "required": ["mutation_id", "op", "suggestion_id"],
+      "properties": {
+        "mutation_id": { "$ref": "../common/uuid.json" },
+        "op": { "const": "suggestion.accept" },
+        "suggestion_id": { "$ref": "../common/uuid.json" },
+        "edits": {
+          "description": "Values the user changed before accepting, keyed like a patch's set. The Hub checks them against the Suggestion's proposal; that shape arrives with Suggestion (PR5).",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/set_key" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "suggestion_dismiss": {
+      "type": "object",
+      "required": ["mutation_id", "op", "suggestion_id"],
+      "properties": {
+        "mutation_id": { "$ref": "../common/uuid.json" },
+        "op": { "const": "suggestion.dismiss" },
+        "suggestion_id": { "$ref": "../common/uuid.json" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

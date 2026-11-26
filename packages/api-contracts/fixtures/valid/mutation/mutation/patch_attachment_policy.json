@@ -1,0 +1,12 @@
+{
+  "mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  "op": "patch",
+  "entity": "attachment",
+  "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+  "set": {
+    "cloud_policy": {
+      "from": "local_only",
+      "to": "cloud_allowed"
+    }
+  }
+}
