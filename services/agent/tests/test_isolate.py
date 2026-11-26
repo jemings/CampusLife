@@ -161,6 +161,25 @@ async def test_cancelling_a_run_kills_the_program_and_what_it_started(tmp_path):
     assert (await run("import sys; sys.stdout.write('ok')")).stdout == b"ok"
 
 
+async def test_a_cancelled_run_ends_only_once_its_program_has_exited(tmp_path, monkeypatch):
+    began, processes, create = tmp_path / "began", [], asyncio.create_subprocess_exec
+
+    async def kept(*args, **options):
+        processes.append(await create(*args, **options))
+        return processes[-1]
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", kept)
+    task = asyncio.create_task(run(f"import pathlib, time; pathlib.Path({str(began)!r}).write_text('x'); time.sleep(60)"))
+    assert await appears(began, within_s=20.0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    [process] = processes
+    assert process.returncode is not None
+
+
 def leave_the_session(pid_file, *, hold_s=30):
     """Code that starts a grandchild in a session of its own, holding stdout and stderr open for hold_s."""
     grandchild = f"import time; time.sleep({hold_s})"
