@@ -12,7 +12,7 @@
       "enum": ["applied", "duplicate", "conflict", "rejected", "retry", "not_attempted"]
     },
     "reason": {
-      "description": "Why a Mutation was rejected (A4). id_reuse: same id, different content. not_canonical: a string is not NFC (U2). owner: set writes a Hub column. schema: the Mutation breaks the contract. deleted: patch on a soft-deleted entity. link_target_missing: a commit links[] target does not exist. unsupported_entity: the op does not apply to that entity.",
+      "description": "Why a Mutation was rejected (A4). id_reuse: same id, different content. not_canonical: a string is not NFC (U2). owner: set writes a column the user does not own. schema: the Mutation breaks the contract. deleted: patch on a soft-deleted entity. link_target_missing: a commit links[] target does not exist. unsupported_entity: the op does not apply to that entity.",
       "enum": ["id_reuse", "not_canonical", "owner", "schema", "deleted", "link_target_missing", "unsupported_entity"]
     },
     "applied_fields": { "type": "array", "uniqueItems": true, "items": { "$ref": "mutation.json#/$defs/set_key" } },
