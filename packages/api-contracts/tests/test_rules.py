@@ -165,3 +165,12 @@ def test_range_rule_skips_pairs_whose_values_break_their_own_schema(make_contrac
     assert contract.validate("t/slot", {"start": "24:00", "end": "10:15"}) == [
         SchemaViolation(path="/start", keyword="pattern")
     ]
+
+
+def test_tz_rule_uses_exactly_the_tzdata_zone_list():
+    from importlib.resources import files
+
+    from campuslife_contracts.rules import _iana_zones
+
+    shipped = set(files("tzdata").joinpath("zones").read_text(encoding="utf-8").split())
+    assert _iana_zones() == shipped
