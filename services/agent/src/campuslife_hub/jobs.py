@@ -219,6 +219,17 @@ def of_subject(runner: Tx | Snapshot, subject_ref: str) -> list[Job]:
     return [_job(row) for row in rows]
 
 
+def latest(runner: Tx | Snapshot, limit: int) -> list[Job]:
+    """The limit jobs enqueued last, the last first."""
+    return [_job(row) for row in runner.execute(f"SELECT {COLUMNS} FROM processing_jobs ORDER BY rowid DESC LIMIT ?", (limit,))]
+
+
+def counts(runner: Tx | Snapshot) -> dict[JobState, int]:
+    """How many jobs are in each state."""
+    found = dict(runner.execute("SELECT state, count(*) FROM processing_jobs GROUP BY state").fetchall())
+    return {state: found.get(state.value, 0) for state in JobState}
+
+
 def enqueue(tx: Tx, spec: JobSpec, pipeline: Pipeline, *, now: datetime | None = None) -> Job:
     """The job for spec under pipeline: a new pending one, or the one with its job_key as it stands."""
     stored = _stored(spec, pipeline)
