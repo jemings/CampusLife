@@ -127,7 +127,9 @@ def broken(case, keyword, value, at):
     if keyword == "minLength" and value >= 1:
         replacement = node[: value - 1]
     elif keyword == "maxLength":
-        replacement = node + "a" * (value + 1 - len(node))
+        # Repeat the first character so a pattern anchored at either end still holds.
+        filler = node[:1] or "a"
+        replacement = filler * (value + 1 - len(node)) + node
     elif keyword == "minItems" and value >= 1:
         replacement = node[: value - 1]
     else:
