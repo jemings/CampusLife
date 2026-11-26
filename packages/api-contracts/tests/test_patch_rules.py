@@ -45,9 +45,20 @@ SCHEMAS = {
         "properties": {
             "name": {"type": "string", "x-owner": "user"},
             "mood": {"$ref": "../t/mood.json", "x-owner": "user"},
+            "moods": {"type": "array", "items": {"$ref": "../t/mood.json"}, "x-owner": "user"},
+            "mood_or_code": {"anyOf": [{"type": "integer"}, {"$ref": "../t/mood.json"}], "x-owner": "user"},
+            "label": {"type": "string", "examples": ["red", "blue"], "x-owner": "user"},
+            "mood_all": {"allOf": [{"type": "string"}, {"$ref": "../t/mood.json"}], "x-owner": "user"},
+            "mood_one": {"oneOf": [{"type": "integer"}, {"$ref": "../t/mood.json"}], "x-owner": "user"},
+            "mood_note": {"type": "object", "properties": {"mood": {"$ref": "../t/mood.json"}, "note": {"type": "string"}},
+                          "x-owner": "user"},
+            "mood_map": {"type": "object", "properties": {"code": {"type": "integer"}},
+                         "additionalProperties": {"$ref": "../t/mood.json"}, "x-owner": "user"},
+            "code_then_moods": {"type": "array", "prefixItems": [{"type": "integer"}], "items": {"$ref": "../t/mood.json"},
+                                "x-owner": "user"},
         },
     },
-    "t/mood": {"type": "string", "pattern": "^[a-z]+$", "examples": ["calm", "busy"]},
+    "t/mood": {"type": "string", "pattern": "^[a-z]+$", "examples": ["calm", "busy"], "x-open": True},
     "t/patch": PATCH,
 }
 
@@ -87,6 +98,40 @@ def test_a_patch_writes_only_known_values_of_an_open_enum(patch):
     assert patch({"mood": {"from": "calm", "to": "busy"}}, entity="other") == []
     assert patch({"mood": {"from": "calm", "to": "sleepy"}}, entity="other") == [set_type("/set/mood/to")]
     assert patch({"mood": {"from": "sleepy", "to": "busy"}}, entity="other") == [set_type("/set/mood/from")]
+
+
+def test_an_open_enum_inside_items_or_any_of_takes_only_its_known_values(patch):
+    assert patch({"moods": {"from": [], "to": ["calm", "busy"]}}, entity="other") == []
+    assert patch({"moods": {"from": [], "to": ["calm", "sleepy"]}}, entity="other") == [set_type("/set/moods/to")]
+    assert patch({"mood_or_code": {"from": 3, "to": "busy"}}, entity="other") == []
+    assert patch({"mood_or_code": {"from": 3, "to": "sleepy"}}, entity="other") == [set_type("/set/mood_or_code/to")]
+
+
+def test_an_open_enum_inside_all_of_or_one_of_takes_only_its_known_values(patch):
+    assert patch({"mood_all": {"from": None, "to": "calm"}}, entity="other") == []
+    assert patch({"mood_all": {"from": None, "to": "sleepy"}}, entity="other") == [set_type("/set/mood_all/to")]
+    assert patch({"mood_one": {"from": None, "to": "busy"}}, entity="other") == []
+    assert patch({"mood_one": {"from": None, "to": "sleepy"}}, entity="other") == [set_type("/set/mood_one/to")]
+
+
+def test_an_open_enum_inside_an_object_member_takes_only_its_known_values(patch):
+    assert patch({"mood_note": {"from": None, "to": {"mood": "calm", "note": "sleepy"}}}, entity="other") == []
+    assert patch({"mood_note": {"from": None, "to": {"mood": "sleepy"}}}, entity="other") == [set_type("/set/mood_note/to")]
+    assert patch({"mood_map": {"from": None, "to": {"code": 3, "a": "busy"}}}, entity="other") == []
+    assert patch({"mood_map": {"from": None, "to": {"code": 3, "a": "sleepy"}}}, entity="other") == [
+        set_type("/set/mood_map/to")
+    ]
+
+
+def test_items_after_prefix_items_take_only_known_values_of_an_open_enum(patch):
+    assert patch({"code_then_moods": {"from": None, "to": [3, "calm", "busy"]}}, entity="other") == []
+    assert patch({"code_then_moods": {"from": None, "to": [3, "sleepy"]}}, entity="other") == [
+        set_type("/set/code_then_moods/to")
+    ]
+
+
+def test_examples_without_x_open_only_document_a_column(patch):
+    assert patch({"label": {"from": None, "to": "green"}}, entity="other") == []
 
 
 def test_a_value_that_does_not_fit_the_column_breaks_set_type(patch):
