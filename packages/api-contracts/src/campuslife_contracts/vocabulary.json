@@ -96,6 +96,10 @@
       "description": "Rule a1_order: an A1 range first:last goes from the top-left cell to the bottom-right one (first column <= last column, first row <= last row).",
       "const": true
     },
+    "x-conflict-not-self": {
+      "description": "Rule conflict_self: a Suggestion's conflicts_with does not hold its own id.",
+      "const": true
+    },
     "x-set-targets": {
       "description": "Per entity, the entity schema a patch's set writes and, if it has kind fields, the fields schemas a fields.<key> may belong to. Read by rules owner and set_type.",
       "type": "object",
@@ -134,7 +138,7 @@
   },
   "propertyNames": {
     "if": { "pattern": "^x-" },
-    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self", "x-locator-anchor", "x-a1-order", "x-batch-order", "x-original-id", "x-feed-order", "x-chunk-index", "x-int64-text", "x-byte-range", "x-open", "x-set-targets", "x-set-owner", "x-set-type"] }
+    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self", "x-locator-anchor", "x-a1-order", "x-conflict-not-self", "x-batch-order", "x-original-id", "x-feed-order", "x-chunk-index", "x-int64-text", "x-byte-range", "x-open", "x-set-targets", "x-set-owner", "x-set-type"] }
   },
   "x-discriminated-union": true
 }

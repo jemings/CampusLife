@@ -16,6 +16,7 @@ class Rule(enum.StrEnum):
     RELATION_SELF = "relation_self"
     LOCATOR_ANCHOR = "locator_anchor"
     A1_ORDER = "a1_order"
+    CONFLICT_SELF = "conflict_self"
     OWNER = "owner"
     BATCH_ORDER = "batch_order"
     FEED_ORDER = "feed_order"

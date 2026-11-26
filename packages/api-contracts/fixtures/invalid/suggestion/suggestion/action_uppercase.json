@@ -1,0 +1,37 @@
+{
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "source_artifact_id": "550e8400-e29b-41d4-a716-446655440000",
+  "action": "Create_item",
+  "proposed": {
+    "kind": "assignment",
+    "title": "과제 2",
+    "due_at": "2026-03-16T14:59:00.000Z",
+    "fields": {
+      "course_id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+      "due_text": "3월 16일 23:59까지"
+    }
+  },
+  "evidence": [
+    {
+      "v": 1,
+      "kind": "pdf_page",
+      "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "page": 2,
+      "box": [
+        0.1,
+        0.4,
+        0.8,
+        0.1
+      ]
+    },
+    {
+      "v": 1,
+      "kind": "media_time",
+      "capture": "0f8fad5b-d9cb-469f-a165-70867728950e",
+      "start_ms": 1930000,
+      "end_ms": 1985000
+    }
+  ],
+  "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "state": "open"
+}

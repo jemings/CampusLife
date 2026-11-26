@@ -151,6 +151,16 @@ def _a1_order(validator, enabled, instance, schema):
         yield ValidationError(f"{instance!r} does not go from the top-left cell to the bottom-right one")
 
 
+def _conflict_not_self(validator, enabled, instance, schema):
+    if not isinstance(instance, dict) or not isinstance(instance.get("conflicts_with"), list):
+        return
+    if not _members_fit(validator, schema, instance, [name for name in ("id", "conflicts_with") if name in instance]):
+        return
+    for index, other in enumerate(instance["conflicts_with"]):
+        if other == instance.get("id"):
+            yield ValidationError("a Suggestion does not conflict with itself", path=["conflicts_with", index])
+
+
 LOCATOR_ANCHORS = (("blob", "blob:"), ("capture", "capture:"))
 
 
@@ -294,6 +304,7 @@ RULE_KEYWORDS = {
     "x-relation-not-self": RuleKeyword(Rule.RELATION_SELF, _relation_not_self),
     "x-locator-anchor": RuleKeyword(Rule.LOCATOR_ANCHOR, _locator_anchor),
     "x-a1-order": RuleKeyword(Rule.A1_ORDER, _a1_order),
+    "x-conflict-not-self": RuleKeyword(Rule.CONFLICT_SELF, _conflict_not_self),
     "x-batch-order": RuleKeyword(Rule.BATCH_ORDER, _batch_order),
     "x-original-id": RuleKeyword(Rule.ORIGINAL_ID, _original_id),
     "x-feed-order": RuleKeyword(Rule.FEED_ORDER, _feed_order),

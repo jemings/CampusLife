@@ -1,0 +1,14 @@
+[
+  {
+    "path": "/proposed/entity",
+    "keyword": "required"
+  },
+  {
+    "path": "/proposed/id",
+    "keyword": "required"
+  },
+  {
+    "path": "/proposed/set",
+    "keyword": "required"
+  }
+]
