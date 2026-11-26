@@ -139,3 +139,48 @@ ContentBlock locator 예:
 - URL: canonical URL, page section/anchor
 
 실제 schema에서는 locator를 schema_version이 있는 구조로 검증합니다. 모든 AI 생성물은 하나 이상의 SourceReference를 제공하고, 정확한 위치를 산출할 수 없으면 문서 단위 근거임을 명시합니다.
+
+
+## 9. Multi-device 및 Annotation 도메인 확장
+
+| Entity | 설명 | 주요 필드 |
+|---|---|---|
+| Device | 앱 설치 인스턴스 | id, platform, device_name, app_version, created_at, last_seen_at, state |
+| DeviceSession | 장치 인증 세션 | id, device_id, credential_ref, issued_at, expires_at, revoked_at |
+| SyncCursor | 장치별 마지막 수신 이벤트 위치 | device_id, stream_id, last_event_sequence, updated_at |
+| SyncEvent | 서버가 발행하는 변경 이벤트 | event_id, sequence, entity_type, entity_id, revision, operation, created_at |
+| Mutation | 클라이언트가 제출하는 변경 요청 | mutation_id, device_id, base_revision, payload, state |
+| Annotation | 문서/페이지에 연결된 필기 또는 주석 | id, document_id, revision_id, page_index, annotation_type, created_by_device |
+| AnnotationLayer | 특정 사용자/문서/페이지의 주석 묶음 | id, document_id, page_index, format, content_path, revision |
+| DocumentRevision | 원본 또는 파생 문서 버전 | id, document_id, sha256, parent_revision_id, created_by_device |
+| ConflictRecord | 자동 병합할 수 없는 동시 수정 | id, entity_id, base_revision, local_revision, remote_revision, state |
+
+### 9.1 Device와 Session
+
+Device는 기기 하드웨어 자체가 아니라 CampusLife 앱 설치 인스턴스 단위로 식별합니다. 앱 재설치 시 새 ID로 등록할 수 있습니다. credential은 운영체제 보호 저장소에 보관하고 DB에는 secret 자체가 아닌 참조/식별자만 둡니다.
+
+### 9.2 Annotation
+
+Annotation은 원본 Attachment를 변경하지 않는 별도 레이어입니다.
+
+- PencilKit 원본 drawing archive
+- 페이지별 annotation JSON 및 좌표계
+- highlight, text note, freehand drawing 등 공통 annotation type
+- PDF overlay export는 파생 artifact
+- 원본 문서의 페이지 크기/회전/자르기 정보를 고려해 좌표 정규화
+- 기기·앱 버전에 따라 PencilKit native payload가 다를 수 있으므로 공통 렌더링을 위한 표준 표현 또는 PDF overlay를 함께 보존
+
+### 9.3 Multi-device Revision Rules
+
+- Capture/Attachment 원본은 append-only/immutable
+- Annotation과 Note 등 사용자 편집 데이터는 revision을 증가시킴
+- 서로 다른 데이터 영역의 변경은 독립적으로 병합 가능
+- 같은 문단/같은 annotation layer가 동시에 수정되면 blind last-write-wins로 덮어쓰지 않음
+- base_revision이 최신이 아니면 server는 conflict response를 반환하고 양쪽 revision을 보존
+- 자동 병합이 안전한 annotation event는 event merge 가능성을 검토하되 실제 구현은 format test 후 활성화
+- 사용자에게 비교/병합/한쪽 복사 선택지를 제공
+- 삭제는 tombstone event로 전파하고 복구/휴지통 정책을 적용
+
+### 9.4 Provenance
+
+모든 필기/주석은 document_id, document_revision_id, page_index, coordinate_space, source_device_id와 연결합니다. AI가 필기 내용을 OCR/해석한 결과도 원본 annotation layer로 역추적할 수 있어야 합니다.
