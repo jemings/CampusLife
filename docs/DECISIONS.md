@@ -291,7 +291,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 후속 kind: `event, announcement, opportunity, organization, place, person`.
   - 시간표 슬롯은 `course.fields.schedule_slots[]`이고, 반복 일정은 D11의 `local_time_rule` 타입입니다.
 - **LectureSession 생성:** 사용자가 녹음을 시작할 때 생깁니다. Android가 (course, 날짜)로 기존 세션을 찾고, 없으면 create Mutation을 보냅니다. 두 장치가 같은 강의에 세션을 각각 만들면 Item 병합 액션(Relation 이전 + 하나 삭제)으로 정리합니다.
-- **Suggestion:** `Suggestion{id, source_artifact_id, action: create_item|patch_item|add_relation, proposed{…}, evidence[](Locator), fingerprint, state: open|accepted|dismissed|superseded}`.
+- **Suggestion:** `Suggestion{id, source_artifact_id, action: create_item|patch_item|add_relation, proposed{…}, evidence[](Locator), fingerprint, state: open|accepted|dismissed|superseded}`. *(D20으로 대체됨: `action`은 열린 값이고 알려진 값이 `create_item|patch_item|add_relation`(E21))*
   - 수락은 `suggestion.accept{id, edits?}` Mutation입니다. *(D20으로 대체됨: `{mutation_id, op: suggestion.accept, suggestion_id, edits?}`(E11))* Hub가 한 트랜잭션으로 Item을 만들고 근거를 Relation으로 복사합니다.
   - `fingerprint = hash(action, kind, 정규화한 핵심 필드)`입니다. 기각된 fingerprint는 재처리해도 다시 열리지 않습니다.
   - 상충하는 날짜·지시는 서로 `conflicts_with`로 참조하는 Suggestion 쌍이며, 사용자가 하나를 고릅니다.
@@ -541,7 +541,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - D4·D7의 `id_reuse` 응답과 D18의 결과 표현을 대체합니다.
 - **E13. 시간 표기:** `instant`는 정확히 `YYYY-MM-DDTHH:MM:SS.sssZ`(UTC, 밀리초 3자리)입니다. `local_date`는 `{date, tz}`, `local_time_rule`은 `{weekdays(ISO, 월=1), start, end, tz, from_date, until_date}`(end > start)입니다. Item `starts_at`·`due_at`은 `all_day`가 true면 local_date, 아니면 instant입니다. 날짜 부분은 실제 달력 날짜여야 합니다(규칙 `calendar`).
 - **E15. 녹음 타임라인:** 이벤트는 `{type, mono_ns, media_pos_ms}`이고 wall clock은 timeline의 `boot_id`, `anchors:[{wall_ms, mono_ns}]`(1개 이상), `start_uncertainty_ms?`에만 둡니다. `mono_ns`는 2^53을 넘을 수 있는 int64입니다. D15의 이벤트 문장을 대체합니다.
-- **E17. Locator:** `locator/locator` 하나이고 kind는 `pdf_page, slide, doc_path, sheet_range, media_time, image_region, web_snapshot, document`입니다. 모두 `v: 1`을 갖습니다.
+- **E17. Locator:** `locator/locator` 하나이고 kind는 `pdf_page, slide, doc_path, sheet_range, media_time, image_region, web_snapshot, document`입니다. 이 계약의 `v`는 1이고, 1 이상으로 늘 수 있습니다.
   - page·slide·shape는 1부터, `block_index`는 0부터 셉니다.
   - `box`는 `[x, y, w, h]`이고, 각 원소는 `[0,1]`, x+w ≤ 1, y+h ≤ 1입니다(규칙 `box_extent`). 표시 방향 기준이며, `image_region`은 EXIF 회전을 적용한 뒤 기준입니다.
   - `media_time`은 Capture 녹음 타임라인 기준 `start_ms` ≤ `end_ms`입니다.
@@ -560,9 +560,12 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - 값이 늘 수 있는 열거값은 `^[a-z][a-z_]*$`인 모르는 값도 받습니다. Relation `type`, Attachment `role`, Capture `origin.type`, changes `entity`, Artifact `artifact_type`, Locator `kind`, Suggestion `action`, 오류 `code`는 `x-open: true`와 알려진 값 `examples`로 표시합니다. Item `kind`도 같은 pattern으로 열려 있고, 모르는 kind는 제목·날짜·본문만으로 렌더링합니다.
 - **feed union은 열려 있습니다.** Locator `kind`와 Suggestion `action`은 알려진 값이면 그 갈래로 검사하고, 모르는 값이면 멤버째 받습니다.
   - 모르는 Locator kind는 `blob`이 있으면 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. Locator `v`는 1 이상이고 늘 수 있습니다.
+  - 모르는 kind도 `blob`(sha256), `capture`(UUID), `box`(정규화 `[x, y, w, h]`(D12·E17), `box_extent` 규칙도 적용)라는 이름은 타입을 지킵니다. 알려진 kind가 쓰는 공유 멤버라서 Locator 최상위가 예약하고, 클라이언트는 `blob`을 문자열로 읽어도 됩니다. 그 밖의 멤버는 열려 있습니다.
   - 모르는 action은 표시만 하고 수락할 수 없게 합니다.
+  - 규칙 `locator_anchor`는 **모르는** Relation `type`의 `locators`를 허용합니다(feed 열림 원칙). 알려진 type인지는 Relation `type`의 `examples`로 판정합니다. `x-open` 필드의 `examples`는 문서용이 아니라 그 열린 enum의 알려진 값 목록(규범)입니다. 규칙 `locator_anchor`와 `set_type`이 이것을 읽으므로, 목록을 바꾸면 규칙 판정이 함께 바뀌고 fixture와 변이 시험이 그 목록을 고정합니다.
+  - Suggestion `patch_item.proposed.set`의 키는 같은 계약의 열 이름이라 열려 있지 않습니다. 새 열을 제안하는 patch는 계약 버전이 같은 Hub만 보냅니다. 열림 시험의 `FREE_FORM_IN_FEED`가 이 자리를 면제합니다.
   - 그래서 `annotation` Locator(#17)나 새 action은 첫 배포 뒤에도 더할 수 있습니다.
-- **입력 union은 Hub가 먼저 받아들이면 갈래를 더할 수 있습니다.** Mutation `op`가 그렇습니다(E11의 `layer.adopt`, ConflictRecord 해소). 클라이언트가 보내는 쪽의 Locator는 닫힌 view(`locator/locator#/$defs/input`, 알려진 kind, `v` = 1)를 씁니다.
+- **입력 union은 Hub가 먼저 받아들이면 갈래를 더할 수 있습니다.** Mutation `op`가 그렇습니다(E11의 `layer.adopt`, ConflictRecord 해소). 클라이언트가 보내는 쪽의 Locator는 닫힌 view(`locator/locator#/$defs/input`, 알려진 kind, `v` = 1)를 씁니다. 이 view는 `kind`와 `v`만 닫으므로, 멤버는 Locator를 싣는 입력 스키마가 닫습니다(지금 Locator를 싣는 Mutation 입력은 없고, 처음 싣는 것은 #17입니다).
 - **닫힌 값 타입은 첫 배포 뒤 멤버를 더할 수 없습니다.** 옛 클라이언트가 디코드에 실패하기 때문입니다.
   - 대상: 닫힌 enum(Suggestion `state`, task `progress`, `cloud_policy`, `semester`, Attachment `captured_at_precision` 등)과 닫힌 객체 값(`local_date`, `local_time_rule`).
   - 이런 값을 더하려면 첫 배포 전에 넣거나, 새 필드·새 엔터티로 내거나, 계약 버전(`min_contract_version`)을 올립니다.

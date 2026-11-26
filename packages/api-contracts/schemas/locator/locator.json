@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/locator/locator.json",
   "title": "Locator",
-  "description": "One place in an original (D13, E17): the single shape every citation, Suggestion evidence and evidence Relation uses. Anchored to a Blob by its sha256, or for media_time to a Capture's recording timeline. Pages and slides count from 1; other indexes count from 0. When the precise place is unknown the Hub writes document and does not guess. The Hub makes Locators: an LLM cites only the ContentBlock ids it was given, and the Hub checks those ids and turns them into Locators. Open, as the Hub sends it: a known kind is checked by its branch (known), and an unknown kind matching the name pattern is kept with whatever members it has, except that blob (a sha256) and capture (a UUID) keep their type in every kind; a client shows it as document-level evidence when it has a blob and as evidence of unknown place otherwise. v is at least 1 and may grow. Input that carries a Locator uses the closed view input (D20).",
+  "description": "One place in an original (D13, E17): the single shape every citation, Suggestion evidence and evidence Relation uses. Anchored to a Blob by its sha256, or for media_time to a Capture's recording timeline. Pages and slides count from 1; other indexes count from 0. When the precise place is unknown the Hub writes document and does not guess. The Hub makes Locators: an LLM cites only the ContentBlock ids it was given, and the Hub checks those ids and turns them into Locators. Open, as the Hub sends it: a known kind is checked by its branch (known), and an unknown kind matching the name pattern is kept with whatever members it has, except that blob (a sha256), capture (a UUID) and box keep their type in every kind; a client shows it as document-level evidence when it has a blob and as evidence of unknown place otherwise. v is at least 1 and may grow. Input that carries a Locator uses the closed view input (D20); that view closes only kind and v, so the members are closed by the input schema that carries the Locator.",
   "type": "object",
   "required": ["v", "kind"],
   "properties": {
@@ -56,7 +56,7 @@
       }
     },
     "input": {
-      "description": "The closed view for input: only the known kinds, and v is 1. Nothing a client sends carries a Locator yet; the first input that does uses this view.",
+      "description": "The closed view for input: only the known kinds, and v is 1. It closes only kind and v: the members are closed by the input schema that carries the Locator. Nothing a client sends carries a Locator yet; the first input that does (#17) uses this view.",
       "$ref": "#/$defs/known",
       "properties": {
         "v": { "$ref": "../common/int64.json", "minimum": 1, "maximum": 1 }
@@ -110,7 +110,7 @@
         "v": { "$ref": "#/$defs/version" },
         "kind": { "const": "sheet_range" },
         "blob": { "$ref": "#/$defs/blob" },
-        "sheet": { "description": "The sheet's name, as a spreadsheet allows it: 1 to 31 characters, none of \\\\ / ? * [ ] : or a control character, not starting or ending with an apostrophe.", "type": "string", "minLength": 1, "maxLength": 31, "pattern": "^([^'\\\\/?*\\[\\]:\\u0000-\\u001f\\u007f-\\u009f]([^\\\\/?*\\[\\]:\\u0000-\\u001f\\u007f-\\u009f]*[^'\\\\/?*\\[\\]:\\u0000-\\u001f\\u007f-\\u009f])?)?$" },
+        "sheet": { "description": "The sheet's name, as a spreadsheet allows it: 1 to 31 characters (counted in code points; a spreadsheet counts 31 UTF-16 units), none of \\\\ / ? * [ ] : or a control character, not starting or ending with an apostrophe.", "type": "string", "minLength": 1, "maxLength": 31, "pattern": "^([^'\\\\/?*\\[\\]:\\u0000-\\u001f\\u007f-\\u009f]([^\\\\/?*\\[\\]:\\u0000-\\u001f\\u007f-\\u009f]*[^'\\\\/?*\\[\\]:\\u0000-\\u001f\\u007f-\\u009f])?)?$" },
         "a1": { "description": "A cell or a first:last range in A1 notation, uppercase, without $, inside the grid (columns to XFD, rows to 1048576), from the top-left cell to the bottom-right one (rule a1_order).", "type": "string", "pattern": "^(?:[A-Z]{1,2}|[A-W][A-Z]{2}|X[A-E][A-Z]|XF[A-D])(?:[1-9][0-9]{0,5}|10[0-3][0-9]{4}|104[0-7][0-9]{3}|1048[0-4][0-9]{2}|10485[0-6][0-9]|104857[0-6])(?::(?:[A-Z]{1,2}|[A-W][A-Z]{2}|X[A-E][A-Z]|XF[A-D])(?:[1-9][0-9]{0,5}|10[0-3][0-9]{4}|104[0-7][0-9]{3}|1048[0-4][0-9]{2}|10485[0-6][0-9]|104857[0-6]))?$", "x-a1-order": true }
       }
     },
