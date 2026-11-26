@@ -29,7 +29,7 @@
 | 사용자 (어느 장치에서든) | Item, Relation, Tag, AnnotationLayer, `cloud_policy`, Suggestion 수락·기각, ConflictRecord 해소 | **오직 Mutation**으로만 씁니다. Windows 로컬 UI도 같은 Mutation 적용 함수를 호출합니다 |
 | 클라이언트 로컬 | Capture 봉인 상태(`open / sealed`), 전송 상태(`pending, uploading, committed, retry_wait, needs_attention`), sync cursor, 캐시 | 해당 클라이언트만 씁니다. Hub에는 진단용 heartbeat로만 보고합니다 |
 
-- 처리 상태는 `ProcessingJob.state`(`pending, running, retry_wait, succeeded, failed, blocked, cancelled`)에만 저장합니다. 실패·부분 성공의 이유는 `outcome_code`(`unsupported, password_required, corrupt, needs_conversion, partial, policy_blocked, budget_blocked`)로 남깁니다.
+- 처리 상태는 `ProcessingJob.state`(`pending, running, retry_wait, succeeded, failed, blocked, cancelled`)에만 저장합니다. 실패·부분 성공의 이유는 `outcome_code`(`unsupported, password_required, corrupt, needs_conversion, partial, policy_blocked, budget_blocked`)로 남깁니다. *(D20으로 대체됨: `unsafe_input`이 더해짐(U3))*
 - 화면의 "처리 중 / 일부 실패 / 완료"는 job을 집계한 계산값입니다. Hub가 이 값을 `processing_summary`로 피드에 실어 보냅니다.
 
 **결과:**
@@ -86,7 +86,7 @@
 
 **결정:** B.
 - Hub에는 SQLite 전역 카운터 `change_seq`가 하나 있습니다. 동기화 대상 테이블의 쓰기는 같은 트랜잭션에서 `change_seq += 1`을 하고 그 값을 행의 `rev`에 넣습니다.
-- `GET /v1/changes?since=<seq>&limit=500`은 다음을 돌려줍니다: `{hub_id, epoch, changes:[{type, id, rev, deleted, data}], next_since, has_more}`. 스트림은 하나입니다.
+- `GET /v1/changes?since=<seq>&limit=500`은 다음을 돌려줍니다: `{hub_id, epoch, changes:[{type, id, rev, deleted, data}], next_since, has_more}`. 스트림은 하나입니다. *(D20으로 대체됨: 항목 구분 키는 `type`이 아니라 `entity`(E18))*
 - cursor는 클라이언트가 저장합니다. 같은 페이지를 다시 받아도 행을 덮어쓰기만 하므로 멱등입니다. full reconcile은 `since=0`과 같은 경로입니다.
 - tombstone은 휴지통 purge 후에도 `(id, deleted)` 행으로 남깁니다. 작아서 무기한 보존할 수 있으므로 "retention 초과" 상황이 없습니다.
 - **`hub_id`와 `epoch`:** 모든 응답에 싣습니다. `epoch`은 복원하거나 새 노트북으로 이전할 때 새로 발급합니다. 클라이언트는 epoch가 바뀐 것을 보면 다음을 합니다.
@@ -113,7 +113,7 @@
   - 순서는 ID가 아니라 Hub의 `change_seq`가 정합니다.
   - UUIDv7은 Kotlin·Swift 표준 라이브러리에 생성기가 없어 세 언어에 같은 구현을 따로 넣어야 하므로 택하지 않았습니다.
 - Blob ID는 sha256 소문자 hex입니다.
-- 같은 ID + 같은 내용이 다시 오면 이전 결과를 그대로 돌려줍니다. 같은 ID + 다른 내용이면 `409 id_reuse`로 거부합니다.
+- 같은 ID + 같은 내용이 다시 오면 이전 결과를 그대로 돌려줍니다. 같은 ID + 다른 내용이면 `409 id_reuse`로 거부합니다. *(D20으로 대체됨: Mutation 배치 안에서는 HTTP 200 안의 `rejected{reason: id_reuse}`(E12))*
 - ProcessingJob은 `job_key = hash(job_type, 입력 blob/artifact 해시 목록, pipeline_version, provider, model, prompt_version, params)`에 UNIQUE를 겁니다. 같은 키면 기존 Artifact를 재사용합니다. 사용자가 명시적으로 "다시 생성"을 누를 때만 params에 nonce를 넣어 새 키를 만듭니다.
 
 **결과:** 별도 멱등 헤더가 없습니다. 재전송 안전성이 ID 규칙 하나로 설명됩니다.
@@ -171,7 +171,7 @@
   - iOS는 Keychain에 `AfterFirstUnlockThisDeviceOnly`로 둡니다. 잠금 상태에서도 백그라운드 전송이 토큰을 읽을 수 있어야 하기 때문입니다. 앱과 Share Extension은 access group으로 같은 토큰을 씁니다.
 - **장치 상태:** `active | dormant | revoked` 셋입니다.
   - 설정한 기간(기본 90일) 동안 접속이 없으면 `dormant`가 되어 재승인이 필요합니다. 데이터·cursor·Outbox는 보존합니다.
-  - 사용자가 "토큰 재발급"을 누르면 새 토큰을 발급합니다. 이전 토큰은 클라이언트가 새 토큰 저장을 확인한 뒤에 폐기합니다.
+  - 사용자가 "토큰 재발급"을 누르면 새 토큰을 발급합니다. 이전 토큰은 클라이언트가 새 토큰 저장을 확인한 뒤에 폐기합니다. *(D20으로 대체됨: 재발급은 클라이언트 앱이 `POST /v1/devices/me/token`으로 시작하고, 이전 토큰은 새 토큰의 첫 인증 성공 때 폐기됨)*
 - **revoke:** 해당 토큰 요청은 401 `device_revoked`가 되고 열린 업로드 세션도 폐기합니다.
   - 그 장치의 미전송 데이터는 재pairing 후 다시 올릴 수 있습니다. Capture는 ID로 멱등이고, Mutation은 CAS로 재판정되기 때문입니다.
 - **Windows UI·CLI는 Device가 아닙니다.** admin 포트를 씁니다. 로컬 import의 출처 표기에만 `hub` pseudo-device를 씁니다.
@@ -193,11 +193,11 @@
 **결정:** B.
 
 ```
-POST /v1/blobs/uploads            {sha256, size, chunk_size} → 200 exists | 201 {received:[i…]}
+POST /v1/blobs/uploads            {sha256, size, chunk_size} → 200 exists | 201 {received:[i…]}   ← D20으로 대체됨: 요청은 {sha256, size}, chunk_size는 세션 응답이 정함(E19)
 PUT  /v1/blobs/uploads/{sha}/chunks/{i}   (순서 무관, 같은 바이트 재전송은 no-op)
 POST /v1/blobs/uploads/{sha}/finalize     → 200 stored | 409 hash_mismatch (chunk 폐기)
 POST /v1/mutations  [{type: capture.commit, capture_id, origin, links[], attachments[], timeline?}]
-     → applied | retry{missing_blobs[]} | conflict(id_reuse)
+     → applied | retry{missing_blobs[]} | conflict(id_reuse)   ← D20으로 대체됨: 봉투는 {mutation_id, op: capture.commit, capture}(E11), id_reuse는 rejected의 reason(E12)
 GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 ```
 
@@ -244,7 +244,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - `confirm_each_send`(전역 또는 과목, 기본 false): true면 전송 전에 provider, 모델, 입력 종류·크기, 예상 비용, 취소 방법을 보여 줍니다.
   - budget guard: 월 예산이나 job당 상한을 넘으면 job이 `budget_blocked`가 되어 사용자 승인을 기다립니다.
 - **전송 기록:** 외부 호출마다 `audit_log`에 `{시각, provider, model, 입력 id, 바이트, 정책 스냅샷, 확인 여부, 비용}`을 남깁니다. 정책을 엄격하게 바꾸면 "이미 N회 전송됨(회수 불가)"을 UI에 표시합니다.
-- `cloud_redacted`는 v1에 없습니다. 한국어 PII 탐지기의 재현율이 검증되면(미결 O5) `local_only`와 `cloud_allowed` 사이 값으로 추가합니다.
+- `cloud_redacted`는 v1에 없습니다. 한국어 PII 탐지기의 재현율이 검증되면(미결 O5) `local_only`와 `cloud_allowed` 사이 값으로 추가합니다. *(D20으로 대체됨: `cloud_policy`는 닫힌 enum이라 첫 클라이언트 배포 뒤에는 값을 더할 수 없음. 첫 배포 전에 넣거나 계약 버전을 올려야 함)*
 
 **결과:**
 - 세 클라이언트가 알아야 할 것은 "값 3개와 min"뿐입니다.
@@ -263,7 +263,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - B. Artifact는 불변이고, 사용자 편집은 별도 Note로 만든다.
 
 **결정:** B.
-- `Artifact{id, artifact_type, subject_ref, job_key, provider, model, prompt_version, pipeline_version, input_hashes[], content_blob, created_at}`.
+- `Artifact{id, artifact_type, subject_ref, job_key, provider, model, prompt_version, pipeline_version, input_hashes[], content_blob, created_at}`. *(D20으로 대체됨: provider·model·prompt_version은 모델을 쓴 job에만 있는 선택 열, `artifact_type`은 열린 값)*
 - 재실행은 새 Artifact를 만듭니다. `(subject_ref, artifact_type)`별 `current` 포인터는 Hub가 소유합니다.
 - "AI 노트 편집"을 누르면 `Note` Item(`fields.forked_from_artifact`)이 생기고, 본문과 인용이 복사됩니다. 이후 편집은 Note의 Mutation입니다.
 - 새 AI 버전이 나오면 UI는 "새 버전 있음(비교)"만 보여 주고 Note를 바꾸지 않습니다.
@@ -285,14 +285,14 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - C. 단일 Item(공통 열 + kind별 JSON Schema로 검증하는 `fields`), AI 제안은 Suggestion 엔터티로 분리.
 
 **결정:** C.
-- **Item 구조:** `Item{id, kind, schema_version, title, body?, status?, starts_at?, due_at?, all_day?, fields{…}, rev, deleted_at?}`.
+- **Item 구조:** `Item{id, kind, schema_version, title, body?, status?, starts_at?, due_at?, all_day?, fields{…}, rev, deleted_at?}`. *(D20으로 대체됨: `status`는 없음, task 상태는 `fields.progress`(U4))*
   - 일정 로직에 필요한 날짜·상태는 공통 열에 둡니다. 질의가 필요한 fields는 Hub에서 generated column으로 승격합니다.
   - MVP kind: `term, course, lecture_session, note, task, assignment, exam`.
   - 후속 kind: `event, announcement, opportunity, organization, place, person`.
   - 시간표 슬롯은 `course.fields.schedule_slots[]`이고, 반복 일정은 D11의 `local_time_rule` 타입입니다.
 - **LectureSession 생성:** 사용자가 녹음을 시작할 때 생깁니다. Android가 (course, 날짜)로 기존 세션을 찾고, 없으면 create Mutation을 보냅니다. 두 장치가 같은 강의에 세션을 각각 만들면 Item 병합 액션(Relation 이전 + 하나 삭제)으로 정리합니다.
 - **Suggestion:** `Suggestion{id, source_artifact_id, action: create_item|patch_item|add_relation, proposed{…}, evidence[](Locator), fingerprint, state: open|accepted|dismissed|superseded}`.
-  - 수락은 `suggestion.accept{id, edits?}` Mutation입니다. Hub가 한 트랜잭션으로 Item을 만들고 근거를 Relation으로 복사합니다.
+  - 수락은 `suggestion.accept{id, edits?}` Mutation입니다. *(D20으로 대체됨: `{mutation_id, op: suggestion.accept, suggestion_id, edits?}`(E11))* Hub가 한 트랜잭션으로 Item을 만들고 근거를 Relation으로 복사합니다.
   - `fingerprint = hash(action, kind, 정규화한 핵심 필드)`입니다. 기각된 fingerprint는 재처리해도 다시 열리지 않습니다.
   - 상충하는 날짜·지시는 서로 `conflicts_with`로 참조하는 Suggestion 쌍이며, 사용자가 하나를 고릅니다.
 - **클라이언트 호환 규칙:** 모르는 kind는 제목·날짜·본문만으로 일반 렌더링합니다. patch는 바꾼 필드만 보내므로, 모르는 필드를 보존할 필요가 없습니다.
@@ -317,7 +317,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - `local_date`(+ IANA tz): 종일 일정, 날짜 마감.
 - `local_time_rule`(`HH:MM` + IANA tz + 요일·기간): 시간표 반복. 표시할 때 전개합니다.
 - "23:59까지" 같은 마감은 `instant`로 저장하고, 원문 표현은 `fields.due_text`에 보존합니다. "자정"처럼 모호한 표현은 Suggestion으로 확인을 받습니다.
-- 저장·비교하는 모든 문자열(파일명, 제목, 본문, 검색어)은 NFC로 정규화하고 원문 문자열을 함께 보존합니다. Blob 바이트는 건드리지 않습니다.
+- 저장·비교하는 모든 문자열(파일명, 제목, 본문, 검색어)은 NFC로 정규화하고 원문 문자열을 함께 보존합니다. Blob 바이트는 건드리지 않습니다. *(D20으로 대체됨: wire 문자열은 NFC여야 하고 아니면 `not_canonical`로 거부, 원문 보존은 파일명만(U2))*
 
 ---
 
@@ -343,7 +343,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - `strokes.v1.json`: 표준 표현. ink stroke(points, 잉크 종류·색·굵기), highlight, text note를 담습니다.
   - 좌표는 회전·CropBox를 적용한 표시 방향 페이지 기준 `[0,1]` 정규화 좌표입니다. 원점은 좌상단이고, `page_box{w, h, rotation}`을 함께 기록합니다.
   - Hub는 PKDrawing을 해석하지 않습니다.
-- **overlay 렌더링:** overlay PDF·PNG는 **Hub가** `strokes.v1.json`으로 렌더링합니다. Artifact이며 캐시입니다. Android와 Windows는 이것을 엽니다. 렌더러는 Hub 하나입니다.
+- **overlay 렌더링:** overlay PDF·PNG는 **Hub가** `strokes.v1.json`으로 렌더링합니다. Artifact이며 캐시입니다. *(D20으로 대체됨: `artifact_type: overlay`인 Artifact 행으로 동기화되고, 같은 입력이면 다시 만들 수 있음. 백업 여부는 Artifact와 같음)* Android와 Windows는 이것을 엽니다. 렌더러는 Hub 하나입니다.
 - **렌디션 고정:** PPTX·DOCX·HWP는 Hub가 PDF 렌디션 Blob을 만들고 `Relation(rendition_of)`로 원본에 연결합니다. 필기는 **렌디션 Blob에 고정**됩니다.
   - 렌디션에 레이어가 하나라도 생기면 그 렌디션 Blob은 pin되어 재생성·정리 대상에서 빠집니다.
   - 변환기 버전이 바뀌면 새 렌디션은 새 Blob이 되므로 기존 필기가 어긋나지 않습니다.
@@ -371,7 +371,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 { "v": 1, "capture": "<id>", "kind": "media_time", "start_ms": 1930000, "end_ms": 1985000 }
 { "v": 1, "blob": "<sha256>", "kind": "image_region", "box": [0, 0, 1, 1] }
 { "v": 1, "blob": "<snapshot sha256>", "kind": "web_snapshot", "url": "https://…", "anchor": "section-2" }
-{ "v": 1, "layer": "<id>", "rev": 5, "kind": "annotation", "box": [0.2, 0.4, 0.3, 0.1] }
+{ "v": 1, "layer": "<id>", "rev": 5, "kind": "annotation", "box": [0.2, 0.4, 0.3, 0.1] }   ← D20으로 대체됨: annotation kind는 #17이 추가, box는 [x, y, w, h](E17)
 { "v": 1, "blob": "<sha256>", "kind": "document" }
 ```
 
@@ -419,9 +419,9 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **세그먼트:** 녹음 산출물은 세그먼트 목록입니다. 각 세그먼트는 5분 이하이고, 닫히면 단독으로 재생할 수 있습니다. 크래시로 잃는 범위는 열려 있던 세그먼트 하나입니다.
   - 각 세그먼트는 Attachment(`role=audio_segment`, `seq`)입니다.
 - **`timeline`:** `capture.commit`에 포함되는 녹음 타임라인입니다.
-  - 이벤트 목록: `start, pause, resume, stop, interrupted, silenced, segment_open, segment_close`. 각 이벤트에 `mono_ns`, `wall_ms`, `media_pos_ms`를 기록합니다.
+  - 이벤트 목록: `start, pause, resume, stop, interrupted, silenced, segment_open, segment_close`. 각 이벤트에 `mono_ns`, `wall_ms`, `media_pos_ms`를 기록합니다. *(D20으로 대체됨: 이벤트는 `{type, mono_ns, media_pos_ms}`이고 wall clock은 anchor에만(E15))*
   - `mono_ns = SystemClock.elapsedRealtimeNanos()`입니다. 기기가 절전 중에도 계속 가는 단조 시계입니다.
-  - wall clock은 anchor 한 쌍 `(wall_ms, mono_ns)`과 `boot_id`만 기록합니다.
+  - wall clock은 anchor 한 쌍 `(wall_ms, mono_ns)`과 `boot_id`만 기록합니다. *(D20으로 대체됨: `anchors:[{wall_ms, mono_ns}]`는 1개 이상이며, 재부팅 없이 시계가 바뀌면 anchor를 더함(E15))*
 - **사진 연결:** 앱 안에서 찍은 사진은 셔터 시점의 `mono_ns`를 기록합니다.
   - 녹음 시작 앵커는 `AudioRecord.getTimestamp`로 얻을 수 있으면 그 값을 씁니다. MediaRecorder를 쓰면 시작 호출 시각과 `start_uncertainty_ms`를 함께 기록하고, 정밀한 척하지 않습니다.
   - 외부 사진은 EXIF 시각을 쓰되 정확도를 낮게 표시합니다.
@@ -469,11 +469,11 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 
 **결정:** B. Swift 생성기 품질과 생성 코드 유지 부담이 크고, D7·D10 덕분에 계약 면적이 작습니다.
 - `packages/api-contracts/`에 다음을 둡니다.
-  - `schemas/`: manifest·commit, Item kind, Locator, Mutation, changes, AnnotationLayer payload, error
-  - `openapi.yaml`
-  - 클라이언트 로컬 sync 테이블 DDL: `entity_cache`, `mutation_outbox`, `blob_transfer`, `meta(cursor, hub_id, epoch)`
+  - `schemas/`: manifest·commit, Item kind, Locator, Mutation, changes, AnnotationLayer payload, error *(D20으로 대체됨: manifest는 없음(D7), AnnotationLayer payload는 #17)*
+  - `openapi.yaml` *(D20으로 대체됨: `openapi/sync.yaml`)*
+  - 클라이언트 로컬 sync 테이블 DDL: `entity_cache`, `mutation_outbox`, `blob_transfer`, `meta(cursor, hub_id, epoch)` *(D20으로 대체됨: 클라이언트 DDL은 계약 패키지가 아니라 각 앱 이슈(#3, #16)가 만듦(U1))*
   - `fixtures/`
-- 버전 규칙: 경로는 `/v1`입니다. 스키마는 추가하는 변경만 하위 호환으로 허용합니다. Hub는 `GET /v1/hub`로 `min_client_version`을 알립니다.
+- 버전 규칙: 경로는 `/v1`입니다. 스키마는 추가하는 변경만 하위 호환으로 허용합니다. Hub는 `GET /v1/hub`로 `min_client_version`을 알립니다. *(D20으로 대체됨: `contract_version`·`min_contract_version` 정수와 요청 헤더 `CampusLife-Contract`(E18), 첫 클라이언트 배포 전까지는 깨는 변경 허용(E21))*
 
 ---
 
@@ -489,7 +489,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - C. patch가 필드마다 이전 값(긴 텍스트는 이전 값의 해시)을 함께 보내는 compare-and-set.
 
 **결정:** C.
-- **Mutation 형식:** `{mutation_id, entity, id, op: create|patch|delete|restore|suggestion.accept|…, set:{field:{from, to}}}`.
+- **Mutation 형식:** `{mutation_id, entity, id, op: create|patch|delete|restore|suggestion.accept|…, set:{field:{from, to}}}`. *(D20으로 대체됨: `op`로 구분하는 union 하나, 결과는 E12)*
   - 긴 텍스트 필드(스키마에 `x-text: true`)는 `from` 대신 `from_hash`를 보냅니다.
 - **적용 규칙:** Hub의 현재 값이 `from`과 같으면 그 필드를 적용하고, 다르면 그 필드만 충돌입니다.
   - 스칼라 필드: 같은 필드를 동시에 바꾼 경우만 충돌이고, 나머지 필드는 적용합니다.
@@ -518,6 +518,62 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 
 ---
 
+## D20. 계약 정리 (2026-11-26)
+
+**문제:** `packages/api-contracts`(#20)를 만들면서 문서끼리, 또는 문서와 구현 가능성이 어긋난 곳이 드러났습니다. 봉투가 두 가지(D7 `{type: capture.commit,…}`, D18 `{mutation_id, entity, id, op, set}`)였고, `id_reuse`가 D4에서는 409, D7에서는 conflict였습니다. D15는 이벤트마다 `wall_ms`를 적으면서 wall clock은 anchor에만 둔다고 했습니다. D13의 annotation box 예시는 모서리 좌표로는 성립하지 않았고, D17은 없앤 manifest를 적고 있었습니다. Item `status?`에는 값 목록이 없었습니다.
+
+**결정:** 스키마가 규범입니다(E22). 필드를 더하거나 바꾸는 PR은 같은 PR에서 DOMAIN-MODEL을 고칩니다. 아래가 이 정리에서 바뀐 것이며, 앞 항목의 해당 문장에 `D20으로 대체됨`을 달았습니다.
+
+- **U1. 언어별 검증:** Kotlin·Swift 왕복 검사는 각 앱 이슈(#3, #16)가 앱 모델과 함께 만듭니다. #20은 Python 왕복, 하네스 프로토콜(`HARNESS.md`), 비교기를 냅니다. macOS runner는 쓰지 않습니다.
+- **U2. NFC:** wire의 모든 문자열은 NFC여야 합니다. 아니면 Hub가 `rejected{reason: not_canonical}`으로 거부하고 조용히 고치지 않습니다(조용히 고치면 CAS가 가짜로 충돌합니다). 원문 보존은 파일명만 합니다: Attachment `original_filename_raw`는 받은 원문이 NFC와 다를 때만 둡니다. D11을 대체합니다.
+- **U3. `outcome_code`:** `unsafe_input`(위험한 구조, 상한 초과)을 더합니다. 세부 사유는 동기화하지 않는 job error에 남깁니다. D1을 대체합니다.
+- **U4. Item `status`:** 공통 열에서 뺍니다. task 상태는 `fields.progress` 하나입니다. D10을 대체합니다.
+- **E11. Mutation 봉투:** `op`로 구분하는 union 하나입니다. 공통은 `{mutation_id, op}`입니다.
+  - `capture.commit {capture}`, `create {entity, id, data}`, `patch {entity, id, set:{key: {from, to} | {from_hash, to}}}`, `delete`·`restore {entity, id}`, `suggestion.accept {suggestion_id, edits?}`, `suggestion.dismiss {suggestion_id}`. MVP op는 이 일곱 개이고, 뒤의 op(`layer.adopt`은 #17, ConflictRecord 해소는 #18)는 갈래로 더합니다.
+  - `set`의 키는 공통 열 이름이나 `fields.<key>`(한 단계)입니다. patch는 `x-owner: user` 열만 쓰고, `fields`를 통째로 쓰지 않습니다. 배열은 통째로 비교·교체하고, `from: null`은 없던 열, `to: null`은 선택 열 삭제입니다.
+  - `x-text: true` 열은 `from` 대신 `from_hash`(NFC + LF로 정규화한 UTF-8 바이트의 sha256)를 보냅니다. 빈 문자열도 해시하고, `null`은 열이 없었다는 뜻입니다.
+  - `edits`는 patch의 set처럼 키를 쓰고, 값은 제안 대신 쓸 값입니다. 대상은 늘 Item이므로 공통 열 키는 patch처럼 규칙 `owner`·`set_type`으로 검사합니다. `fields.<key>`의 타입과 "제안에 있는 키인가"는 Suggestion을 봐야 하므로 Hub 적용기(#2)가 판정합니다.
+  - D7·D10·D18의 봉투를 대체합니다.
+- **E12. Mutation 결과:** `{mutation_id, result: applied|duplicate|conflict|rejected|retry|not_attempted, reason?, applied_fields?, conflicted_fields?, conflict_record_ids?, missing_blobs?, original?}`.
+  - `reason`은 `id_reuse, not_canonical, owner, schema, deleted, link_target_missing, unsupported_entity`입니다(A4). `id_reuse`(같은 id, 다른 내용)는 rejected입니다.
+  - `duplicate`는 이미 처리한 `mutation_id`의 재전송이며 `original`에 처음 결과를 담습니다.
+  - 배치는 순서대로 처리하고 첫 `retry` 뒤는 `not_attempted`입니다. 배치가 형식에 맞으면 HTTP 200입니다. HTTP 409는 업로드 세션 같은 단일 자원에만 씁니다.
+  - D4·D7의 `id_reuse` 응답과 D18의 결과 표현을 대체합니다.
+- **E13. 시간 표기:** `instant`는 정확히 `YYYY-MM-DDTHH:MM:SS.sssZ`(UTC, 밀리초 3자리)입니다. `local_date`는 `{date, tz}`, `local_time_rule`은 `{weekdays(ISO, 월=1), start, end, tz, from_date, until_date}`(end > start)입니다. Item `starts_at`·`due_at`은 `all_day`가 true면 local_date, 아니면 instant입니다. 날짜 부분은 실제 달력 날짜여야 합니다(규칙 `calendar`).
+- **E15. 녹음 타임라인:** 이벤트는 `{type, mono_ns, media_pos_ms}`이고 wall clock은 timeline의 `boot_id`, `anchors:[{wall_ms, mono_ns}]`(1개 이상), `start_uncertainty_ms?`에만 둡니다. `mono_ns`는 2^53을 넘을 수 있는 int64입니다. D15의 이벤트 문장을 대체합니다.
+- **E17. Locator:** `locator/locator` 하나이고 kind는 `pdf_page, slide, doc_path, sheet_range, media_time, image_region, web_snapshot, document`입니다. 모두 `v: 1`을 갖습니다.
+  - page·slide·shape는 1부터, `block_index`는 0부터 셉니다.
+  - `box`는 `[x, y, w, h]`이고, 각 원소는 `[0,1]`, x+w ≤ 1, y+h ≤ 1입니다(규칙 `box_extent`). 표시 방향 기준이며, `image_region`은 EXIF 회전을 적용한 뒤 기준입니다.
+  - `media_time`은 Capture 녹음 타임라인 기준 `start_ms` ≤ `end_ms`입니다.
+  - kind는 Hub가 보내는 쪽에서 열려 있고 `v`는 1 이상입니다(아래 값을 더하는 규칙). `annotation` kind는 #17이 더합니다. D13의 예시 목록과 box 예시를 대체합니다.
+  - evidence Relation의 근거 위치는 `locators: [Locator]`(1개 이상, 중복 없음, Hub 소유)입니다. 수락하면 Hub가 evidence의 anchor(blob 또는 capture)마다 `item:<id> —evidence→ blob:<sha> | capture:<id>`를 하나씩 만들고 locators를 합집합으로 모읍니다. add_relation은 만든 Relation의 locators에 둡니다. 각 locator의 anchor는 `to`와 같고, 다른 알려진 type에는 locators가 없습니다(규칙 `locator_anchor`).
+- **토큰 재발급:** 클라이언트 앱이 `POST /v1/devices/me/token`(지금 토큰으로 인증, 본문 없음)으로 시작합니다. 이전 토큰은 새 토큰이 처음 인증에 성공할 때 폐기됩니다. 그 첫 사용이 "새 토큰을 저장했다"는 확인을 대신하고, 그전까지는 두 토큰이 모두 유효합니다. 같은 요청을 다시 보내면 아직 쓰이지 않은 같은 새 토큰을 돌려줍니다. D6의 재발급 문장을 대체합니다.
+- **sync 포트:** 경로, 상태 코드, 헤더는 `openapi/sync.yaml`(OpenAPI 3.1)이 적고, 본문·파라미터·헤더 모양은 모두 JSON Schema를 `$ref`합니다.
+  - 모든 응답에 `CampusLife-Hub-Id`·`CampusLife-Epoch`이 붙고, 요청은 `CampusLife-Contract`를 보냅니다.
+  - 모든 operation이 400을 가지지만 `GET /v1/hub`는 `contract_too_old`를 내지 않습니다. 너무 오래된 클라이언트도 거기서 `min_contract_version`을 읽고 스스로 멈춥니다.
+  - 업로드 세션의 키는 (Device, sha256)이고 chunk 번호는 0부터이며, chunk 크기는 세션 응답이 정합니다. 이미 저장된 Blob의 finalize는 세션이 없어도 200입니다.
+  - D7·D17의 해당 문장을 대체합니다.
+
+**값을 더하는 규칙 (첫 클라이언트 배포 뒤):**
+- 첫 클라이언트 배포(#3 릴리스) 전까지는 깨는 변경을 허용하고, 그 뒤에는 additive-only입니다(E21).
+- Hub가 보내는 모양은 안쪽까지 열려 있습니다. 모르는 멤버는 무시하고, 모르는 entity의 행은 건너뜁니다. Suggestion `proposed`도 마찬가지입니다.
+- 값이 늘 수 있는 열거값은 `^[a-z][a-z_]*$`인 모르는 값도 받습니다. Relation `type`, Attachment `role`, Capture `origin.type`, changes `entity`, Artifact `artifact_type`, Locator `kind`, Suggestion `action`, 오류 `code`는 `x-open: true`와 알려진 값 `examples`로 표시합니다. Item `kind`도 같은 pattern으로 열려 있고, 모르는 kind는 제목·날짜·본문만으로 렌더링합니다.
+- **feed union은 열려 있습니다.** Locator `kind`와 Suggestion `action`은 알려진 값이면 그 갈래로 검사하고, 모르는 값이면 멤버째 받습니다.
+  - 모르는 Locator kind는 `blob`이 있으면 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. Locator `v`는 1 이상이고 늘 수 있습니다.
+  - 모르는 action은 표시만 하고 수락할 수 없게 합니다.
+  - 그래서 `annotation` Locator(#17)나 새 action은 첫 배포 뒤에도 더할 수 있습니다.
+- **입력 union은 Hub가 먼저 받아들이면 갈래를 더할 수 있습니다.** Mutation `op`가 그렇습니다(E11의 `layer.adopt`, ConflictRecord 해소). 클라이언트가 보내는 쪽의 Locator는 닫힌 view(`locator/locator#/$defs/input`, 알려진 kind, `v` = 1)를 씁니다.
+- **닫힌 값 타입은 첫 배포 뒤 멤버를 더할 수 없습니다.** 옛 클라이언트가 디코드에 실패하기 때문입니다.
+  - 대상: 닫힌 enum(Suggestion `state`, task `progress`, `cloud_policy`, `semester`, Attachment `captured_at_precision` 등)과 닫힌 객체 값(`local_date`, `local_time_rule`).
+  - 이런 값을 더하려면 첫 배포 전에 넣거나, 새 필드·새 엔터티로 내거나, 계약 버전(`min_contract_version`)을 올립니다.
+- 들어오는 입력(Mutation, pair 요청, status, 업로드 요청, changes 쿼리)은 닫혀 있어 모르는 멤버를 거부합니다. 입력에 멤버를 더하는 것은 Hub가 먼저 받아들인 뒤 클라이언트가 보내는 순서로만 할 수 있습니다.
+
+**결과:**
+- 세 언어가 같은 fixture로 같은 판정을 하고, 규칙(`nfc`, `calendar`, `tz_exists`, `range_order`, `box_extent`, `owner`, `set_type`, `locator_anchor`, `a1_order`, `conflict_self` 등)은 Python 검증기 `validate()` 한 곳에 있습니다.
+- D1·D3·D4·D6·D7·D8·D9·D10·D11·D12·D13·D15·D17·D18의 해당 문장과 미결 O5는 이 항목을 따릅니다.
+
+---
+
 ## 미결 결정
 
 모든 수치 기준은 제안값이며, 측정은 합성·공개 데이터로 로컬에서 합니다.
@@ -528,7 +584,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 | O2 | 한국어 전문 검색 분석기 | 분석기는 `TextAnalyzer` 인터페이스 뒤에 두고 인덱스에 `analyzer_id@version`을 기록, 바꾸면 전체 재색인. 후보: `unicode61` / `trigram` + 3글자 미만 LIKE / 한글 겹침 2-gram 선토큰화 + `unicode61` / 형태소 분석. 합성 코퍼스로 2음절 질의·조사 결합·영한 혼합의 recall@10, p95 응답 시간, 인덱스 크기 측정. `trigram`은 3글자 미만 MATCH가 걸리지 않으므로 단독 사용 불가 |
 | O3 | Android 녹음 구현 수단(D15 a/b/c)과 세그먼트 길이 | 강제 종료·전원 차단 후 복구율, 세그먼트 경계 공백 ≤ 100 ms, 60분 배터리·CPU, 접힘·화면 꺼짐·Samsung 절전에서 FGS 생존 |
 | O4 | HWP 5 변환 도구, Office → PDF 렌디션 도구 | 합성·공개 fixture에서 표·수식 보존률, 라이선스, Windows 설치 난이도 |
-| O5 | `cloud_redacted` 도입 | 한국어 PII(학번, 전화, 이름) 탐지 재현율 ≥ 0.98일 때만 값 추가 |
+| O5 | `cloud_redacted` 도입 | 한국어 PII(학번, 전화, 이름) 탐지 재현율 ≥ 0.98일 때만 값 추가. 닫힌 enum이므로 첫 배포 뒤에는 계약 버전을 올려야 함(D20) |
 | O6 | Hub가 켜진 뒤 업로드가 시작되기까지의 지연, 푸시 깨우기 필요성 | Doze 포함 지연 중앙값이 15분을 넘으면 FCM/APNs 깨우기 검토(외부 의존·비용 평가 포함) |
 | O7 | iPad 배포·서명 | 무료 Apple 계정의 프로비저닝 유효기간, App Group·Background Modes·Share Extension 사용 가능 여부. #16 착수 전에 배포 방식 확정 |
 | O8 | `tailscale serve` 대용량 전송, chunk 크기, Hub 상주 방식 | LTE·DERP relay 경유 4/8/16 MiB chunk 업로드의 실패율 < 1%와 재개 정상 여부, 절전 복귀 후 serve·인증서 유지. 실패 시 D5 대체안(C) 사용 |
