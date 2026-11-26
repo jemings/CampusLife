@@ -9,8 +9,9 @@ that defines that key.
 A patch writes only columns marked x-owner user (D1): hub columns are the
 Hub's, client columns were fixed by the creating client, and an unmarked
 column is not writable. Values must fit the column as input: an open enum
-(pattern plus examples, left open for what the Hub sends) takes only its
-known values.
+(x-open, left open for what the Hub sends) takes only its examples, also
+inside $ref, allOf, anyOf, oneOf, properties, additionalProperties,
+prefixItems and items.
 """
 
 from __future__ import annotations
@@ -62,24 +63,44 @@ def _column(validator, target: dict, key: str) -> Column | None:
     )
 
 
-def _known_values(schema: dict, resolver) -> list | None:
-    """The examples of an open enum at the column or the schema it refers to."""
-    if "examples" in schema:
-        return schema["examples"]
+def _fits_as_input(validator, schema: object, resolver, value: object) -> bool:
+    """value fits schema, and every open enum it lands in knows it."""
+    if next(validator.evolve(schema=schema, _resolver=resolver).iter_errors(value), None) is not None:
+        return False
+    if not isinstance(schema, dict):
+        return True
+    if schema.get("x-open") is True and value not in schema.get("examples", []):
+        return False
     if "$ref" in schema:
         resolved = resolver.lookup(schema["$ref"])
-        return _known_values(resolved.contents, resolved.resolver)
-    return None
+        if not _fits_as_input(validator, resolved.contents, resolved.resolver, value):
+            return False
+    if not all(_fits_as_input(validator, branch, resolver, value) for branch in schema.get("allOf", [])):
+        return False
+    for keyword in ("anyOf", "oneOf"):
+        if keyword in schema and not any(_fits_as_input(validator, branch, resolver, value) for branch in schema[keyword]):
+            return False
+    return all(_fits_as_input(validator, member, resolver, part) for member, part in _parts(schema, value))
+
+
+def _parts(schema: dict, value: object) -> Iterator[tuple[object, object]]:
+    """(subschema, part of value) for each member or element a subschema applies to."""
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        for name, part in value.items():
+            if name in properties:
+                yield properties[name], part
+            elif "additionalProperties" in schema:
+                yield schema["additionalProperties"], part
+    elif isinstance(value, list):
+        prefix = schema.get("prefixItems", [])
+        yield from zip(prefix, value)
+        if "items" in schema:
+            yield from ((schema["items"], part) for part in value[len(prefix):])
 
 
 def _fits(validator, column: Column, value: object) -> bool:
-    for schema, resolver in column.schemas:
-        known = _known_values(schema, resolver)
-        if known is not None and value not in known:
-            continue
-        if next(validator.evolve(schema=schema, _resolver=resolver).iter_errors(value), None) is None:
-            return True
-    return False
+    return any(_fits_as_input(validator, schema, resolver, value) for schema, resolver in column.schemas)
 
 
 def _judged_changes(validator, schema: dict, instance: object) -> Iterator[tuple[str, dict, Column | None]]:
