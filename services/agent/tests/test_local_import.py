@@ -97,6 +97,26 @@ async def test_a_decomposed_file_name_is_stored_as_nfc_with_the_raw_name_kept(ro
     assert attachment["original_filename_raw"] == decomposed
 
 
+async def test_files_imported_under_given_names_keep_those_names(root, tmp_path):
+    decomposed = unicodedata.normalize("NFD", "자료구조.txt")
+    files = [source(tmp_path, "0.part"), source(tmp_path, "1.part", b"other synthetic handout")]
+    async with open_core(root, create=True, sync_roots=[]) as core:
+        await import_files(core, files, names=[decomposed, "week 4 slides.pdf"])
+        attachments = of(await feed_rows(core), "attachment")
+
+    named = {attachment["original_filename"]: attachment.get("original_filename_raw") for attachment in attachments}
+    assert named == {"자료구조.txt": decomposed, "week 4 slides.pdf": None}
+
+
+@pytest.mark.parametrize("names", [["good.txt", "bad\ud800.txt"], ["good.txt", ""], ["good.txt"]], ids=["not unicode", "empty", "one short"])
+async def test_given_names_that_cannot_name_every_file_are_refused_before_any_blob_is_stored(root, tmp_path, names):
+    files = [source(tmp_path, "0.part"), source(tmp_path, "1.part", b"other synthetic handout")]
+    async with open_core(root, create=True, sync_roots=[]) as core:
+        with pytest.raises(UnimportableFile):
+            await import_files(core, files, names=names)
+        assert await blob_count(core) == 0
+
+
 async def test_an_explicit_policy_wins(root, tmp_path):
     async with open_core(root, create=True, sync_roots=[]) as core:
         await import_files(core, [source(tmp_path, "a.txt")], cloud_policy="blocked")
