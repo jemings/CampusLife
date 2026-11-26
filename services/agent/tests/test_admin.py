@@ -39,14 +39,14 @@ class Clock:
 
 
 @asynccontextmanager
-async def hub(tmp_path, *, routers=(), clock=None, raise_app_exceptions=True):
+async def hub(tmp_path, *, routers=(), clock=None, raise_app_exceptions=True, stop=lambda: None):
     """An admin app over a fresh Hub, and a client that talks to it as a browser on this machine would."""
     async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
         redactor = Redactor()
         auth = AdminAuth(TOKEN, redactor, **({"clock": clock} if clock else {}))
         registry = JobRegistry()
         registry.handle("extract.text", EXTRACT, lambda job, context: None)
-        admin = Admin(core, JobRunner(JobContext(core.db, core.blobs, registry)), auth, redactor, status=lambda: {"runner": {"restarts": 0}})
+        admin = Admin(core, JobRunner(JobContext(core.db, core.blobs, registry)), auth, redactor, status=lambda: {"runner": {"restarts": 0}}, stop=stop)
         app = create_app(admin, port=PORT, routers=routers)
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=raise_app_exceptions)
         async with httpx.AsyncClient(transport=transport, base_url=BASE) as client:
@@ -392,6 +392,17 @@ async def test_routes_other_code_adds_pass_the_same_guard_and_a_failure_in_one_s
     assert response.status_code == 500
     assert TOKEN not in response.text and "failed holding" not in response.text
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_stop_through_the_admin_api_asks_the_host_to_stop(tmp_path):
+    stops = []
+    async with hub(tmp_path, stop=lambda: stops.append(True)) as (client, _):
+        await log_in(client)
+        assert (await client.post("/api/stop", headers=ORIGIN)).status_code == 401
+
+        response = await client.post("/api/stop", auth=SIGNED)
+
+    assert (response.status_code, response.json(), stops) == (200, {"stopping": True}, [True])
 
 
 @pytest.mark.parametrize("path", ["/no-such-page", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect", "/api/no-such-call"])
