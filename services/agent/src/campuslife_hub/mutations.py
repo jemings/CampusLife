@@ -3,18 +3,19 @@
 Sync, the local UI and local import all call `apply`. Every Mutation is checked
 by `campuslife_contracts.validate()` here and nowhere else; each runs in its own
 transaction, and a result other than retry is remembered under its mutation_id
-so a resend gets the first answer back.
+for RESULT_RETENTION, so a resend gets the first answer back.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable, Sequence
+from datetime import datetime, timedelta
 
 from campuslife_contracts import Rule, RuleViolation, Violation, contract_root, validate
 
 from .capture_commit import commit_capture
-from .clock import now_instant
+from .clock import instant, now_instant
 from .db import Database, Tx
 from .devices import DeviceId
 from .outcomes import Outcome, Reason, Rejected, outcome_json
@@ -25,6 +26,8 @@ REASON_BY_RULE: dict[Rule, Reason] = {Rule.NFC: Reason.NOT_CANONICAL, Rule.OWNER
 
 REASON_PRECEDENCE = (Reason.SCHEMA, Reason.OWNER, Reason.NOT_CANONICAL)
 """When violations map to several reasons, the first of these that occurs is the answer."""
+
+RESULT_RETENTION = timedelta(days=90)
 
 
 class NoMutationId(ValueError):
@@ -106,3 +109,15 @@ async def apply(db: Database, batch: Sequence[object], device: DeviceId) -> list
         violations = validate("mutation/mutation", mutation)
         results.append(await db.write(lambda tx: _apply_one(tx, mutation_id, mutation, violations, device)))
     return results
+
+
+async def forget_old_results(db: Database, now: datetime) -> None:
+    """Drop the results recorded more than RESULT_RETENTION before `now` (D18).
+
+    An older resend is judged again. A create of an Item or a Tag compares with its first payload
+    and a patch with the row, so neither applies twice; a delete, a restore and a Relation create
+    have nothing to compare with and apply again. Accepted: on a single-user Hub an Outbox that
+    could not send for that long is rare.
+    """
+    cutoff = instant(now - RESULT_RETENTION)
+    await db.write(lambda tx: tx.execute("DELETE FROM applied_mutations WHERE applied_at < ?", (cutoff,)))

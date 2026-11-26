@@ -17,3 +17,5 @@ CREATE TABLE conflict_stash (
     theirs_rev INTEGER,
     stashed_at TEXT NOT NULL
 );
+
+CREATE INDEX applied_mutations_by_age ON applied_mutations (applied_at);

@@ -23,6 +23,7 @@ from .db import START_THE_HUB, Database, NotInitialized, ReadOnlyDatabase, Start
 from .devices import DeviceId, ensure_hub_device
 from .identity import HubIdentity, ensure_identity, read_identity
 from .lock import HubLock
+from .mutations import forget_old_results
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +87,7 @@ async def open_core(root: Path, *, create: bool, sync_roots: Iterable[Path] | No
             blobs = BlobStore(db, blobs_dir=layout.blobs, staging_dir=layout.staging, uploads_dir=layout.uploads)
             now = datetime.now(UTC)
             kept = blobs.discard_staging_leftovers() + await blobs.expire_sessions(now) + await blobs.collect_garbage(now)
+            await forget_old_results(db, now)
             for leftover in kept:
                 log.warning("left %s for a later clean-up: %s", leftover.path, leftover.reason)
             yield Core(layout, db, blobs, identity, hub_device)
