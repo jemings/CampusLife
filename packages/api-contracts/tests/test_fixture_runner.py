@@ -131,7 +131,7 @@ def test_layout_problems_are_reported(root):
         "fixtures/invalid/common/page/lonely.expect.json: no case lonely.json next to it",
         "fixtures/invalid/common/page/notes.txt: not a .json file",
         "fixtures/invalid/common/page/zero.json: no zero.expect.json next to it",
-        "fixtures/stale: not one of forward, invalid, policy, valid",
+        "fixtures/stale: not one of forward, invalid, policy, text_hash, valid",
         "fixtures/valid/common/nope/one.json: no schema common/nope",
         "fixtures/valid/common/page/one.expect.json: only invalid cases carry expectations",
     ]
