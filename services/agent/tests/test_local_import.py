@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import unicodedata
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PureWindowsPath
 
 import pytest
@@ -353,3 +354,23 @@ async def test_opening_the_core_ends_stale_upload_sessions_and_removes_orphan_ch
 
     assert sorted(path.name for path in (root / "uploads").iterdir()) == ["notes.txt"]
     assert str(stray) in caplog.text
+
+
+async def test_collection_keeps_imported_blobs_and_takes_old_ones_nothing_refers_to(root, tmp_path):
+    async with open_core(root, create=True, sync_roots=[]) as core:
+        await import_files(core, [source(tmp_path, "kept.pdf", b"synthetic imported handout")])
+        await core.blobs.put_file(source(tmp_path, "lonely.pdf", b"synthetic blob never committed"))
+
+        assert await core.blobs.collect_garbage(datetime.now(UTC) + timedelta(days=8)) == []
+
+        assert await blob_count(core) == 1
+
+
+async def test_opening_the_core_collects_old_blobs_nothing_refers_to(root, tmp_path):
+    async with open_core(root, create=True, sync_roots=[]) as core:
+        lonely = await core.blobs.put_file(source(tmp_path, "lonely.pdf", b"synthetic blob never committed"))
+        await core.db.write(lambda tx: tx.execute("UPDATE blobs SET stored_at = '2000-01-01T00:00:00.000Z'"))
+
+    async with open_core(root, create=False, sync_roots=[]) as core:
+        assert await blob_count(core) == 0
+        assert not core.blobs.path_of(lonely.sha256).exists()
