@@ -31,7 +31,11 @@ ITEM_DATA = MUTATION_DEFS["item_data"]["properties"]
 ITEM_KINDS = frozenset(MUTATION_DEFS["closed_fields"])
 """Kinds whose fields the contract defines; this Hub cannot judge another kind's fields, so it does not create one."""
 
-ITEM_TEXT_COLUMNS = frozenset(name for name, column in _schema("item/item.json")["properties"].items() if column.get("x-text") is True)
+TEXT_COLUMNS = {
+    Entity(entity): frozenset(name for name, column in _schema(f"mutation/{target['schema']}")["properties"].items() if column.get("x-text") is True)
+    for entity, target in MUTATION_DEFS["patch"]["x-set-targets"].items()
+}
+"""Each entity's x-text columns: a patch compares them by from_hash, and keeps a value that lost in the stash (E8)."""
 
 SCHEMA_VERSION = 1
 
@@ -46,7 +50,7 @@ def _is_canonical_text(text: object) -> bool:
 def _create_item(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
     if data["kind"] not in ITEM_KINDS:
         return Rejected(Reason.SCHEMA)
-    if not all(_is_canonical_text(data.get(column)) for column in ITEM_TEXT_COLUMNS):
+    if not all(_is_canonical_text(data.get(column)) for column in TEXT_COLUMNS[Entity.ITEM]):
         return Rejected(Reason.NOT_CANONICAL)
     return _create_once(tx, ref, data, {"id": ref.id, "schema_version": SCHEMA_VERSION, **data})
 
@@ -169,7 +173,7 @@ def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
         return Rejected(Reason.SCHEMA)
     applied = tuple(key for key in changes if key in standing)
     conflicted = tuple(key for key in changes if key not in standing)
-    conflict_stash.keep(tx, mutation, device, ref, (key for key in conflicted if "from_hash" in changes[key]))
+    conflict_stash.keep(tx, mutation, device, ref, (key for key in changes if key in lost and key in TEXT_COLUMNS[ref.entity]))
     updated = _with_changes(row, changes, applied)
     if updated != row:
         store.write(tx, ref, updated)
