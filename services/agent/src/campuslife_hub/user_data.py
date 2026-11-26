@@ -11,7 +11,7 @@ from collections.abc import Iterable
 
 from campuslife_contracts import contract_root, text_hash, validate
 
-from . import refs, store
+from . import conflict_stash, refs, store
 from .clock import now_instant
 from .created import earlier_create, remember_create
 from .db import Tx
@@ -141,7 +141,8 @@ def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
 
     When every key won, a row a client could not create means the client broke the contract: schema. When a key
     lost, it holds back the rest of its BOUND_KEYS group, a group or key that would leave such a row on its own
-    is held back too, and the others are written; held-back keys count as conflicted.
+    is held back too, and the others are written; held-back keys count as conflicted. A losing x-text value,
+    and every value sent to an entity that is not live, goes to the conflict stash (E8).
     """
     ref = EntityRef(Entity(mutation["entity"]), mutation["id"])
     if ref.entity not in PATCHABLE:
@@ -151,6 +152,7 @@ def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
         return Rejected(Reason.NOT_CANONICAL)
     row = store.get(tx, ref)
     if row is None or "deleted_at" in row:
+        conflict_stash.keep(tx, mutation, device, ref, changes)
         return Rejected(Reason.DELETED)
     lost = {key for key, change in changes.items() if _value(row, key) != change["to"] and not _holds_from(_value(row, key), change)}
     if lost:
@@ -166,6 +168,7 @@ def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
         return Rejected(Reason.SCHEMA)
     applied = tuple(key for key in changes if key in standing)
     conflicted = tuple(key for key in changes if key not in standing)
+    conflict_stash.keep(tx, mutation, device, ref, (key for key in conflicted if "from_hash" in changes[key]))
     updated = _with_changes(row, changes, applied)
     if updated != row:
         store.write(tx, ref, updated)
