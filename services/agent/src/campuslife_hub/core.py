@@ -14,10 +14,10 @@ import logging
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from .blobs import BlobStore
-from .data_root import Allowed, InsideSyncFolder, Layout, UncPath, check_data_root, detect_sync_roots
+from .data_root import Allowed, DataRootVerdict, DevicePath, InsideSyncFolder, Layout, UncPath, check_data_root, detect_sync_roots
 from .db import START_THE_HUB, Database, NotInitialized, ReadOnlyDatabase, StartupRefused
 from .devices import DeviceId, ensure_hub_device
 from .identity import HubIdentity, ensure_identity, read_identity
@@ -50,17 +50,24 @@ def _issue_identity_and_hub_device(tx) -> tuple[HubIdentity, DeviceId]:
     return ensure_identity(tx), ensure_hub_device(tx)
 
 
-def safe_data_root(root: Path, sync_roots: Iterable[Path] | None = None) -> Path:
-    """The resolved root, refused on a UNC drive or in a sync folder; sync_roots None detects them."""
-    root = Path(root).resolve()
-    known = detect_sync_roots() if sync_roots is None else [Path(path).resolve() for path in sync_roots]
-    match check_data_root(root, known):
+def accepted_root(root: PurePath, verdict: DataRootVerdict) -> PurePath:
+    """The root a verdict allows, or the refusal it stands for."""
+    match verdict:
+        case Allowed(allowed):
+            return allowed
         case UncPath(drive):
-            raise StartupRefused([f"{root} is on the UNC drive {drive}; choose a data root on a local drive letter"])
+            raise StartupRefused([f"{root} is on the UNC share {drive}; choose a data root on a local drive letter"])
+        case DevicePath(drive):
+            raise StartupRefused([rf"{root} is on {drive}, a drive starting with \\; choose a data root on a local drive letter"])
         case InsideSyncFolder(sync_root):
             raise UnsafeDataRoot(f"{root} is inside the sync folder {sync_root}; choose a data root outside it")
-        case Allowed():
-            return root
+
+
+def safe_data_root(root: Path, sync_roots: Iterable[Path] | None = None) -> Path:
+    r"""The resolved root, refused on a `\\` drive or in a sync folder; sync_roots None detects them."""
+    root = Path(root).resolve()
+    known = detect_sync_roots() if sync_roots is None else [Path(path).resolve() for path in sync_roots]
+    return Path(accepted_root(root, check_data_root(root, known)))
 
 
 @asynccontextmanager
