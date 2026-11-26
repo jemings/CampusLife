@@ -3,6 +3,8 @@ import subprocess
 import sys
 import unicodedata
 
+import pytest
+
 from campuslife_contracts import Rule, RuleViolation, SchemaViolation
 
 NFC = "강의 자료.pdf"
@@ -174,3 +176,53 @@ def test_tz_rule_uses_exactly_the_tzdata_zone_list():
 
     shipped = set(files("tzdata").joinpath("zones").read_text(encoding="utf-8").split())
     assert _iana_zones() == shipped
+
+
+RAW_FORM = {"type": "object", "x-raw-form": [{"raw": "name_raw", "text": "name"}]}
+
+
+def test_raw_member_holds_the_received_form_of_its_nfc_text(make_contract):
+    contract = make_contract({"t/file": RAW_FORM})
+    assert contract.validate("t/file", {"name": NFC, "name_raw": NFD}) == []
+    assert contract.validate("t/file", {"name": NFC}) == []
+
+
+@pytest.mark.parametrize(
+    "instance",
+    [{"name": NFC, "name_raw": NFC}, {"name": NFC, "name_raw": unicodedata.normalize("NFD", "다른 파일.pdf")}],
+    ids=["raw-already-nfc", "raw-of-another-name"],
+)
+def test_raw_member_that_is_not_the_received_form_breaks_raw_form(make_contract, instance):
+    contract = make_contract({"t/file": RAW_FORM})
+    assert contract.validate("t/file", instance) == [RuleViolation(path="/name_raw", rule=Rule.RAW_FORM)]
+
+
+def test_raw_form_skips_members_that_break_their_own_schema(make_contract):
+    contract = make_contract(
+        {"t/file": {**RAW_FORM, "properties": {"name": {"type": "string", "minLength": 1}}}}
+    )
+    assert contract.validate("t/file", {"name": "", "name_raw": NFD}) == [
+        SchemaViolation(path="/name", keyword="minLength")
+    ]
+
+
+RELATION = {
+    "type": "object",
+    "properties": {"type": {"enum": ["about", "tagged"]}},
+    "x-relation-id": True,
+}
+
+
+def test_relation_id_is_from_type_to_joined_by_bars(make_contract):
+    contract = make_contract({"t/rel": RELATION})
+    good = {"id": "item:a|about|item:b", "from": "item:a", "type": "about", "to": "item:b"}
+    assert contract.validate("t/rel", good) == []
+    assert contract.validate("t/rel", {**good, "id": "item:b|about|item:a"}) == [
+        RuleViolation(path="/id", rule=Rule.RELATION_ID)
+    ]
+
+
+def test_relation_id_rule_skips_members_that_break_their_own_schema(make_contract):
+    contract = make_contract({"t/rel": RELATION})
+    bad_type = {"id": "item:a|about|item:b", "from": "item:a", "type": "abuot", "to": "item:b"}
+    assert contract.validate("t/rel", bad_type) == [SchemaViolation(path="/type", keyword="enum")]

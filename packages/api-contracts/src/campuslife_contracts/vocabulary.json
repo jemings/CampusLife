@@ -41,6 +41,21 @@
         "additionalProperties": false
       }
     },
+    "x-raw-form": {
+      "description": "Rule raw_form: for each pair present, the raw member is the received, non-NFC form of the text member (raw != text and NFC(raw) == text).",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["raw", "text"],
+        "properties": { "raw": { "type": "string" }, "text": { "type": "string" } },
+        "additionalProperties": false
+      }
+    },
+    "x-relation-id": {
+      "description": "Rule relation_id: id equals from|type|to (D18, E14).",
+      "const": true
+    },
     "discriminator": {
       "description": "OpenAPI discriminator. mapping names, for every value of the discriminator's enum, the one oneOf branch ($ref) it selects.",
       "type": "object",
@@ -58,7 +73,7 @@
   },
   "propertyNames": {
     "if": { "pattern": "^x-" },
-    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order"] }
+    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id"] }
   },
   "x-discriminated-union": true
 }
