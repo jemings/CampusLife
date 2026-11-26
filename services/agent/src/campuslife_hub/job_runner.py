@@ -5,6 +5,11 @@ time it may take. It returns how the job finished. An exception, a result that c
 recorded, or running past its time means "try again later", up to MAX_ATTEMPTS.
 Planners are registered by name; the capture.ingest handler, registered in every
 JobRegistry, asks them what to run for each committed Capture.
+
+A handler runs on the event loop and is stopped by cancelling it, so its blocking work (a parser,
+a converter, a model) goes to isolate.run, which ends its program when cancelled. A thread it
+starts with asyncio.to_thread cannot be stopped: it runs on after the handler is cancelled, and a
+stopping Hub exits without waiting for it.
 """
 
 from __future__ import annotations
@@ -159,6 +164,16 @@ class JobRunner:
     def _left_ended(self, job_id: str) -> None:
         del self._left_running[job_id]
         self.wake()
+
+    async def end_left_running(self) -> list[str]:
+        """Cancel the handlers left running once more and give them stop_grace; the ids of the jobs whose handlers
+        still run, which the Hub, about to exit, leaves behind."""
+        left = dict(self._left_running)
+        for task in left.values():
+            task.cancel()
+        if left:
+            await asyncio.wait(left.values(), timeout=self._stop_grace.total_seconds())
+        return sorted(job_id for job_id, task in left.items() if not task.done())
 
     async def _try_again_later(self, job: Job, error: Exception) -> None:
         db, now = self.context.db, self._clock()
