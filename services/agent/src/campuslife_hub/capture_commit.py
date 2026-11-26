@@ -6,27 +6,15 @@ its transaction or nothing.
 
 from __future__ import annotations
 
-import hashlib
-
-from campuslife_contracts import canonical_json
-
 from . import store
 from .blobs import has_blob
+from .created import earlier_create, remember_create
 from .db import Tx
 from .devices import DeviceId
 from .outcomes import Applied, Outcome, Reason, Rejected, Retry
 from .store import Entity, EntityRef
 
 COMMIT_ONLY_MEMBERS = ("links", "attachments")
-
-
-def _content_sha256(capture: dict) -> str:
-    return hashlib.sha256(canonical_json(capture)).hexdigest()
-
-
-def _first_content(tx: Tx, ref: EntityRef) -> str | None:
-    row = tx.execute("SELECT content_sha256 FROM created_content WHERE entity = ? AND id = ?", (ref.entity.value, ref.id)).fetchone()
-    return None if row is None else row[0]
 
 
 def _is_live(tx: Tx, entity_ref: str) -> bool:
@@ -46,10 +34,9 @@ def _relations(capture: dict) -> dict[str, dict]:
 
 def commit_capture(tx: Tx, capture: dict, device: DeviceId) -> Outcome:
     capture_ref = EntityRef(Entity.CAPTURE, capture["id"])
-    content = _content_sha256(capture)
-    first = _first_content(tx, capture_ref)
-    if first is not None:
-        return Applied() if first == content else Rejected(Reason.ID_REUSE)
+    earlier = earlier_create(tx, capture_ref, capture)
+    if earlier is not None:
+        return earlier
     attachment_ids = [attachment["id"] for attachment in capture["attachments"]]
     if len(set(attachment_ids)) != len(attachment_ids):
         return Rejected(Reason.SCHEMA)
@@ -67,8 +54,5 @@ def commit_capture(tx: Tx, capture: dict, device: DeviceId) -> Outcome:
         store.write(tx, EntityRef(Entity.ATTACHMENT, attachment["id"]), {**attachment, "capture_id": capture["id"]})
     for relation_id, relation in _relations(capture).items():
         store.write(tx, EntityRef(Entity.RELATION, relation_id), relation)
-    tx.execute(
-        "INSERT INTO created_content (entity, id, content_sha256) VALUES (?, ?, ?)",
-        (capture_ref.entity.value, capture_ref.id, content),
-    )
+    remember_create(tx, capture_ref, capture)
     return Applied()
