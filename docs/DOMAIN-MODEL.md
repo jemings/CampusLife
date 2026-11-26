@@ -101,3 +101,41 @@ MVP는 SQLite FTS5와 구조화 필터를 사용합니다. semantic/vector searc
 - title / tags / metadata
 
 인덱스는 파생 데이터이며 재생성 가능해야 합니다.
+
+## 8. 다중 파일 및 문서 도메인 확장
+
+강의 자료는 단일 Attachment가 아니라 여러 파일을 논리적으로 묶는 MaterialSet으로 표현합니다.
+
+| Entity | 설명 | 주요 필드 |
+|---|---|---|
+| CourseMaterialSet | 교수/조교 배포자료 또는 한 강의의 자료 묶음 | id, course_id, lecture_session_id, title, distributed_by, distributed_at |
+| Document | 파일/URL 기반 문서 메타데이터 | id, attachment_id, format, title, language, page_count, extraction_state |
+| ContentBlock | 형식에서 추출한 논리 단위 | id, document_id, block_type, text, ordinal, location |
+| ExtractorRun | parser/extractor 실행 기록 | extractor_id, version, state, warnings, created_at |
+| SourceReference | 파생 문장에서 원본 위치로 이동하는 근거 | artifact_id, attachment_id, locator_type, locator |
+| DocumentVersion | 동일 배포 자료의 다른 버전 | document_id, sha256, version_label, observed_at |
+
+MaterialSet은 여러 Attachment를 포함하며, 강의 녹음·현장 사진·교수자 파일이 하나의 LectureSession과 연결될 수 있습니다. 한 파일을 여러 과목이나 강의에 연결할 때는 원본을 복제하지 않고 Relation을 사용합니다.
+
+지원 포맷 계열:
+- 문서: PDF, DOCX, HWP, HWPX, TXT, Markdown, RTF, HTML
+- 프레젠테이션: PPT, PPTX
+- 표/데이터: XLSX, XLS(추후), CSV, TSV
+- 이미지: JPEG, PNG, HEIC, WebP 등 지원 형식
+- 오디오: M4A, MP3, WAV 등
+- 동영상: MP4, MOV 등 및 SRT/VTT 자막
+- 압축: ZIP 우선. 내부 파일을 안전 검사 후 선택적으로 추출
+- 개발 자료: 소스 코드, JSON, XML, YAML, Jupyter Notebook 등
+- 웹 자료: URL, 사용자가 저장한 페이지 및 metadata
+
+ContentBlock locator 예:
+- PDF: page, optional bounding box
+- PPTX: slide index, shape index
+- DOCX/HWP: heading path, paragraph/table index
+- XLSX: sheet, cell/range
+- Audio: start_ms/end_ms
+- Video: start_ms/end_ms/frame timestamp
+- Image: region
+- URL: canonical URL, page section/anchor
+
+실제 schema에서는 locator를 schema_version이 있는 구조로 검증합니다. 모든 AI 생성물은 하나 이상의 SourceReference를 제공하고, 정확한 위치를 산출할 수 없으면 문서 단위 근거임을 명시합니다.
