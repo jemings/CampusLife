@@ -127,3 +127,21 @@ CampusLife는 Fold8, iPad Pro, Windows 노트북을 하나의 개인 학습 환�
 - [iPadOS Companion 설계](apps/ipados/README.md)
 
 세 앱은 공통 HTTPS Sync API를 사용합니다. Tailscale은 장치 간 사설 연결을 제공하고, 앱별 인증·동기화 상태·파일 재개·충돌 처리는 CampusLife가 담당합니다. 노트북이 꺼져 있으면 각 모바일 장치가 자체 Outbox를 보존하고, 온라인 복귀 후 동기화합니다.
+
+## Multi-device Issue Index
+
+### 공통 플랫폼 및 동기화
+- [#2 Windows Local Agent + Common HTTPS API](https://github.com/jemings/CampusLife/issues/2)
+- [#4 Cross-network / Multi-client Sync API](https://github.com/jemings/CampusLife/issues/4)
+- [#18 Multi-device revision 및 conflict resolution](https://github.com/jemings/CampusLife/issues/18)
+- [#19 Device pairing 및 credential revoke](https://github.com/jemings/CampusLife/issues/19)
+
+### Client Apps
+- [#3 Android Capture — Galaxy Z Fold8](https://github.com/jemings/CampusLife/issues/3)
+- [#16 iPadOS Native Study Companion — iPad Pro 13](https://github.com/jemings/CampusLife/issues/16)
+- [#17 Apple Pencil / PDF Annotation](https://github.com/jemings/CampusLife/issues/17)
+- [#15 Fold8 Cover/Inner + iPad adaptive UI](https://github.com/jemings/CampusLife/issues/15)
+
+상세 설계:
+- [Multi-device Architecture](docs/MULTI-DEVICE-ARCHITECTURE.md)
+- [iPadOS Companion](apps/ipados/README.md)
