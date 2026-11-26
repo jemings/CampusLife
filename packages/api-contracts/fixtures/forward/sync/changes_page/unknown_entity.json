@@ -3,13 +3,14 @@
   "epoch": "e4eaaaf2-d142-41ff-9e1f-2b3c4d5e6f70",
   "changes": [
     {
-      "entity": "artifact",
+      "entity": "annotation_layer",
       "id": "16fd2706-8baf-433b-82eb-8c7fada847da",
       "rev": 30,
       "deleted": false,
       "data": {
         "id": "16fd2706-8baf-433b-82eb-8c7fada847da",
-        "artifact_type": "transcript"
+        "target_blob_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+        "page_number": 3
       }
     }
   ],
