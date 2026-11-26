@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/device/pair_request.json",
+  "title": "Pair request",
+  "description": "POST /v1/pair (D6). The secret comes from the QR code or the manual code the Hub's admin screen shows; it is good once, for five minutes. Closed input.",
+  "type": "object",
+  "required": ["secret", "platform", "device_name", "app_version"],
+  "properties": {
+    "secret": { "description": "The 128-bit pairing secret as lowercase hex.", "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "platform": { "description": "The device/platform values that pair: windows_hub is only the Hub's own Device row.", "enum": ["android", "ipados"] },
+    "device_name": { "description": "Shown in the Hub's device list. No control characters.", "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$" },
+    "app_version": { "type": "string", "minLength": 1, "maxLength": 64 }
+  },
+  "additionalProperties": false
+}

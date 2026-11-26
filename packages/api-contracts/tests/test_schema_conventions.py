@@ -127,3 +127,10 @@ def test_ownership_is_the_contract_table():
     }
     assert marked == set(OWNERS)
     assert {schema_id: owners_of(schema_id) for schema_id in OWNERS} == OWNERS
+
+
+def test_pairing_takes_the_client_platforms():
+    """windows_hub is the Hub's own Device row and never pairs over the sync port."""
+    platforms = read_strict(SCHEMAS / "device/platform.json")["enum"]
+    paired = read_strict(SCHEMAS / "device/pair_request.json")["properties"]["platform"]["enum"]
+    assert paired == [platform for platform in platforms if platform != "windows_hub"]
