@@ -32,6 +32,8 @@ Kotlin(#3)·Swift(#16) 앱 모델이 계약과 같은 JSON을 읽고 쓰는지 �
 | 없음과 `null` | 다릅니다. 원본에 없던 멤버를 `null`로 쓰거나, `null`이던 멤버를 빼면 실패입니다. 선택 필드는 "없음"과 "null"을 구분해 모델링합니다(예: Kotlin `explicitNulls`, Swift `encodeIfPresent`와 `encodeNil`). |
 | 문자열 | 코드 포인트 그대로. NFC·NFD 변환, 공백 정리, 대소문자 변경을 하지 않습니다. 이스케이프 형태(`\uac15`와 `강`)는 자유입니다. 예: `original_filename_raw`는 NFD 그대로, `original_filename`은 NFC 그대로 돌아와야 합니다. 비BMP 문자(이모지)도 서로게이트 쌍이 깨지지 않아야 합니다. |
 | 모르는 Item kind | `item/item`의 `kind`는 닫힌 enum이 아닙니다. 모르는 kind는 공통 열(title, 날짜, body)만 읽고 `fields`는 해석하지 않습니다(forward `item/item/unknown_kind`). |
+| Hub가 보내는 열린 값 | Relation `type`, Attachment `role`, Capture `origin.type`, changes의 `entity`는 Hub가 보내는 쪽에서 닫힌 enum이 아닙니다. 알려진 값은 스키마의 `examples`에 있습니다. 모르는 값도 디코드해 그대로 보존하고, 모르는 `entity`의 행은 건너뜁니다(forward fixture). 클라이언트가 보내는 `capture.commit`·`create`에서는 알려진 값만 씁니다. |
+| Mutation 결과 | 결과의 `reason`·`original`·`missing_blobs`·`conflicted_fields`는 해당 `result` 값에만 나타납니다. 없는 멤버를 `null`로 쓰면 다른 값이 됩니다. |
 | 시각 문자열 | `instant`는 `YYYY-MM-DDTHH:MM:SS.sssZ` 문자열 그대로 돌아와야 합니다. 날짜 타입으로 바꿔 담는다면 밀리초 3자리 형식으로 다시 써야 합니다. |
 | JSON 형식 | 엄격한 JSON: UTF-8, BOM 없음, 중복 멤버 없음, `NaN`/`Infinity` 없음, 짝 없는 서로게이트 이스케이프(`\ud800`) 없음. |
 
@@ -62,10 +64,19 @@ uv run campuslife-contracts compare fixtures/valid <out>
 - Python 참조 함수: `campuslife_contracts.resolve_cloud_policy(explicit, course_default, global_default)`, `campuslife_contracts.effective_cloud_policy(policies)`. 모르는 값은 `ValueError`입니다.
 - 하네스는 모든 vector에 대해 그 언어의 함수를 호출하고, 결과가 `expected`와 다르면 vector 경로를 출력하고 0이 아닌 종료 코드로 끝납니다. 출력 파일은 쓰지 않습니다.
 
+## from_hash vector (E11)
+
+`x-text` 열(Item `body`)을 patch할 때 `from` 대신 `from_hash`를 보냅니다. 값은 텍스트를 NFC로 정규화하고 줄바꿈 CRLF·CR을 LF로 바꾼 뒤 UTF-8 바이트의 sha256을 소문자 hex로 쓴 것입니다. 언어마다 값이 다르면 Hub가 모든 patch를 충돌로 판정하므로 vector를 둡니다.
+
+- `fixtures/text_hash/*.json`: `{"text": "...", "hash": "<소문자 hex 64자>"}`. CRLF, CR, 섞인 줄바꿈, NFD, 비BMP 문자, 빈 문자열을 담습니다. 같은 텍스트의 변형(`lf`·`crlf`·`cr`·`mixed_line_endings`, `nfc`·`nfd`)은 같은 해시입니다.
+- 빈 문자열 `""`도 텍스트이므로 sha256("") = `e3b0c442…b855`로 해시합니다. `null`은 "열이 없음"만 뜻하고 해시하지 않습니다. 열이 없던 상태의 patch는 `from_hash: null`을 그대로 보냅니다.
+- Python 참조 함수: `campuslife_contracts.text_hash(text)`. 문자열이 아니면 `TypeError`입니다.
+- 하네스는 모든 vector에 대해 그 언어의 함수를 호출하고, 결과가 `hash`와 다르면 vector 경로를 출력하고 0이 아닌 종료 코드로 끝납니다.
+
 ## CI에 넣는 순서 (각 앱 이슈)
 
 1. 하네스를 실행해 `<out>`을 만듭니다(forward 디코드 실패면 여기서 실패).
 2. 위 비교기 명령을 실행하고 종료 코드로 판정합니다.
-3. cloud_policy vector를 돌립니다(하네스의 일부여도 됩니다).
+3. cloud_policy vector와 from_hash vector를 돌립니다(하네스의 일부여도 됩니다).
 
 fixture를 추가·수정하는 PR은 이 계약 패키지의 pytest가 먼저 통과해야 하므로, 앱 하네스는 언제나 검증된 fixture만 읽습니다.
