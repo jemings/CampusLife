@@ -202,3 +202,84 @@ MVP 검색:
 인터넷 공유기 포트 포워딩을 열지 않습니다. Windows 방화벽은 필요한 Tailscale 장치로 제한하고 SFTP 전용 계정은 관리자 권한을 갖지 않습니다.
 
 FolderSync+SFTP는 전송 PoC로만 보고, 제품 앱은 명시적인 ACK/체크섬/재개/멱등성을 가진 프로토콜을 사용합니다.
+
+## 8. 다중 파일 강의 자료 수집 및 분석
+
+강의 자료 하나를 단일 파일로 가정하지 않습니다. 하나의 Capture 또는 CourseMaterialSet은 강의 녹음, 수업 중 사진, 교수/조교가 배포한 여러 파일(PDF, 슬라이드, 문서, 스프레드시트, HWP/HWPX, 코드, 자막, 동영상, 링크 등)을 함께 묶을 수 있습니다.
+
+상세 포맷 지원표와 extractor 설계는 FILE-INGESTION.md를 기준으로 합니다.
+
+### 8.1 수집 경로
+
+- Android 공유 메뉴: LMS/브라우저/메일/메신저에서 파일 또는 링크를 CampusLife로 공유
+- Android 파일 선택기: Downloads 및 사용자가 접근을 허용한 문서 선택
+- 강의 중 앱 카메라/녹음: 사진·오디오를 같은 LectureSession에 연결
+- Windows Inbox: 브라우저 다운로드, USB, 동기화 폴더, 드래그앤드롭으로 가져오기
+- 여러 파일을 하나의 CourseMaterialSet으로 묶고 과목·학기·강의일·배포자·자료 설명을 부여
+
+LMS/메일의 비공식 자동 로그인이나 무단 크롤링을 전제하지 않습니다. 사용자가 공유하거나 다운로드한 파일 및 허용된 공식 API/export를 우선합니다.
+
+### 8.2 파일 처리 파이프라인
+
+1. Preserve: 원본을 변경하지 않고 보존하고 SHA-256, 크기, MIME, 수집 경로, 원래 파일명을 기록
+2. Validate: 확장자와 magic bytes를 교차 확인하고 악성/손상/암호화 파일을 분류
+3. Extract: 형식별 extractor가 텍스트, 구조, 표, 페이지, 슬라이드, 시트, 타임스탬프 등을 추출
+4. Normalize: 공통 ExtractedDocument/ContentBlock 구조로 변환
+5. Analyze: 허용된 provider로 요약, 핵심 개념, 과제/마감 후보, 질문 등을 생성
+6. Link: 같은 강의 자료 세트 안에서 강의 transcript·사진·교수자 배포 파일을 연결
+7. Review: 신뢰도가 낮거나 일정/과제 생성처럼 상태 변경이 필요한 결과는 검토 대기
+8. Index: 전문 검색과 추후 semantic search에 인덱싱하고 원본 위치를 보존
+
+### 8.3 Extractor 설계
+
+FileExtractor 계약을 정의하고 형식별 adapter를 등록합니다. extractor는 원본을 수정하지 않고 ExtractedDocument와 ContentBlock 목록을 반환합니다. 각 block은 page/slide/sheet/row/section/frame/time range 같은 위치 정보를 포함합니다.
+
+우선 지원:
+- PDF: 텍스트 및 페이지 구조 추출, 스캔 페이지 OCR
+- PPT/PPTX: 슬라이드별 제목·본문·표·노트·이미지 참조 추출
+- DOCX: 제목 계층, 문단, 표, 하이퍼링크 추출
+- XLSX/CSV: 시트, 셀 범위, 수식/표시값, 헤더 및 표 구조 추출
+- HWP/HWPX: HWPX XML 추출, HWP 5 계열은 검증된 변환기/전용 도구 adapter. 지원 범위와 실패를 명확히 표시
+- 이미지: EXIF 및 OCR, 표·수식·도식 Vision 분석
+- 오디오/비디오: 전사, 자막 추출, 비디오 keyframe 및 시간 구간 분석
+- TXT/Markdown/HTML/EPUB/RTF: 텍스트 및 구조 추출
+- ZIP: 압축 파일 자체와 포함 파일 manifest 보존, 허용된 파일만 안전하게 내부 추출
+- 소스 코드: 언어 감지 및 텍스트/구조 분석만 수행하며 코드를 실행하지 않음
+- URL: 사용자가 저장한 URL과 페이지 metadata. 로그인 우회/비공개 페이지 크롤링 금지
+
+지원하지 않거나 암호화·손상된 파일도 원본은 저장하고 unsupported, password_required, corrupt, needs_conversion 등의 상태로 노출합니다.
+
+### 8.4 공통 block 및 출처 모델
+
+각 추출 콘텐츠는 원본 attachment와 함께 위치를 보존합니다.
+- PDF: page number, bounding box(가능한 경우)
+- PPT: slide index, shape/text region
+- DOCX/HWP: heading path, paragraph/table index
+- XLSX/CSV: sheet name, cell/range, row/column
+- Audio: chunk start/end offset
+- Video: time range, keyframe timestamp
+- Image: attachment ID, OCR/Vision region
+- Web: URL, title, retrieved_at, section anchor
+
+AI가 "시험 범위는 3~5장"이라고 요약했다면 원본 PDF 페이지나 교수자 공지의 해당 문단으로 되돌아갈 수 있어야 합니다. 여러 파일에서 합성한 결과는 복수 source reference를 갖습니다.
+
+### 8.5 다중 문서 간 통합 분석
+
+CourseMaterialSet 단위로 파일 간 중복/상충/보완 관계를 찾습니다.
+- 강의 transcript와 교수자 슬라이드의 개념 연결
+- 과제 안내문과 강의 노트의 제출 요건/마감 비교
+- PPT와 별도 PDF 참고자료의 같은 주제 비교
+- 교수자 공지와 조교가 배포한 실습 파일의 연계
+- 버전이 다른 배포자료의 변경점 탐지
+
+AI는 출처가 다른 내용을 하나로 섞지 않고 각 주장에 근거를 연결합니다. 충돌하는 일정/지시사항은 임의로 결정하지 않고 사용자가 검토하도록 합니다.
+
+### 8.6 파일 안전성
+
+- 매크로, 스크립트, 실행 파일을 자동 실행하지 않습니다.
+- ZIP 추출은 path traversal, symlink, 압축 폭탄, 중첩 깊이, 파일 개수/크기 제한을 적용합니다.
+- Office 문서의 외부 링크나 embedded object를 자동으로 실행/호출하지 않습니다.
+- HTML 및 PDF의 외부 리소스를 기본 자동 로드하지 않습니다.
+- 암호화/DRM/비밀번호 보호 파일은 우회하지 않고 사용자에게 상태를 알립니다.
+- 파일 이름은 안전하게 정규화하고 저장 경로 탈출을 방지합니다.
+- AI API 전송은 attachment별 cloud_processing_policy가 허용할 때만 수행합니다.
