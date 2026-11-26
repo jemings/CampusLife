@@ -9,6 +9,7 @@ a dead run is a `*.part` file no row points to.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import os
 import stat
@@ -147,6 +148,11 @@ class BlobStore:
             _fsync_directory(final.parent)
         os.chmod(final, READ_ONLY)
 
+    def _discard_quietly(self, path: Path) -> None:
+        """One try; a file that stays is a staging leftover the next start removes or reports."""
+        with contextlib.suppress(OSError):
+            self._files.unlink(path)
+
     def _store_file(self, src: Path) -> StoredBlob:
         self._staging_dir.mkdir(parents=True, exist_ok=True)
         staging = self._staging_dir / f"{uuid.uuid4()}{STAGING_SUFFIX}"
@@ -154,8 +160,9 @@ class BlobStore:
             stored = _copy_hashing(src, staging)
             final = self.path_of(stored.sha256)
             self._retry_while_locked(lambda: self._move_into_place(staging, final))
-        finally:
-            staging.unlink(missing_ok=True)
+        except BaseException:
+            self._discard_quietly(staging)
+            raise
         return stored
 
     async def put_file(self, src: Path) -> StoredBlob:
