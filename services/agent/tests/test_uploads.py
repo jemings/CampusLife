@@ -2,10 +2,13 @@ import asyncio
 import errno
 import hashlib
 import os
+import shutil
 import stat
 import threading
 import uuid
+from collections import namedtuple
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from campuslife_contracts import validate
@@ -316,6 +319,26 @@ async def test_an_upload_whose_chunks_and_combination_just_fit_the_free_space_on
     assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == ()
     assert measured == [tmp_path / "uploads"]
 
+
+async def test_the_free_space_is_measured_on_the_nearest_directory_that_exists_above_the_uploads(tmp_path, db, phone, monkeypatch):
+    measured = []
+    usage = namedtuple("usage", "total used free")
+
+    def disk_usage(path):
+        measured.append(Path(path))
+        return usage(total=10**12, used=10**12 - (2 * len(DATA) - 1), free=2 * len(DATA) - 1)
+
+    monkeypatch.setattr(shutil, "disk_usage", disk_usage)
+    uploads = tmp_path / "not yet made" / "uploads"
+    store = BlobStore(db, blobs_dir=tmp_path / "blobs", staging_dir=tmp_path / "staging", uploads_dir=uploads, chunk_size=CHUNK)
+
+    with pytest.raises(InvalidUpload):
+        await store.open_upload(phone, sha(DATA), len(DATA))
+    uploads.mkdir(parents=True)
+    with pytest.raises(InvalidUpload):
+        await store.open_upload(phone, sha(DATA), len(DATA))
+
+    assert measured == [tmp_path, uploads]
 
 async def test_resuming_is_not_measured_against_the_free_space_again(tmp_path, db, phone):
     free = [2 * len(DATA)]
