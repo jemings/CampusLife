@@ -254,10 +254,10 @@ async def test_a_rejected_mutation_does_not_stop_the_batch(db, device, blob_stor
 
 async def test_a_batch_with_an_op_this_hub_does_not_apply_yet_is_refused_before_anything_is_written(db, device, blob_store, tmp_path):
     good = commit(await text_capture(blob_store, tmp_path))
-    create = {"mutation_id": new_id(), "op": "create", "entity": "item", "id": ITEM_A, "data": {"kind": "note", "title": "메모", "fields": {}}}
+    dismiss = {"mutation_id": new_id(), "op": "suggestion.dismiss", "suggestion_id": ITEM_A}
 
     with pytest.raises(UnsupportedOp):
-        await mutations.apply(db, [good, create], device)
+        await mutations.apply(db, [good, dismiss], device)
 
     assert await db.read(lambda snap: snap.execute("SELECT count(*) FROM applied_mutations").fetchone()[0]) == 0
     assert await feed(db) == []
@@ -282,10 +282,10 @@ async def test_an_op_that_is_not_a_string_is_a_schema_rejection_and_the_batch_go
 
 async def test_an_unapplied_contract_op_refuses_the_batch_even_when_it_breaks_the_schema(db, device, blob_store, tmp_path):
     good = commit(await text_capture(blob_store, tmp_path))
-    bare_create = {"mutation_id": new_id(), "op": "create"}
+    bare_dismiss = {"mutation_id": new_id(), "op": "suggestion.dismiss"}
 
     with pytest.raises(UnsupportedOp):
-        await mutations.apply(db, [good, bare_create], device)
+        await mutations.apply(db, [good, bare_dismiss], device)
 
     assert await db.read(lambda snap: snap.execute("SELECT count(*) FROM applied_mutations").fetchone()[0]) == 0
     assert await feed(db) == []
@@ -326,10 +326,10 @@ async def test_two_attachments_of_one_commit_with_the_same_id_are_rejected(db, d
 
 
 async def test_an_op_is_unapplied_only_while_no_handler_is_registered_for_it(db, device, monkeypatch):
-    create = contract_fixture("valid", "mutation/mutation", "create_course")
+    dismiss = contract_fixture("valid", "mutation/mutation", "suggestion_dismiss")
     with pytest.raises(UnsupportedOp):
-        await mutations.apply(db, [create], device)
+        await mutations.apply(db, [dismiss], device)
 
-    monkeypatch.setitem(mutations.HANDLERS, "create", lambda tx, mutation, device: Applied())
+    monkeypatch.setitem(mutations.HANDLERS, "suggestion.dismiss", lambda tx, mutation, device: Applied())
 
-    assert await apply(db, device, create) == [{"mutation_id": create["mutation_id"], "result": "applied"}]
+    assert await apply(db, device, dismiss) == [{"mutation_id": dismiss["mutation_id"], "result": "applied"}]
