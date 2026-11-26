@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/contract_version",
+    "rule": "range_order"
+  }
+]

@@ -262,6 +262,12 @@ REQUIRED = {
     "mutation/result#/$defs/only_when/missing_blobs/allOf/0/then": {"missing_blobs"},
     "mutation/result#/$defs/only_when/original/allOf/0/then": {"original"},
     "mutation/result#/$defs/only_when/reason/allOf/0/then": {"reason"},
+    "sync/changes_page#": {"hub_id", "epoch", "changes", "next_since", "has_more"},
+    "sync/changes_page#/$defs/change": {"entity", "id", "rev", "deleted"},
+    "sync/changes_page#/$defs/change/allOf/1/then": {"data"},
+    "sync/hub#": {"hub_id", "epoch", "contract_version", "min_contract_version"},
+    "sync/request_headers#": {"CampusLife-Contract"},
+    "sync/response_headers#": {"CampusLife-Hub-Id", "CampusLife-Epoch"},
     "tag/tag#": {"id", "name", "color"},
 }
 
@@ -291,4 +297,5 @@ LENGTHS = {
     "mutation/batch_response#/properties/results": {("minItems", 1)},
     "mutation/result#/properties/conflicted_fields": {("minItems", 1)},
     "mutation/result#/properties/missing_blobs": {("minItems", 1)},
+    "sync/changes_page#/$defs/change/properties/id": NON_EMPTY,
 }
