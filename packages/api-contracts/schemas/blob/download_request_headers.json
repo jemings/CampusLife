@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/blob/download_request_headers.json",
+  "title": "Blob download request headers",
+  "description": "Optional headers on GET /v1/blobs/{sha}. Header names are case-insensitive (see contract_headers). Open.",
+  "type": "object",
+  "properties": {
+    "Range": { "description": "One byte range; the Hub does not serve multiple ranges.", "type": "string", "pattern": "^bytes=([0-9]{1,19}-[0-9]{0,19}|-[0-9]{1,19})$" },
+    "If-None-Match": { "$ref": "download_response_headers.json#/properties/ETag" }
+  }
+}

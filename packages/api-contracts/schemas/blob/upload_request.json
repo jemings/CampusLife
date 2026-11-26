@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/blob/upload_request.json",
+  "title": "Upload request",
+  "description": "POST /v1/blobs/uploads (D7): open or resume the upload of one Blob. The session is keyed by (this Device, sha256) (E19); asking again with another size while it is open is invalid_request. An empty Blob (size 0) is allowed (E19). The Hub picks the chunk size (E19). Closed input.",
+  "type": "object",
+  "required": ["sha256", "size"],
+  "properties": {
+    "sha256": { "$ref": "../common/sha256.json" },
+    "size": { "description": "Bytes.", "$ref": "../common/int64.json#/$defs/non_negative" }
+  },
+  "additionalProperties": false
+}

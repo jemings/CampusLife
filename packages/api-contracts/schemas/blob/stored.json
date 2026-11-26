@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/blob/stored.json",
+  "title": "Stored Blob",
+  "description": "The Blob is in the Hub's store: 200 from POST /v1/blobs/uploads when it already existed, and from finalize when the chunks combined to this sha256 and size (D7). Open.",
+  "type": "object",
+  "required": ["sha256", "size"],
+  "properties": {
+    "sha256": { "$ref": "../common/sha256.json" },
+    "size": { "$ref": "upload_request.json#/properties/size" }
+  }
+}

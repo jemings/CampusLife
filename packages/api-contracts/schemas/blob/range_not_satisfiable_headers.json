@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/blob/range_not_satisfiable_headers.json",
+  "title": "Range not satisfiable headers",
+  "description": "Headers on 416 from GET /v1/blobs/{sha}, besides the ones every response carries. Open.",
+  "type": "object",
+  "required": ["Content-Range"],
+  "properties": {
+    "Content-Range": { "description": "The Blob's size with no range, so the client can ask again inside it (RFC 9110).", "type": "string", "pattern": "^bytes \\*/[0-9]{1,19}$" }
+  }
+}

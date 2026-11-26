@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/blob/download_response_headers.json",
+  "title": "Blob download response headers",
+  "description": "Headers on 200 and 206 from GET /v1/blobs/{sha}, besides the ones every response carries. Open.",
+  "type": "object",
+  "required": ["ETag", "Accept-Ranges"],
+  "properties": {
+    "ETag": { "description": "The Blob's sha256 as a strong entity tag; a Blob never changes, so the tag never does either.", "type": "string", "pattern": "^\"[0-9a-f]{64}\"$" },
+    "Accept-Ranges": { "const": "bytes" },
+    "Content-Range": { "description": "On 206: the range served and the Blob's size.", "type": "string", "pattern": "^bytes [0-9]{1,19}-[0-9]{1,19}/[0-9]{1,19}$" }
+  }
+}
