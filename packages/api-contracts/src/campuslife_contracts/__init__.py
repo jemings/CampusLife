@@ -5,6 +5,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from .contract import Contract, ContractError
+from .headers import contract_headers
 from .jsonio import canonical_json
 from .policy import effective_cloud_policy, resolve_cloud_policy
 from .text_hash import text_hash
@@ -41,6 +42,7 @@ __all__ = [
     "Violation",
     "bundled_contract",
     "canonical_json",
+    "contract_headers",
     "contract_root",
     "effective_cloud_policy",
     "resolve_cloud_policy",
