@@ -1,0 +1,5 @@
+{
+  "code": "device_dormant",
+  "message": "re-approve",
+  "retry_after_ms": 60000
+}

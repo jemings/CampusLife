@@ -1,0 +1,10 @@
+{
+  "code": "incomplete",
+  "message": "chunks missing",
+  "details": {
+    "missing_chunks": [
+      0,
+      3
+    ]
+  }
+}
