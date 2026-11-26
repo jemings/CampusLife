@@ -8,7 +8,7 @@ The local UI is server-rendered HTML: Captures and their Attachments, each origi
 the import form a file is dropped on, and the jobs with retry and cancel (MVP-5). An original is
 always sent as an attachment, as octet-stream, nosniff and in a sandbox, so nothing a file holds
 runs in this origin. The admin API under /api/ is what the CLI uses while the Hub runs: login
-links, imports of local paths, retry, cancel and status (E11).
+links, imports of local paths, retry, cancel, status and stop (E11).
 """
 
 from __future__ import annotations
@@ -67,6 +67,8 @@ class Admin:
     redactor: Redactor
     status: Callable[[], Mapping[str, object]] = field(default=dict)
     """The host's report on itself, shown by /api/status."""
+    stop: Callable[[], None] = field(default=lambda: None)
+    """Ask the host to stop, as a signal would."""
 
 
 def _admin(request: Request) -> Admin:
@@ -296,6 +298,12 @@ async def api_status(request: Request) -> Response:
             **admin.status(),
         }
     )
+
+
+@router.post("/api/stop")
+async def api_stop(request: Request) -> Response:
+    _admin(request).stop()
+    return JSONResponse({"stopping": True})
 
 
 for action, change in (("retry", _retry), ("cancel", _cancel)):
