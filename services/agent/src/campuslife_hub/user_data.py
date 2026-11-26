@@ -11,6 +11,7 @@ import json
 from campuslife_contracts import contract_root
 
 from . import refs, store
+from .clock import now_instant
 from .created import earlier_create, remember_create
 from .db import Tx
 from .devices import DeviceId
@@ -71,3 +72,57 @@ CREATES = {Entity.ITEM: _create_item, Entity.TAG: _create_tag, Entity.RELATION: 
 def create(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
     ref = EntityRef(Entity(mutation["entity"]), mutation["id"])
     return CREATES[ref.entity](tx, ref, mutation["data"])
+
+
+def _delete_item(tx: Tx, ref: EntityRef) -> Outcome:
+    """Soft: the row stays, with the time of the first delete (D18)."""
+    row = store.get(tx, ref)
+    if row is not None and "deleted_at" not in row:
+        store.write(tx, ref, {**row, "deleted_at": now_instant()})
+    return Applied()
+
+
+def _delete_relation(tx: Tx, ref: EntityRef) -> Outcome:
+    if store.get(tx, ref) is not None:
+        store.write(tx, ref, None)
+    return Applied()
+
+
+def _delete_tag(tx: Tx, ref: EntityRef) -> Outcome:
+    """The Relations to or from the Tag go with it, so none is left pointing at a tombstone."""
+    if store.get(tx, ref) is None:
+        return Applied()
+    tag = f"tag:{ref.id}"
+    ends = tx.execute(
+        "SELECT id FROM relations WHERE json_extract(data, '$.from') = ? OR json_extract(data, '$.to') = ? ORDER BY id", (tag, tag)
+    ).fetchall()
+    for (relation_id,) in ends:
+        store.write(tx, EntityRef(Entity.RELATION, relation_id), None)
+    store.write(tx, ref, None)
+    return Applied()
+
+
+def _restore_item(tx: Tx, ref: EntityRef) -> Outcome:
+    row = store.get(tx, ref)
+    if row is None:
+        return Rejected(Reason.DELETED)
+    if "deleted_at" in row:
+        store.write(tx, ref, {name: value for name, value in row.items() if name != "deleted_at"})
+    return Applied()
+
+
+DELETES = {Entity.ITEM: _delete_item, Entity.RELATION: _delete_relation, Entity.TAG: _delete_tag}
+RESTORES = {Entity.ITEM: _restore_item}
+
+
+def delete(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
+    """Where delete applies, it is applied whether or not anything was left to delete: the entity ends up gone."""
+    ref = EntityRef(Entity(mutation["entity"]), mutation["id"])
+    handler = DELETES.get(ref.entity)
+    return Rejected(Reason.UNSUPPORTED_ENTITY) if handler is None else handler(tx, ref)
+
+
+def restore(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
+    ref = EntityRef(Entity(mutation["entity"]), mutation["id"])
+    handler = RESTORES.get(ref.entity)
+    return Rejected(Reason.UNSUPPORTED_ENTITY) if handler is None else handler(tx, ref)
