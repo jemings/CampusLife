@@ -96,7 +96,7 @@ CampusLife는 강의 녹음·정리만을 위한 앱이 아닙니다. 수업, �
 
 | 영역 | 이슈 | 선행 |
 |---|---|---|
-| Contracts | [#20 공통 도메인·Sync API 계약](https://github.com/jemings/CampusLife/issues/20) | — |
+| Contracts | [#20 공통 도메인·Sync API 계약: JSON Schema/OpenAPI 및 golden fixture](https://github.com/jemings/CampusLife/issues/20) | — |
 | MVP | [#2 Windows Hub 코어](https://github.com/jemings/CampusLife/issues/2) | #20 |
 | MVP | [#4 Sync 전송: Tailscale serve + HTTPS 업로드/다운로드](https://github.com/jemings/CampusLife/issues/4) | #2, #20 |
 | MVP | [#19 Device pairing·장치 토큰·revoke](https://github.com/jemings/CampusLife/issues/19) | #2 |
