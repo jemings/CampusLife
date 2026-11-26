@@ -1,0 +1,11 @@
+{
+  "id": "16fd2706-8baf-433b-82eb-8c7fada847da",
+  "blob_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "role": "photo",
+  "declared_mime": "image/jpeg",
+  "captured_at": "2026-03-02T00:35:12.345Z",
+  "captured_at_precision": "low",
+  "cloud_policy": "cloud_allowed",
+  "capture_id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "backed_up_at": "2026-03-02T00:36:00.000Z"
+}
