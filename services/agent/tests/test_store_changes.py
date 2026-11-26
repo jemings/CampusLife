@@ -75,8 +75,8 @@ async def test_deleting_leaves_a_tombstone_without_data(db):
 async def test_get_reads_the_current_row(db):
     ref = EntityRef(Entity.ITEM, ITEM_ID)
     assert await db.read(lambda snap: store.get(snap, ref)) is None
-    await db.write(lambda tx: store.write(tx, ref, item_row()))
-    assert await db.read(lambda snap: store.get(snap, ref)) == item_row()
+    rev = await db.write(lambda tx: store.write(tx, ref, item_row()))
+    assert await db.read(lambda snap: store.get(snap, ref)) == {**item_row(), "rev": rev}
 
 
 async def test_paging_by_one_through_rows_of_one_transaction_skips_none(db):

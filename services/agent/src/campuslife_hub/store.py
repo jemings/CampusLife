@@ -33,6 +33,10 @@ TABLES: dict[Entity, str] = {
 }
 
 
+ROW_CARRIES_REV = frozenset({Entity.ITEM})
+"""Entities whose contract row holds the rev of its last write (item/item `rev`)."""
+
+
 @dataclass(frozen=True)
 class EntityRef:
     entity: Entity
@@ -51,9 +55,10 @@ def write(tx: Tx, ref: EntityRef, data: dict | None) -> int:
     if data is None:
         tx.execute(f"DELETE FROM {table} WHERE id = ?", (ref.id,))
     else:
+        row = {**data, "rev": rev} if ref.entity in ROW_CARRIES_REV else data
         tx.execute(
             f"INSERT INTO {table} (id, data) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data",
-            (ref.id, canonical_json(data).decode("utf-8")),
+            (ref.id, canonical_json(row).decode("utf-8")),
         )
     tx.execute(
         "INSERT INTO sync_index (entity, id, rev, deleted) VALUES (?, ?, ?, ?)"
