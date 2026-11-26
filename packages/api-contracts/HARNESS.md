@@ -32,7 +32,7 @@ Kotlin(#3)·Swift(#16) 앱 모델이 계약과 같은 JSON을 읽고 쓰는지 �
 | 없음과 `null` | 다릅니다. 원본에 없던 멤버를 `null`로 쓰거나, `null`이던 멤버를 빼면 실패입니다. 선택 필드는 "없음"과 "null"을 구분해 모델링합니다(예: Kotlin `explicitNulls`, Swift `encodeIfPresent`와 `encodeNil`). |
 | 문자열 | 코드 포인트 그대로. NFC·NFD 변환, 공백 정리, 대소문자 변경을 하지 않습니다. 이스케이프 형태(`\uac15`와 `강`)는 자유입니다. 예: `original_filename_raw`는 NFD 그대로, `original_filename`은 NFC 그대로 돌아와야 합니다. 비BMP 문자(이모지)도 서로게이트 쌍이 깨지지 않아야 합니다. |
 | 모르는 Item kind | `item/item`의 `kind`는 닫힌 enum이 아닙니다. 모르는 kind는 공통 열(title, 날짜, body)만 읽고 `fields`는 해석하지 않습니다(forward `item/item/unknown_kind`). |
-| Hub가 보내는 열린 값 | Relation `type`, Attachment `role`, Capture `origin.type`, changes의 `entity`, 오류 본문(`common/error`)의 `code`는 Hub가 보내는 쪽에서 닫힌 enum이 아닙니다. 스키마에 `x-open: true`로 표시되어 있고 알려진 값은 그 옆 `examples`에 있습니다. 모르는 값도 디코드해 그대로 보존하고, 모르는 `entity`의 행은 건너뛰며, 모르는 오류 `code`는 일반 실패로 다룹니다(forward fixture). 클라이언트가 보내는 `capture.commit`·`create`·`patch`에서는 알려진 값만 씁니다. 다른 곳의 `examples`는 설명일 뿐입니다. |
+| Hub가 보내는 열린 값 | Relation `type`, Attachment `role`, Capture `origin.type`, changes의 `entity`, 오류 본문(`common/error`)의 `code`는 Hub가 보내는 쪽에서 닫힌 enum이 아닙니다. 스키마에 `x-open: true`로 표시되어 있고 알려진 값은 그 옆 `examples`에 있습니다. 열린 enum의 값은 모두 같은 모양 `^[a-z][a-z_]*$`(소문자로 시작하고 소문자와 `_`만, 숫자 없음)이므로 디코더는 이 규칙 하나로 모르는 값을 받습니다. 모르는 값도 디코드해 그대로 보존하고, 모르는 `entity`의 행은 건너뛰며, 모르는 오류 `code`는 일반 실패로 다룹니다(forward fixture). 클라이언트가 보내는 `capture.commit`·`create`·`patch`에서는 알려진 값만 씁니다. 다른 곳의 `examples`는 설명일 뿐입니다. |
 | Mutation 결과 | 멤버마다 나타나는 `result`가 정해져 있습니다: `reason`은 rejected, `original`은 duplicate, `missing_blobs`는 retry, `conflicted_fields`는 conflict, `applied_fields`는 applied·conflict, `conflict_record_ids`는 conflict와 rejected{deleted}. 없는 멤버를 `null`로 쓰면 다른 값이 됩니다. |
 | 시각 문자열 | `instant`는 `YYYY-MM-DDTHH:MM:SS.sssZ` 문자열 그대로 돌아와야 합니다. 날짜 타입으로 바꿔 담는다면 밀리초 3자리 형식으로 다시 써야 합니다. |
 | JSON 형식 | 엄격한 JSON: UTF-8, BOM 없음, 중복 멤버 없음, `NaN`/`Infinity` 없음, 짝 없는 서로게이트 이스케이프(`\ud800`) 없음. |
@@ -79,10 +79,10 @@ uv run campuslife-contracts compare fixtures/valid <out>
 
 - `tests/test_openapi.py`는 operation마다 상태 코드별 본문 스키마와 헤더(어느 헤더 컴포넌트인지까지), 파라미터(`in`·`required`·스키마), 요청 본문을 표로 정확히 비교합니다. 엔드포인트를 더하거나 고치면 그 표도 함께 고칩니다.
 - 모든 operation이 400(`invalid_request`·`not_canonical`·`contract_too_old`)을 가집니다. `GET /v1/hub`만 `contract_too_old`를 내지 않습니다. 너무 오래된 클라이언트도 여기서 `min_contract_version`을 읽고 스스로 멈춥니다.
-- pairing(`device/pair_request`)의 `platform`은 `android`·`ipados`만 받습니다. `windows_hub`는 Hub 자신의 Device 행입니다. `device_name`·`last_error` 같은 표시 문자열은 제어문자를 받지 않습니다.
+- pairing(`device/pair_request`)의 `platform`은 `android`·`ipados`만 받습니다. `windows_hub`는 Hub 자신의 Device 행입니다. `device_name`·`last_error` 같은 표시 문자열은 제어문자, 줄·문단 구분자(U+2028, U+2029), 양방향 서식 문자(U+202A–U+202E, U+2066–U+2069)를 받지 않습니다.
 - 토큰 재발급 `POST /v1/devices/me/token`은 지금 토큰으로 인증하고 본문 없이 보내며, 응답은 `device/pair_response` 모양입니다. 이전 토큰은 새 토큰이 처음 인증에 성공할 때 폐기되고, 그전까지는 둘 다 유효합니다. 다시 요청하면 아직 쓰이지 않은 같은 새 토큰을 돌려줍니다.
 - 업로드 세션의 키는 (이 Device, sha256)입니다(E19). 같은 sha256으로 열린 세션에 다른 `size`를 보내면 400 `invalid_request`이고, revoke하면 그 Device의 열린 세션이 폐기됩니다(D6). 이미 저장된 Blob의 finalize는 세션이 없어도 200입니다(D7).
-- 업로드 chunk 번호는 0부터이고, chunk i는 바이트 `[i*chunk_size, min((i+1)*chunk_size, size))`입니다. chunk는 ceil(size/chunk_size)개이고 `received`의 값은 모두 그보다 작습니다(규칙 `chunk_index`). 크기 0인 Blob은 chunk가 없고 바로 finalize합니다(E19).
+- 업로드 chunk 번호는 0부터이고, chunk i는 바이트 `[i*chunk_size, min((i+1)*chunk_size, size))`입니다. chunk는 ceil(size/chunk_size)개이고 `received`의 값은 모두 그보다 작습니다(규칙 `chunk_index`). 크기 0인 Blob은 chunk가 없고 바로 finalize합니다(E19). 경로의 `{i}`는 정수 파라미터라서 스키마는 `07` 같은 선행 0 표기를 거르지 않습니다. 클라이언트는 `7`처럼 선행 0 없이 쓰고, Hub가 그 밖의 표기를 어떻게 다룰지는 Hub 구현(#2)이 정합니다.
 - 쿼리 값(`sync/changes_query`)과 헤더 값은 도착한 그대로의 문자열로 검사합니다. 숫자 문자열(`since`, `Range`, `Content-Range`)의 숫자는 int64 범위 안이고(규칙 `int64_text`: `9223372036854775807`까지), 바이트 범위는 first ≤ last이며 `Content-Range`의 last는 크기보다 작습니다(규칙 `byte_range`). 416은 `Content-Range: bytes */<size>`(`blob/range_not_satisfiable_headers`)를 싣습니다.
 
 ## HTTP 헤더 이름
