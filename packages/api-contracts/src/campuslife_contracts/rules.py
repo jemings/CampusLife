@@ -151,6 +151,33 @@ def _a1_order(validator, enabled, instance, schema):
         yield ValidationError(f"{instance!r} does not go from the top-left cell to the bottom-right one")
 
 
+LOCATOR_ANCHORS = (("blob", "blob:"), ("capture", "capture:"))
+
+
+def _locator_anchor(validator, enabled, instance, schema):
+    """An evidence Relation's Locators sit in its to; a Relation of another known type has none.
+
+    A type the schema does not list may be a newer Hub's, so its locators are left alone, and so is a
+    Locator without a blob or capture, which can only be of a kind this contract does not know.
+    """
+    if not isinstance(instance, dict) or not isinstance(instance.get("locators"), list):
+        return
+    if not _members_fit(validator, schema, instance, [name for name in ("type", "to", "locators") if name in instance]):
+        return
+    relation_type, to = instance.get("type"), instance.get("to")
+    if relation_type != "evidence":
+        known = schema.get("properties", {}).get("type", {}).get("examples", [])
+        if relation_type in known:
+            yield ValidationError(f"a {relation_type} Relation has no locators", path=["locators"])
+        return
+    if not isinstance(to, str):
+        return
+    for index, locator in enumerate(instance["locators"]):
+        anchor = next(((name, prefix) for name, prefix in LOCATOR_ANCHORS if isinstance(locator.get(name), str)), None)
+        if anchor is not None and f"{anchor[1]}{locator[anchor[0]]}" != to:
+            yield ValidationError(f"the locator's {anchor[0]} is not the Relation's to", path=["locators", index, anchor[0]])
+
+
 def _batch_order(validator, enabled, instance, schema):
     if not isinstance(instance, list):
         return
@@ -265,6 +292,7 @@ RULE_KEYWORDS = {
     "x-raw-form": RuleKeyword(Rule.RAW_FORM, _raw_form),
     "x-relation-id": RuleKeyword(Rule.RELATION_ID, _relation_id),
     "x-relation-not-self": RuleKeyword(Rule.RELATION_SELF, _relation_not_self),
+    "x-locator-anchor": RuleKeyword(Rule.LOCATOR_ANCHOR, _locator_anchor),
     "x-a1-order": RuleKeyword(Rule.A1_ORDER, _a1_order),
     "x-batch-order": RuleKeyword(Rule.BATCH_ORDER, _batch_order),
     "x-original-id": RuleKeyword(Rule.ORIGINAL_ID, _original_id),

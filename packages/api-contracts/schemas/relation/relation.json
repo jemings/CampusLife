@@ -15,11 +15,20 @@
       "x-open": true,
       "x-owner": "client"
     },
-    "to": { "$ref": "../common/entity_ref.json", "x-owner": "client" }
+    "to": { "$ref": "../common/entity_ref.json", "x-owner": "client" },
+    "locators": {
+      "description": "Where in the original the link rests, for an evidence Relation the Hub made when the user accepted a Suggestion: the Hub copies them from the Suggestion's evidence, one Relation per anchor, and joins them with those already there (D10, E14). Each Locator's anchor (blob or capture) is to; a Relation of another known type has none (rule locator_anchor). A client never writes it.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "../locator/locator.json" },
+      "x-owner": "hub"
+    }
   },
   "allOf": [{ "$ref": "#/$defs/tagged_ends" }],
   "x-relation-id": true,
   "x-relation-not-self": true,
+  "x-locator-anchor": true,
   "$defs": {
     "tagged_ends": {
       "description": "A tagged Relation goes from an item to a tag.",

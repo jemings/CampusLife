@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/locators",
+    "rule": "locator_anchor"
+  }
+]

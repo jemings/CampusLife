@@ -341,6 +341,7 @@ LENGTHS = {
     "device/pair_request#/properties/device_name": {("minLength", 1), ("maxLength", 64)},
     "device/pair_response#/$defs/token": {("maxLength", 512)},
     "device/status#/properties/last_error": {("minLength", 1), ("maxLength", 1000)},
+    "relation/relation#/properties/locators": {("minItems", 1)},
     "locator/locator#/$defs/doc_path/properties/heading_path/items": NON_EMPTY,
     "locator/locator#/$defs/sheet_range/properties/sheet": {("minLength", 1), ("maxLength", 31)},
 }
