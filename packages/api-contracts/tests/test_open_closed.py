@@ -201,6 +201,58 @@ def test_a_proposal_names_the_members_of_the_input_it_mirrors():
     assert names(SUGGESTION["proposed_change"]) == names(MUTATION["change"])
 
 
+CLOSED_VALUE_TYPES = ("common/local_date", "common/local_time_rule")
+FREE_FORM_IN_FEED = {("suggestion/suggestion", ("proposed", "set"))}
+OPEN_SAMPLES = [
+    (f"{c.schema_id}/{c.name}", c.schema_id, read_strict(c.path))
+    for c in CASES if c.kind is FixtureKind.VALID and c.schema_id in OPEN
+]
+
+
+def node_at(sample, at):
+    for part in at:
+        sample = sample[part]
+    return sample
+
+
+def closed_inside(schema_id, sample, at):
+    """A closed value type (D20) or a map whose names are columns, inside an open shape."""
+    names_only = tuple(part for part in at if isinstance(part, str))
+    if any(names_only[-len(path):] == path and schema_id == owner for owner, path in FREE_FORM_IN_FEED):
+        return True
+    return any(CONTRACT.validate(value_type, node_at(sample, at)) == [] for value_type in CLOSED_VALUE_TYPES)
+
+
+NESTED = [
+    (name, at)
+    for name, schema_id, sample in OPEN_SAMPLES
+    for at in object_paths(sample)
+    if at and isinstance(node_at(sample, at), dict) and not closed_inside(schema_id, sample, at)
+]
+
+
+@pytest.mark.parametrize(("name", "at"), NESTED, ids=lambda v: v if isinstance(v, str) else "/".join(map(str, v)))
+def test_every_object_inside_an_open_shape_is_open(name, at):
+    _, schema_id, sample = next(entry for entry in OPEN_SAMPLES if entry[0] == name)
+    assert CONTRACT.validate(schema_id, with_member_at(sample, at, "zz_unknown")) == []
+
+
+def test_the_open_samples_reach_the_nested_feed_shapes():
+    shapes = {(name.rsplit("/", 1)[0], tuple(part for part in at if isinstance(part, str))) for name, at in NESTED}
+    assert {
+        ("suggestion/suggestion", ("proposed",)),
+        ("suggestion/suggestion", ("proposed", "fields")),
+        ("suggestion/suggestion", ("proposed", "set", "due_at")),
+        ("suggestion/suggestion", ("evidence",)),
+        ("relation/relation", ("locators",)),
+        ("sync/changes_page", ("changes", "data", "proposed")),
+        ("sync/changes_page", ("changes", "data", "evidence")),
+        ("capture/capture", ("origin",)),
+        ("capture/timeline", ("anchors",)),
+        ("item/item", ("fields",)),
+    } <= shapes
+
+
 def view(schema_id, pointer):
     return ContractValidator({"$ref": f"{schema_uri(schema_id)}#{pointer}"}, registry=CONTRACT.registry)
 
