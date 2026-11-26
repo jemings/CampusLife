@@ -388,7 +388,7 @@ def finalize_first(monkeypatch, step):
 
     def step_then_combine(sources, staging):
         monkeypatch.setattr(blobs_module, "_copy_hashing", real)
-        asyncio.run_coroutine_threadsafe(step(), loop).result()
+        asyncio.run_coroutine_threadsafe(step(), loop).result(timeout=5)
         return real(sources, staging)
 
     monkeypatch.setattr(blobs_module, "_copy_hashing", step_then_combine)
