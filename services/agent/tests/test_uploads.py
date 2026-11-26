@@ -4,6 +4,7 @@ import hashlib
 import os
 import stat
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from campuslife_contracts import validate
@@ -22,7 +23,7 @@ from campuslife_hub.blobs import (
 )
 from campuslife_hub.clock import now_instant
 from campuslife_hub.devices import DeviceId
-from test_blobs import refused_at_first
+from test_blobs import WindowsError_, must_not_wait, refused_at_first
 
 CHUNK = 4
 DATA = b"0123456789"
@@ -439,3 +440,133 @@ async def test_a_chunk_replace_refused_by_a_sharing_violation_is_retried(tmp_pat
     assert len(calls) == 3
     assert len(slept) == 2
     assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == (0,)
+
+
+def a_week_and_a_day_on():
+    return datetime.now(UTC) + timedelta(days=8)
+
+
+async def age_sessions(db, touched_at="2000-01-01T00:00:00.000Z"):
+    await db.write(lambda tx: tx.execute("UPDATE upload_sessions SET touched_at = ?", (touched_at,)))
+
+
+async def test_a_session_untouched_for_seven_days_expires_with_its_chunks(tmp_path, store, phone):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await put_all(store, phone, DATA, order=[0, 1])
+
+    assert await store.expire_sessions(a_week_and_a_day_on()) == []
+
+    assert session_dirs(tmp_path) == []
+    with pytest.raises(NoUploadSession):
+        await store.put_chunk(phone, sha(DATA), 2, chunks(DATA)[2])
+
+
+async def test_a_session_touched_within_seven_days_stays(tmp_path, store, phone):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await put_all(store, phone, DATA, order=[0])
+
+    assert await store.expire_sessions(datetime.now(UTC) + timedelta(days=6)) == []
+
+    assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == (0,)
+
+
+async def test_a_chunk_keeps_its_session_from_expiring(db, store, phone):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await age_sessions(db)
+
+    await store.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])
+    await store.expire_sessions(datetime.now(UTC))
+
+    assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == (0,)
+
+
+async def test_resuming_keeps_a_session_from_expiring(db, store, phone):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await store.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])
+    await age_sessions(db)
+
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await store.expire_sessions(datetime.now(UTC))
+
+    assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == (0,)
+
+
+class RunsAfterTheFirstRead:
+    """The database, except that `after` runs just after the first read."""
+
+    def __init__(self, db, after):
+        self._db = db
+        self._after = after
+
+    async def read(self, fn):
+        result = await self._db.read(fn)
+        if self._after is not None:
+            after, self._after = self._after, None
+            await after()
+        return result
+
+    async def write(self, fn):
+        return await self._db.write(fn)
+
+
+async def test_a_chunk_placed_after_its_session_ended_is_refused_and_swept_as_an_orphan(tmp_path, db, store, phone):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    racing = uploads_in(tmp_path, RunsAfterTheFirstRead(db, lambda: store.drop_sessions(phone)))
+
+    with pytest.raises(NoUploadSession):
+        await racing.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])
+
+    assert len(session_dirs(tmp_path)) == 1
+    assert await store.expire_sessions(datetime.now(UTC)) == []
+    assert session_dirs(tmp_path) == []
+    assert staging_files(tmp_path) == []
+
+
+async def test_expiring_removes_directories_no_session_owns_and_reports_what_is_not_one(tmp_path, store, phone):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await put_all(store, phone, DATA, order=[1])
+    orphan = tmp_path / "uploads" / str(uuid.uuid4())
+    orphan.mkdir()
+    (orphan / "0").write_bytes(b"0123")
+    stray = tmp_path / "uploads" / "notes.txt"
+    stray.write_bytes(b"not a session")
+
+    [kept] = await store.expire_sessions(datetime.now(UTC))
+
+    assert kept.path == stray
+    assert "not an upload session directory" in kept.reason
+    assert not orphan.exists()
+    assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == (1,)
+
+
+async def test_a_chunk_still_in_use_is_kept_and_removed_by_a_later_sweep(tmp_path, db, phone):
+    locked = {"0"}
+
+    def unlink(path):
+        if path.name in locked:
+            raise WindowsError_(32)
+        path.unlink(missing_ok=True)
+
+    store = uploads_in(tmp_path, db, FileOps(unlink=unlink, sleep=must_not_wait))
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await put_all(store, phone, DATA, order=[0, 1])
+
+    [kept] = await store.expire_sessions(a_week_and_a_day_on())
+
+    assert kept.path.name == "0"
+    assert "in use" in kept.reason
+    locked.clear()
+    assert await store.expire_sessions(datetime.now(UTC)) == []
+    assert session_dirs(tmp_path) == []
+
+
+async def test_a_session_directory_that_fails_to_go_for_another_reason_stops_the_sweep(tmp_path, db, phone):
+    def unlink(path):
+        raise PermissionError(errno.EACCES, "denied", str(path))
+
+    store = uploads_in(tmp_path, db, FileOps(unlink=unlink))
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await put_all(store, phone, DATA, order=[0])
+
+    with pytest.raises(PermissionError):
+        await store.expire_sessions(a_week_and_a_day_on())
