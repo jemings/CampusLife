@@ -15,5 +15,6 @@
       "uniqueItems": true,
       "items": { "$ref": "../common/int64.json#/$defs/non_negative" }
     }
-  }
+  },
+  "x-chunk-index": true
 }

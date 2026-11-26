@@ -72,6 +72,10 @@
       "description": "Rule feed_order: in a changes page, each row's id is its data's id, revs rise strictly, and next_since is at least the highest rev (E18).",
       "const": true
     },
+    "x-chunk-index": {
+      "description": "Rule chunk_index: in an upload session, every received index is below the chunk count, ceil(size / chunk_size) (E19).",
+      "const": true
+    },
     "x-relation-not-self": {
       "description": "Rule relation_self: from and to are different entities.",
       "const": true
@@ -114,7 +118,7 @@
   },
   "propertyNames": {
     "if": { "pattern": "^x-" },
-    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self", "x-batch-order", "x-original-id", "x-feed-order", "x-open", "x-set-targets", "x-set-owner", "x-set-type"] }
+    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self", "x-batch-order", "x-original-id", "x-feed-order", "x-chunk-index", "x-open", "x-set-targets", "x-set-owner", "x-set-type"] }
   },
   "x-discriminated-union": true
 }

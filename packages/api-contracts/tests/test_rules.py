@@ -370,3 +370,40 @@ def test_feed_order_skips_rows_and_cursors_that_break_their_schema(make_contract
     assert contract.validate("t/feed", {"changes": [row("a", 3)], "next_since": "3"}) == [
         SchemaViolation("/next_since", "type")
     ]
+
+
+CHUNKS = {
+    "type": "object",
+    "properties": {
+        "size": {"type": "integer", "minimum": 0},
+        "chunk_size": {"type": "integer", "minimum": 1},
+        "received": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+    },
+    "x-chunk-index": True,
+}
+
+
+@pytest.mark.parametrize(
+    ("instance", "expected"),
+    [
+        ({"size": 9, "chunk_size": 4, "received": [0, 2, 1]}, []),
+        ({"size": 9, "chunk_size": 4, "received": [3]}, ["/received/0"]),
+        ({"size": 8, "chunk_size": 4, "received": [1, 2]}, ["/received/1"]),
+        ({"size": 0, "chunk_size": 4, "received": []}, []),
+        ({"size": 0, "chunk_size": 4, "received": [0]}, ["/received/0"]),
+        ({"size": 1, "chunk_size": 4, "received": [0]}, []),
+    ],
+    ids=["inside", "past-the-last", "exact-multiple", "empty-blob", "chunk-of-an-empty-blob", "one-short-chunk"],
+)
+def test_received_chunks_are_below_the_chunk_count(make_contract, instance, expected):
+    assert make_contract({"t/chunks": CHUNKS}).validate("t/chunks", instance) == [
+        RuleViolation(path, Rule.CHUNK_INDEX) for path in expected
+    ]
+
+
+def test_chunk_index_skips_sessions_whose_members_break_their_schema(make_contract):
+    contract = make_contract({"t/chunks": CHUNKS})
+    assert contract.validate("t/chunks", {"size": 9, "chunk_size": 0, "received": [5]}) == [
+        SchemaViolation("/chunk_size", "minimum")
+    ]
+    assert contract.validate("t/chunks", {"size": 9, "received": [5]}) == []

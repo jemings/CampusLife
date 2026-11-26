@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/received/1",
+    "rule": "chunk_index"
+  }
+]

@@ -178,10 +178,11 @@ def test_vocabulary_names_every_rule_keyword():
         {"x-original-id": False},
         {"x-feed-order": "yes"},
         {"x-open": False},
+        {"x-chunk-index": 1},
     ],
     ids=["relation-id-number", "relation-id-empty", "batch-order-false", "set-owner-string", "set-type-false",
          "targets-without-schema", "targets-unknown-member", "targets-not-object", "original-id-false",
-         "feed-order-string", "open-false"],
+         "feed-order-string", "open-false", "chunk-index-number"],
 )
 def test_malformed_rule_keywords_are_rejected(tmp_path, keywords):
     write_schema(tmp_path, "t/k", {"type": "object", **keywords})
