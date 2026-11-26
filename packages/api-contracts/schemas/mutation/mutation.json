@@ -36,10 +36,10 @@
       "enum": ["item", "attachment", "relation", "tag"]
     },
     "id_follows_entity": {
-      "description": "A relation is named by its from|type|to id, every other entity by a UUIDv4. Without an entity there is nothing to check the id against.",
+      "description": "A relation is named by its from|type|to id, every other entity by a UUIDv4. Without a known entity there is nothing to check the id against.",
       "allOf": [
         { "if": { "properties": { "entity": { "const": "relation" } }, "required": ["entity"] }, "then": { "properties": { "id": { "$ref": "../relation/relation.json#/properties/id" } } } },
-        { "if": { "properties": { "entity": { "not": { "const": "relation" } } }, "required": ["entity"] }, "then": { "properties": { "id": { "$ref": "../common/uuid.json" } } } }
+        { "if": { "properties": { "entity": { "$ref": "#/$defs/entity", "not": { "const": "relation" } } }, "required": ["entity"] }, "then": { "properties": { "id": { "$ref": "../common/uuid.json" } } } }
       ]
     },
     "set_key": {
