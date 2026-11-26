@@ -1,6 +1,6 @@
 # CampusLife 공통 도메인 모델
 
-구조 결정의 근거는 [DECISIONS.md](DECISIONS.md)에 있습니다. 이 문서는 개념 모델이며, 실제 스키마는 `packages/api-contracts`의 JSON Schema가 기준입니다.
+구조 결정의 근거는 [DECISIONS.md](DECISIONS.md)에 있습니다. 이 문서는 개념 모델이며, 실제 스키마는 `packages/api-contracts`의 JSON Schema가 기준입니다(D20). 필드 이름이 다르면 스키마를 따르고, 스키마를 바꾸는 PR이 이 문서도 함께 고칩니다.
 
 ## 1. 핵심 축
 
@@ -25,49 +25,66 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 | Entity | 주요 필드 |
 |---|---|
 | Blob | sha256, size_bytes, stored_at |
-| Capture | id, device_id, created_at(instant), origin{type: record\|camera\|share\|import\|manual, uri?, app?, publisher?, distributed_by?, distributed_at?}, category_hint, user_note, links[], timeline? |
-| Attachment | id, capture_id, blob_sha256, role(예: audio_segment), seq?, original_filename(NFC + 원문), declared_mime, detected_mime, captured_at, cloud_policy, backed_up_at(Hub 소유) |
+| Capture | id, device_id(Hub가 토큰으로 채움), created_at(instant), origin{type: record\|camera\|share\|import\|manual, uri?, app?, publisher?, distributed_by?, distributed_at?}, category_hint?, user_note?, url?(`http(s)://`, 공백·제어문자 없음), timeline?{boot_id(1–64자), anchors[](1개 이상), events[], start_uncertainty_ms?} |
+| Attachment | id, capture_id(Hub), blob_sha256(Hub), role: audio_segment\|photo\|file\|web_snapshot\|text, seq?, original_filename?(NFC), original_filename_raw?(받은 원문이 NFC와 다를 때만), declared_mime?, detected_mime?(Hub), captured_at?, captured_at_precision?: exact\|low, captured_mono_ns?, cloud_policy(사용자), backed_up_at?(Hub) |
+
+- `capture.commit`은 `links[]`를 함께 보내지만 Capture 행에는 없습니다. Hub가 commit을 적용할 때 각 link를 확정 Relation으로 바꿉니다. Attachment가 있으면 Attachment마다 `attachment:<id> —type→ <to>`, 없으면 `capture:<id> —type→ <to>`입니다(A5).
+- origin `type`과 Attachment `role`은 Hub가 보내는 쪽에서 열린 값입니다. 클라이언트는 모르는 값도 보존하고, 보낼 때는 알려진 값만 씁니다.
 
 ### 사용자 데이터 (Mutation으로만 변경)
 
 | Entity | 주요 필드 |
 |---|---|
-| Item | id, kind, schema_version, title, body?, status?, starts_at?, due_at?, all_day?, fields{…}, rev, deleted_at? |
-| Relation | id = `"{from}\|{type}\|{to}"`, from, type, to |
-| Tag | id, name, color |
+| Item | id, kind, schema_version(≥ 1), title, body?, starts_at?, due_at?, all_day?, fields{…}, rev(≥ 0), deleted_at? |
+| Relation | id = `"{from}\|{type}\|{to}"`, from, type, to, locators[]?(Hub) |
+| Tag | id, name, color(`#rrggbb`) |
 | AnnotationLayer | id, target_blob_sha256, page_number, author_device_id, rev, drawing_blob, strokes_blob, page_box, conflict_of? |
 | ConflictRecord | id, entity_ref, field, theirs_rev, mine_value_blob, state |
+
+- Item에는 `status` 열이 없습니다. task의 상태는 `fields.progress` 하나입니다(U4).
+- Relation `type`은 `about, supersedes, rendition_of, evidence, tagged, conflicts_with`이며 Hub가 보내는 쪽에서 열린 값입니다. Tag 부여는 `item:<id>` → `tag:<id>`인 `tagged` Relation입니다.
+- Relation `locators`는 사용자가 Suggestion을 수락할 때 Hub가 그 evidence에서 복사하는 근거 위치들입니다(D10). evidence Relation에만 있고, 각 Locator의 anchor(blob 또는 capture)는 `to`와 같습니다. 한 원본의 여러 곳(예: p.2와 p.5)은 Relation 하나의 locators에 함께 담깁니다. 클라이언트는 쓰지 않습니다.
+- AnnotationLayer(#17)와 ConflictRecord(#18)의 스키마는 각 이슈가 추가합니다(E20).
 
 ### Hub 파생 (읽기 전용으로 동기화)
 
 | Entity | 주요 필드 |
 |---|---|
-| Artifact | id, artifact_type, subject_ref, job_key, provider, model, prompt_version, pipeline_version, input_hashes[], content_blob, created_at |
-| Suggestion | id, source_artifact_id, action, proposed{…}, evidence[](Locator), fingerprint, state |
+| Artifact | id, artifact_type(transcript\|ocr\|summary\|rendition\|overlay, 열린 값), subject_ref, job_key, provider?, model?, prompt_version?, pipeline_version, input_hashes[], content_blob, created_at |
+| Suggestion | id, source_artifact_id, action: create_item\|patch_item\|add_relation(열린 값), proposed{…}, evidence[](Locator), fingerprint, state, conflicts_with[]?(자기 id 제외) |
 | ProcessingJob | id, job_key, job_type, subject_ref, state, outcome_code?, attempts, next_attempt_at, error (상세는 동기화하지 않고 `processing_summary`만 노출) |
 | ContentBlock | id = hash(blob, extractor_id, extractor_version, ordinal), blob_sha256, block_type, text 또는 payload, locator (동기화하지 않음) |
+
+- Artifact의 provider·model·prompt_version은 모델을 쓴 job에만 있습니다(렌디션에는 없음). 본문 구조(`blocks`, `refs`)와 `processing_summary`의 모양은 #8이 정합니다(E20). 유효 `cloud_policy`는 저장하지 않고 호출 때 계산합니다(D8).
+- Suggestion `proposed`의 모양은 action을 따릅니다. create_item은 Item create의 data, patch_item은 `{entity: item, id, set}`, add_relation은 Relation이며, Hub가 보내는 모양이라 안쪽도 열려 있습니다. 모르는 action은 표시만 하고 수락할 수 없습니다.
+- `suggestion.accept`의 `edits`는 patch의 set처럼 키를 쓰고, 값은 제안 대신 쓸 값입니다. 공통 열 키는 계약 검증기가 owner·set_type으로 검사하고, `fields.<key>`와 제안에 있는 키인지는 Hub 적용기(#2)가 판정합니다.
+- 수락하면 Hub가 evidence의 anchor마다 evidence Relation을 하나씩 만들고 locators를 합집합으로 모읍니다. add_relation은 만든 Relation의 locators에 evidence를 둡니다.
 
 ### 시스템
 
 | Entity | 주요 필드 |
 |---|---|
-| Device | id, platform, name, app_version, token_hash, state(active\|dormant\|revoked), created_at, last_seen_at |
+| Device | id, platform(android\|ipados\|windows_hub), device_name, app_version, state(active\|dormant\|revoked), created_at, last_seen_at |
 | audit_log | 외부 AI 전송, 삭제, revoke, 충돌 해소 기록 (Hub 전용, 동기화하지 않음) |
+
+- Hub는 토큰의 SHA-256만 저장합니다. 이 값(예전 표의 `token_hash`)은 Hub DB에만 있고 wire에 나가지 않습니다(D6). 계약의 Device 모양은 pair 요청·응답과 status heartbeat뿐입니다(E20).
+- `windows_hub`는 Hub 자신의 Device 행이고 로컬 import가 씁니다. pair하는 장치는 `android`·`ipados`입니다.
 
 ## 3. Item kind
 
 | kind | 주요 fields | 비고 |
 |---|---|---|
-| term | year, semester, starts_on, ends_on | MVP |
-| course | instructor, room, credits, schedule_slots[](local_time_rule), default_cloud_policy | MVP |
+| term | year, semester(first\|summer\|second\|winter), starts_on, ends_on | MVP |
+| course | instructor?, room?, credits?, schedule_slots[]?(local_time_rule), default_cloud_policy?, confirm_each_send? | MVP |
 | lecture_session | course_id, date(local_date) | 녹음 시작 시 생성 |
 | assignment | course_id, due_text, submission | MVP |
 | exam | course_id, scope_text | MVP |
 | task | progress(inbox/planned/in_progress/blocked/completed/cancelled), reminders[] | MVP |
-| note | forked_from_artifact?, refs[] | MVP |
+| note | forked_from_artifact? (`refs[]`는 #8이 추가, E20) | MVP |
 | event, announcement, opportunity, organization, place, person | kind별 스키마 | 후속 |
 
-- 일정 로직에 필요한 날짜·상태(`starts_at`, `due_at`, `all_day`, `status`)는 공통 열입니다.
+- 일정 로직에 필요한 날짜(`starts_at`, `due_at`, `all_day`)는 공통 열입니다. `all_day`가 true면 날짜는 `local_date`, 아니면 `instant`입니다. 상태 공통 열은 없습니다(U4).
+- `kind`는 `^[a-z][a-z_]*$`인 열린 값입니다.
 - 클라이언트는 모르는 kind를 제목·날짜·본문만으로 렌더링합니다.
 - 성적, 주민등록번호, 금융정보 등 불필요하게 민감한 데이터는 기본 수집 대상이 아닙니다. 추가할 때는 별도 보호 정책과 사용자의 명시적 동의가 먼저입니다.
 
@@ -90,12 +107,12 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 | Capture 봉인 | 클라이언트 로컬 | open, sealed |
 | 전송 | 클라이언트 로컬 | pending, uploading, committed, retry_wait, needs_attention |
 | ProcessingJob.state | Hub | pending, running, retry_wait, succeeded, failed, blocked, cancelled |
-| ProcessingJob.outcome_code | Hub | unsupported, password_required, corrupt, needs_conversion, partial, policy_blocked, budget_blocked |
+| ProcessingJob.outcome_code | Hub | unsupported, password_required, corrupt, needs_conversion, partial, policy_blocked, budget_blocked, unsafe_input |
 | processing_summary | Hub (계산값) | job 집계 |
-| Suggestion.state | 사용자 | open, accepted, dismissed, superseded |
+| Suggestion.state | 사용자가 결정, Hub가 기록 | open, accepted, dismissed, superseded |
 | task.progress | 사용자 | inbox, planned, in_progress, blocked, completed, cancelled |
 
-Capture와 Attachment에는 처리 상태 필드가 없습니다.
+Capture와 Attachment에는 처리 상태 필드가 없습니다. `unsafe_input`은 위험한 구조나 상한을 넘는 입력이며, 세부 사유는 동기화하지 않는 job error에 남깁니다(U3).
 
 ## 6. 시간 (D11)
 
@@ -107,12 +124,14 @@ Capture와 Attachment에는 처리 상태 필드가 없습니다.
 
 - 사용자 표시 시간대는 기본 Asia/Seoul이며 설정할 수 있습니다.
 - 마감 원문 표현은 `fields.due_text`에 보존합니다.
-- 모든 문자열은 NFC로 정규화하고 원문을 함께 보존합니다.
+- wire의 모든 문자열은 NFC여야 합니다. 아니면 Hub가 `rejected{not_canonical}`로 거부하고 조용히 고치지 않습니다. 원문 보존은 파일명만 합니다(`original_filename_raw`, U2).
+- `instant`는 `YYYY-MM-DDTHH:MM:SS.sssZ`(밀리초 3자리), `local_date`는 `{date, tz}`, `local_time_rule`은 `{weekdays(ISO, 월=1), start, end, tz, from_date, until_date}`입니다(E13).
 - 녹음 중 사진은 단조 시계(`elapsedRealtimeNanos`) 기준으로 녹음과 연결합니다(D15).
 
 ## 7. 출처 (D13)
 
-- 모든 Artifact 본문은 `blocks[{text, refs}]` 구조이고, ref는 공통 Locator를 가리킵니다.
+- 모든 Artifact 본문은 `blocks[{text, refs}]` 구조이고, ref는 공통 Locator를 가리킵니다. 본문 스키마는 #8이 정합니다(E20).
+- Locator(`locator/locator`)의 kind는 `pdf_page, slide, doc_path, sheet_range, media_time, image_region, web_snapshot, document`입니다. kind는 Hub가 보내는 쪽에서 열린 값이고, 모르는 kind는 `blob`이 있으면 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. 이 계약의 `v`는 1이고, page·slide·shape는 1부터, `block_index`는 0부터 셉니다. `box`는 표시 방향 기준 `[x, y, w, h]`입니다(E17). `annotation` kind는 #17이 추가합니다.
 - 앵커는 Blob 해시입니다(녹음은 Capture 타임라인, 필기는 레이어 revision).
 - LLM은 입력 ContentBlock id로만 인용하고, Hub가 그 id를 검증해 Locator로 치환합니다.
 - 정확한 위치가 없으면 `document`를 쓰고 추정하지 않습니다.
@@ -133,6 +152,7 @@ Capture와 Attachment에는 처리 상태 필드가 없습니다.
 ## 10. 동기화와 충돌
 
 - 변경 피드: `GET /v1/changes?since=` → 바뀐 행의 현재 상태와 `hub_id`·`epoch`(D3)
+  - 행은 `{entity, id, rev, deleted, data}`입니다. entity는 capture, attachment, item, relation, tag, artifact, suggestion이고, 클라이언트는 모르는 entity의 행을 건너뜁니다(E18).
 - 쓰기: `POST /v1/mutations` → 필드 단위 compare-and-set(D18)
 - 충돌: 스칼라 필드는 같은 필드만 충돌로 판정하고, 텍스트 본문 충돌은 ConflictRecord로 보존합니다. last-write-wins는 없습니다.
 
