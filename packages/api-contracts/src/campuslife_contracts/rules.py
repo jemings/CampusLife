@@ -186,6 +186,17 @@ def _feed_order(validator, enabled, instance, schema):
         yield ValidationError("next_since is at least the highest rev of the page", path=["next_since"])
 
 
+def _chunk_index(validator, enabled, instance, schema):
+    if not isinstance(instance, dict) or not all(name in instance for name in ("size", "chunk_size", "received")):
+        return
+    if not _members_fit(validator, schema, instance, ["size", "chunk_size", "received"]):
+        return
+    count = -(-instance["size"] // instance["chunk_size"])
+    for index, chunk in enumerate(instance["received"]):
+        if chunk >= count:
+            yield ValidationError(f"chunk {chunk} is past the last of {count} chunks", path=["received", index])
+
+
 def _box_extent(validator, enabled, instance, schema):
     if not (isinstance(instance, list) and len(instance) == 4 and all(map(_is_number, instance))):
         return
@@ -210,6 +221,7 @@ RULE_KEYWORDS = {
     "x-batch-order": RuleKeyword(Rule.BATCH_ORDER, _batch_order),
     "x-original-id": RuleKeyword(Rule.ORIGINAL_ID, _original_id),
     "x-feed-order": RuleKeyword(Rule.FEED_ORDER, _feed_order),
+    "x-chunk-index": RuleKeyword(Rule.CHUNK_INDEX, _chunk_index),
     "x-set-owner": RuleKeyword(Rule.OWNER, set_owner),
     "x-set-type": RuleKeyword(Rule.SET_TYPE, set_type),
 }

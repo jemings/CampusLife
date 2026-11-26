@@ -17,6 +17,7 @@ class Rule(enum.StrEnum):
     OWNER = "owner"
     BATCH_ORDER = "batch_order"
     FEED_ORDER = "feed_order"
+    CHUNK_INDEX = "chunk_index"
     ORIGINAL_ID = "original_id"
     SET_TYPE = "set_type"
     TZ_EXISTS = "tz_exists"
