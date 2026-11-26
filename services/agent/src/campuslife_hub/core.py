@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePath
 
+from . import jobs
 from .blobs import BlobStore
 from .data_root import Allowed, DataRootVerdict, DevicePath, InsideSyncFolder, Layout, UncPath, check_data_root, detect_sync_roots
 from .db import START_THE_HUB, Database, NotInitialized, ReadOnlyDatabase, StartupRefused
@@ -88,6 +89,9 @@ async def open_core(root: Path, *, create: bool, sync_roots: Iterable[Path] | No
             now = datetime.now(UTC)
             kept = blobs.discard_staging_leftovers() + await blobs.expire_sessions(now) + await blobs.collect_garbage(now)
             await forget_old_results(db, now)
+            recovered = await db.write(lambda tx: jobs.recover_after_restart(tx, now=now))
+            if recovered:
+                log.warning("%d jobs were running when the Hub last stopped; they wait again or failed", recovered)
             for leftover in kept:
                 log.warning("left %s for a later clean-up: %s", leftover.path, leftover.reason)
             yield Core(layout, db, blobs, identity, hub_device)
