@@ -1,7 +1,8 @@
 """Golden fixture layout (E7, E8) and the check each case must pass.
 
 fixtures/<kind>/<schema_id>/<case>.json, and for invalid cases a
-<case>.expect.json next to it listing the exact violations.
+<case>.expect.json next to it listing the exact violations. fixtures/policy
+holds the cloud_policy vectors instead (see policy.py).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from pathlib import Path
 from .compare import differences
 from .contract import Contract
 from .jsonio import NotStrictJson, loads_strict, read_strict
+from .policy import POLICY_DIR, policy_layout_problems
 from .violations import (
     MalformedExpectation,
     Violation,
@@ -60,10 +62,11 @@ def discover(root: Path) -> list[FixtureCase]:
 
 def layout_problems(root: Path, contract: Contract) -> list[str]:
     fixtures_dir = Path(root) / "fixtures"
-    problems: dict[Path, str] = {}
+    problems = policy_layout_problems(root)
+    top_level = {*FixtureKind, POLICY_DIR}
     for entry in fixtures_dir.iterdir():
-        if entry.name not in set(FixtureKind):
-            problems[entry] = f"not one of {', '.join(sorted(FixtureKind))}"
+        if entry.name not in top_level:
+            problems[entry] = f"not one of {', '.join(sorted(top_level))}"
     for kind in FixtureKind:
         base = fixtures_dir / kind
         for path in base.rglob("*"):

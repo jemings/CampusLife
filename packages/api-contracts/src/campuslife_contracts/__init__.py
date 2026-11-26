@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .contract import Contract, ContractError
 from .jsonio import canonical_json
+from .policy import effective_cloud_policy, resolve_cloud_policy
 from .violations import Rule, RuleViolation, SchemaViolation, Violation
 
 
@@ -40,5 +41,7 @@ __all__ = [
     "bundled_contract",
     "canonical_json",
     "contract_root",
+    "effective_cloud_policy",
+    "resolve_cloud_policy",
     "validate",
 ]
