@@ -157,7 +157,7 @@ locator를 추출할 수 없으면 파일명/문서 단위 근거로 표시하�
 상태는 소유자별로 나뉩니다(D1).
 
 - 수신·검증: 클라이언트 전송 상태와 Blob finalize 결과입니다. 해시 불일치는 finalize의 `409 hash_mismatch`로 끝나고, Hub에는 검증된 Blob만 등록됩니다. Attachment에는 수신 상태 필드가 없습니다.
-- 추출·AI 분석: 해당 ProcessingJob의 `state`(`pending, running, retry_wait, succeeded, failed, blocked, cancelled`)와 `outcome_code`(`unsupported, password_required, corrupt, needs_conversion, partial, policy_blocked, budget_blocked`)입니다.
+- 추출·AI 분석: 해당 ProcessingJob의 `state`(`pending, running, retry_wait, succeeded, failed, blocked, cancelled`)와 `outcome_code`(`unsupported, password_required, corrupt, needs_conversion, partial, policy_blocked, budget_blocked, unsafe_input`)입니다. `unsafe_input`은 위험한 구조나 상한 초과로 처리하지 않은 입력이며, 세부 사유는 동기화하지 않는 job error에 남깁니다(D20 U3).
 
 한 강의 세션의 파일 일부가 실패해도 성공한 파일의 분석은 진행합니다. 화면의 요약 상태는 Hub가 job을 집계한 `processing_summary`이며 따로 저장하지 않습니다.
 
