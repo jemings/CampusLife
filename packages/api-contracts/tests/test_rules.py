@@ -407,3 +407,44 @@ def test_chunk_index_skips_sessions_whose_members_break_their_schema(make_contra
         SchemaViolation("/chunk_size", "minimum")
     ]
     assert contract.validate("t/chunks", {"size": 9, "received": [5]}) == []
+
+
+INT64_TEXT = {"type": "string", "pattern": "^[0-9]{1,19}(-[0-9]{1,19})?$", "x-int64-text": True}
+
+
+@pytest.mark.parametrize(
+    ("text", "broken"),
+    [("9223372036854775807", False), ("9223372036854775808", True), ("0-9223372036854775807", False),
+     ("1-9223372036854775808", True), ("9999999999999999999", True), ("0", False)],
+)
+def test_decimal_text_stays_inside_int64(make_contract, text, broken):
+    assert make_contract({"t/n": INT64_TEXT}).validate("t/n", text) == (
+        [RuleViolation("", Rule.INT64_TEXT)] if broken else []
+    )
+
+
+def test_int64_text_skips_text_that_breaks_its_pattern(make_contract):
+    assert make_contract({"t/n": INT64_TEXT}).validate("t/n", "99999999999999999999") == [SchemaViolation("", "pattern")]
+
+
+BYTE_RANGE = {"type": "string", "pattern": "^bytes[= ]([0-9]+-[0-9]*|-[0-9]+)(/[0-9]+)?$", "x-int64-text": True, "x-byte-range": True}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("bytes=0-0", []),
+        ("bytes=5-10", []),
+        ("bytes=10-5", [Rule.BYTE_RANGE]),
+        ("bytes=10-", []),
+        ("bytes=-10", []),
+        ("bytes 0-9/10", []),
+        ("bytes 0-10/10", [Rule.BYTE_RANGE]),
+        ("bytes 9-0/10", [Rule.BYTE_RANGE]),
+        ("bytes=10-9223372036854775808", [Rule.INT64_TEXT]),
+    ],
+    ids=["one-byte", "ordered", "backwards", "open-ended", "suffix", "inside-size", "last-at-size", "backwards-sized",
+         "past-int64-is-one-violation"],
+)
+def test_byte_range_runs_forward_inside_the_size(make_contract, text, expected):
+    assert make_contract({"t/r": BYTE_RANGE}).validate("t/r", text) == [RuleViolation("", rule) for rule in expected]
