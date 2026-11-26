@@ -91,3 +91,17 @@ OpenAI API 공식 정책 안내에 따르면 API 입력과 출력은 명시적�
 | AI 환각 | source provenance, uncertainty, review |
 | 원본 우발 삭제 | ACK 후에도 보존, 휴지통, 별도 백업 |
 | 민감 정보 외부 전송 | per-item cloud policy, 미리보기/확인, redact |
+
+
+## Multi-device Security
+
+- 각 Android/iPadOS/Windows 설치는 독립적인 Device ID와 credential을 갖는다.
+- 신규 장치는 Windows Hub에서 생성한 일회성 pairing code/QR로 승인한다.
+- API token은 Android Keystore, iPadOS Keychain, Windows Credential Manager/DPAPI 등 플랫폼 보호 저장소에 보관한다.
+- 토큰은 장치별로 발급·회전·폐기할 수 있어야 한다.
+- 분실한 iPad/Fold8을 device registry에서 revoke하면 이후 요청을 거부한다.
+- 로컬 cache와 offline Outbox에도 민감한 자료가 남을 수 있으므로 OS 잠금/암호화 및 앱 잠금 정책을 사용한다.
+- iPadOS background URLSession task는 인증 만료/작업 복구 상황을 고려하고 로그에 credential이나 문서 내용을 남기지 않는다.
+- Tailscale 연결 여부만으로 앱 사용자를 인증된 것으로 취급하지 않는다. Tailscale network policy와 CampusLife application auth를 함께 적용한다.
+- 각 자료의 cloud processing policy는 장치가 바뀌어도 동일하게 적용한다.
+- 충돌로 생긴 양쪽 revision은 사용자 결정 전 삭제하지 않는다.
