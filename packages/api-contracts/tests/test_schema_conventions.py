@@ -110,12 +110,8 @@ def test_every_entity_column_names_its_owner():
 OPEN_NAME = "^[a-z][a-z_]*$"
 
 
-def test_open_enums_name_their_known_values():
-    """x-open marks a string the Hub may send new values of; set_type lets a patch write only its examples.
-
-    Every open enum takes the same names, lowercase letters and underscores starting with a letter, so a
-    harness can decode all of them with one rule.
-    """
+def open_enums():
+    """(schema id#pointer, node) for every node marked x-open: true."""
     def walk(node, at):
         if isinstance(node, dict):
             if node.get("x-open") is True:
@@ -128,8 +124,35 @@ def test_open_enums_name_their_known_values():
 
     for path in SCHEMAS.rglob("*.json"):
         for at, node in walk(read_strict(path), ""):
-            assert node.get("type") == "string" and node.get("pattern") == OPEN_NAME, f"{path.name}#{at}"
-            assert node.get("examples") and all(isinstance(value, str) for value in node["examples"]), f"{path.name}#{at}"
+            yield f"{path.relative_to(SCHEMAS).with_suffix('').as_posix()}#{at}", node
+
+
+def test_open_enums_name_their_known_values():
+    """x-open marks a string the Hub may send new values of; set_type lets a patch write only its examples.
+
+    Every open enum takes the same names, lowercase letters and underscores starting with a letter, so a
+    harness can decode all of them with one rule.
+    """
+    for location, node in open_enums():
+        assert node.get("type") == "string" and node.get("pattern") == OPEN_NAME, location
+        assert node.get("examples") and all(isinstance(value, str) for value in node["examples"]), location
+
+
+OPEN_ENUMS = {
+    "artifact/artifact#/properties/artifact_type",
+    "capture/attachment#/properties/role",
+    "capture/origin#/properties/type",
+    "common/error#/properties/code",
+    "locator/locator#/properties/kind",
+    "relation/relation#/properties/type",
+    "suggestion/suggestion#/properties/action",
+    "sync/changes_page#/$defs/change/properties/entity",
+}
+
+
+def test_the_open_enums_are_the_contract_list():
+    """The values D20 lets grow after the first release; every other enum is closed and cannot gain members."""
+    assert {location for location, _ in open_enums()} == OPEN_ENUMS
 
 
 def test_ownership_is_the_contract_table():
