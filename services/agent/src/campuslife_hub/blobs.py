@@ -465,7 +465,10 @@ class BlobStore:
             raise InvalidUpload(f"chunk {index!r} is not one of the {session.chunk_count} chunks of this upload")
         if len(data) != session.chunk_length(index):
             raise InvalidUpload(f"chunk {index} is {session.chunk_length(index)} bytes, not {len(data)}")
-        await asyncio.to_thread(self._place_chunk, self._session_dir(session.id) / str(index), data)
+        try:
+            await asyncio.to_thread(self._place_chunk, self._session_dir(session.id) / str(index), data)
+        except FileNotFoundError:
+            raise NoUploadSession(f"the upload of {sha256} ended while chunk {index} was placed") from None
 
         def record(tx: Tx) -> None:
             if tx.execute("UPDATE upload_sessions SET touched_at = ? WHERE id = ?", (now_instant(), session.id)).rowcount == 0:
