@@ -85,3 +85,24 @@ CampusLife는 강의 녹음·정리만을 위한 앱이 아닙니다. 수업, �
 ### 강의 제공 자료 지원
 
 강의 Capture는 녹음·사진만이 아니라 교수자/조교가 제공한 PDF, PPT/PPTX, DOCX, XLSX/CSV, HWP/HWPX, 이미지, 오디오·동영상, 자막, 코드·압축 파일, 웹 링크를 여러 개의 첨부 자료로 함께 수집합니다. 원본은 변경 없이 보존하며 파일별 추출기와 출처/페이지/슬라이드/시트/시간 정보가 있는 파생 결과를 생성합니다.
+
+## GitHub Issues
+
+제품 전체 Epic: [#1 CampusLife 통합 대학생활 허브](https://github.com/jemings/CampusLife/issues/1)
+
+| 우선순위/영역 | 이슈 |
+|---|---|
+| MVP | [#2 Windows Local Agent](https://github.com/jemings/CampusLife/issues/2) |
+| MVP | [#3 Android Capture](https://github.com/jemings/CampusLife/issues/3) |
+| MVP | [#4 Cross-network Sync](https://github.com/jemings/CampusLife/issues/4) |
+| Ingestion | [#5 CourseMaterialSet 및 Extractor Framework](https://github.com/jemings/CampusLife/issues/5) |
+| Ingestion | [#6 PDF·PPTX·DOCX·XLSX/CSV](https://github.com/jemings/CampusLife/issues/6) |
+| Ingestion | [#7 HWP·HWPX](https://github.com/jemings/CampusLife/issues/7) |
+| AI | [#8 다중 자료 기반 강의 노트](https://github.com/jemings/CampusLife/issues/8) |
+| Campus | [#9 통합 Inbox](https://github.com/jemings/CampusLife/issues/9) |
+| Planner | [#10 과제·시험·행사·기회 관리](https://github.com/jemings/CampusLife/issues/10) |
+| Search | [#11 검색·AI 질의·복습](https://github.com/jemings/CampusLife/issues/11) |
+| Security | [#12 파일 안전·개인정보·백업](https://github.com/jemings/CampusLife/issues/12) |
+| Ingestion | [#13 ZIP·코드·Jupyter·동영상·자막](https://github.com/jemings/CampusLife/issues/13) |
+| Quality | [#14 E2E 테스트·운영 가이드](https://github.com/jemings/CampusLife/issues/14) |
+
