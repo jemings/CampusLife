@@ -1,233 +1,534 @@
 # CampusLife 설계 결정 기록
 
-구현 전에 확정해 두는 구조 결정입니다. 다른 문서와 이 문서가 다르면 이 문서가 우선하며, 결정을 바꿀 때는 새 항목을 추가하고 기존 항목을 `대체됨`으로 표시합니다.
+구현 전에 확정해 두는 구조 결정입니다. 다른 문서와 이 문서가 다르면 이 문서가 우선합니다. 결정을 바꿀 때는 새 항목을 추가하고 기존 항목을 `대체됨`으로 표시합니다.
 
 각 항목은 **문제 → 검토한 안 → 결정 → 결과** 순서로 적습니다.
 
----
-
-## D1. 상태는 소유자별로 분리한다
-
-**문제:** Capture 하나의 상태 목록(`local_only, queued, uploading, … processed, needs_review, failed`)에 모바일 전송 상태, Hub 수신 상태, AI 처리 상태, 사용자 검토 상태가 한 필드로 섞여 있었습니다. 문서마다 목록도 달랐습니다(ARCHITECTURE의 `LOCAL_READY → … → COMPLETED`, DOMAIN-MODEL의 Capture 상태, FILE-INGESTION의 파일 처리 상태). Hub는 업로드가 끝나기 전에는 Capture를 알지도 못하므로 `local_only`·`uploading` 같은 값을 Hub DB에 저장할 수 없습니다.
-
-**검토한 안:**
-- A. 단일 Capture 상태 머신을 유지하고 값을 늘린다 → 클라이언트와 Hub가 같은 필드를 서로 다르게 갱신하게 되고, 첨부가 여러 개면 "일부 업로드됨"을 표현하지 못합니다.
-- B. 상태를 소유자별 레코드로 분리하고, 화면 요약은 그 레코드들에서 계산한다.
-
-**결정:** B.
-
-| 상태 | 소유자 | 저장 위치 | 값 |
-|---|---|---|---|
-| `OutboxEntry.transfer_state` | 각 클라이언트 | 클라이언트 로컬 DB | `pending, uploading, retry_wait, acked, failed_needs_attention` |
-| `Attachment.ingest_state` | Hub | Hub SQLite | `receiving, verified, rejected` |
-| `Attachment.extraction_state` | Hub (extractor) | Hub SQLite | FILE-INGESTION §9 목록 |
-| `ProcessingJob.state` | Hub (작업 큐) | Hub SQLite | `pending, running, retry_wait, succeeded, failed, cancelled` |
-| `Item.review_state` | 사용자 | Hub SQLite (sync 대상) | `suggested, confirmed, dismissed` |
-| 유형별 진행 상태 (예: `Task.progress`) | 사용자 | Hub SQLite (sync 대상) | `inbox, planned, in_progress, blocked, completed, cancelled` |
-
-**결과:** "녹음 업로드 중 / AI 처리 중 / 검토 필요" 같은 화면 표시는 위 레코드를 조합한 **계산값**이며 저장하지 않습니다. Capture에는 상태 필드를 두지 않습니다.
+**불변식.** 아래 결정들은 모두 이 다섯 규칙을 지킵니다.
+1. Hub는 모든 공유 상태가 직렬화되는 유일한 지점입니다. 클라이언트가 Hub에 보내는 것은 Blob과 Mutation뿐입니다.
+2. 모든 바이트는 sha256으로 식별되는 불변 Blob입니다. 파일명, 경로, "버전"은 Blob을 가리키는 메타데이터입니다.
+3. 모든 상태는 소유자가 정확히 하나입니다.
+4. AI 산출물은 불변이고, AI 제안은 엔터티가 아닙니다. 엔터티는 사용자의 확정으로만 생깁니다.
+5. 외부 AI 호출은 Hub의 단일 검사 지점을 통과해야만 나갑니다.
 
 ---
 
-## D2. 원본 바이트는 내용 주소(content-addressed) 저장소에 한 번만 둔다
+## D1. 상태는 소유자별로 분리하고, 사용자 데이터의 쓰기 경로는 Mutation 하나다
 
-**문제:** 저장 레이아웃이 `originals/YYYY/<capture-id>/`였는데, 같은 PDF를 두 번 공유하거나 여러 과목에 연결하면 바이트가 중복되고, "원본 복제 없이 Relation 사용", DocumentRevision의 sha256 기반 버전 판단과도 맞지 않았습니다.
+**문제:** Capture 상태 필드 하나에 모바일 전송, Hub 수신, AI 처리, 사용자 검토 상태가 섞여 있었습니다. 문서마다 목록도 달랐습니다(ARCHITECTURE `LOCAL_READY → … → COMPLETED`, DOMAIN-MODEL Capture 상태, FILE-INGESTION 처리 상태 14개). 한 필드를 Android와 Hub가 둘 다 쓰는 구조였습니다. 또한 SyncCursor는 Hub 엔터티로 적혀 있었지만 실제로 cursor를 아는 쪽은 클라이언트입니다. Windows UI가 DB에 직접 쓰는 두 번째 쓰기 경로가 생길 여지도 있었습니다.
 
 **검토한 안:**
-- A. Capture별 디렉터리에 파일명 그대로 저장 → 사람이 탐색하기 쉽지만 중복 판단과 불변성 보장이 경로 규칙에 흩어집니다.
-- B. `blobs/sha256/<앞 2자리>/<전체 해시>`에 한 번만 저장하고, 파일명·Capture·MIME은 Attachment 메타데이터로 관리한다. 사람이 읽을 수 있는 트리는 export로 만든다.
+- A. 엔터티마다 상태 필드를 두고 클라이언트와 Hub가 각자 갱신한다.
+- B. 상태를 소유자별로 나누고, 남이 소유한 상태는 읽기 전용 사본으로만 갖는다.
 
 **결정:** B.
+
+| 소유자 | 상태 | 쓰기 경로 |
+|---|---|---|
+| Hub (시스템) | Attachment 메타(blob, 감지 MIME), Artifact, Suggestion, ProcessingJob, `change_seq`, `backed_up_at`, 계산된 `processing_summary` | Hub 내부 코드만 씁니다. 클라이언트에는 변경 피드로 읽기 전용 전달합니다 |
+| 사용자 (어느 장치에서든) | Item, Relation, Tag, AnnotationLayer, `cloud_policy`, Suggestion 수락·기각, ConflictRecord 해소 | **오직 Mutation**으로만 씁니다. Windows 로컬 UI도 같은 Mutation 적용 함수를 호출합니다 |
+| 클라이언트 로컬 | Capture 봉인 상태(`open / sealed`), 전송 상태(`pending, uploading, committed, retry_wait, needs_attention`), sync cursor, 캐시 | 해당 클라이언트만 씁니다. Hub에는 진단용 heartbeat로만 보고합니다 |
+
+- 처리 상태는 `ProcessingJob.state`(`pending, running, retry_wait, succeeded, failed, blocked, cancelled`)에만 저장합니다. 실패·부분 성공의 이유는 `outcome_code`(`unsupported, password_required, corrupt, needs_conversion, partial, policy_blocked, budget_blocked`)로 남깁니다.
+- 화면의 "처리 중 / 일부 실패 / 완료"는 job을 집계한 계산값입니다. Hub가 이 값을 `processing_summary`로 피드에 실어 보냅니다.
 
 **결과:**
-- Attachment(논리 첨부)와 Blob(바이트)은 N:1입니다. 같은 내용을 다시 받아도 Blob은 하나이며 Attachment는 수집 맥락별로 따로 생깁니다.
-- Blob 파일은 쓰기 완료·해시 검증 후 읽기 전용으로 바꾸고 덮어쓰지 않습니다.
-- 삭제는 Attachment 단위 tombstone이며, 어떤 Attachment도 참조하지 않는 Blob만 보존 기간이 지난 뒤 정리합니다.
-- 백업·학기 export는 `Course/날짜/원래파일명` 같은 읽기 쉬운 트리를 별도로 생성합니다.
+- Hub DB에 쓰는 경로는 "Mutation 적용기"와 "파이프라인" 두 개뿐이고, 충돌 판정 지점은 하나입니다.
+- Capture·Attachment에는 상태 필드가 없습니다.
+- SyncCursor는 Hub 엔터티가 아닙니다. Hub는 관측용 `last_pulled_seq`만 기록합니다.
 
 ---
 
-## D3. 메타데이터 동기화는 엔터티 스냅샷 변경 피드로 한다
+## D2. 원본은 sha256 Blob 저장소에 한 번만 두고, 문서·묶음 개념은 Blob·Capture·Relation으로 표현한다
 
-**문제:** SyncEvent에 `operation`이 있어 연산 로그 재생(op-log replay)으로 읽힐 여지가 있었고, "cursor retention을 벗어나면 full reconcile"이 별도 절차로 필요했습니다. 연산 재생은 모든 클라이언트가 연산 의미를 똑같이 구현해야 하고 압축(compaction)이 어렵습니다.
+**문제:**
+- 저장 레이아웃 `originals/YYYY/<capture-id>/`는 같은 PDF를 두 번 공유하면 사본이 두 개 생기는 구조였습니다. "원본 복제 없이 Relation 사용"이라는 규칙을 보장하지 못했습니다.
+- 같은 대상을 가리키는 엔터티가 여러 개 겹쳐 있었습니다. Document, DocumentVersion, DocumentRevision이 하나의 대상이었고, CourseMaterialSet은 Capture(첨부 묶음)·LectureSession(강의 단위)과 역할이 겹쳤습니다.
+- 데이터 루트 기본값 `D:\`는 D: 드라이브가 없는 노트북에서 동작하지 않습니다.
 
 **검토한 안:**
-- A. 연산 로그를 순서대로 재생 → 클라이언트 3종(Kotlin·Swift·Python)이 연산 적용 로직을 각자 구현해야 합니다.
-- B. Hub가 엔터티별 `revision`을 증가시키고, 변경 피드에는 `(sequence, entity_type, entity_id, revision, deleted)`만 기록한다. 클라이언트는 cursor 이후 바뀐 엔터티의 **최신 스냅샷**을 받는다.
+- A. Capture별 경로 + DB 중복 검사, 문서 엔터티 유지.
+- B. 내용 주소(content-addressed) Blob 저장 + "bytes 정체성 = Blob, 수집 경위 = Capture, 무엇에 관한 것인가 = Item + Relation"의 세 축.
 
 **결정:** B.
+- 원본은 `blobs/<sha[0:2]>/<sha[2:4]>/<sha256>`에 확장자 없이 읽기 전용으로 저장합니다. 임시 업로드 디렉터리는 같은 볼륨에 둡니다. 그래야 이동(rename)이 원자적입니다.
+- Attachment는 `(attachment_id, capture_id, blob_sha256, original_filename, declared_mime, captured_at, cloud_policy?)` 참조 행입니다. 서로 다른 Capture의 Attachment가 같은 Blob을 공유합니다.
+- 없앤 엔터티와 대체 방식:
+  - **Document·DocumentRevision 삭제.** 개정판은 새 Blob입니다. "B가 A의 개정판"은 Attachment 간 Relation `supersedes`로 표현합니다. AI가 감지하면 Suggestion, 사용자가 확정하면 Relation입니다.
+  - **CourseMaterialSet 삭제.** 배포 정보(`distributed_by`, `distributed_at`, 설명)는 그 자료를 들여온 Capture의 `origin`에 들어갑니다. "4주차 강의 자료"는 Relation(attachment → LectureSession Item)입니다.
+  - **Source 삭제.** `Capture.origin`으로 흡수합니다.
+  - **ExtractorRun 삭제.** ProcessingJob이 대신합니다.
+- 추출 결과(ContentBlock), PDF 렌디션, 필기는 모두 Blob 해시에 고정합니다. 그래서 같은 파일은 추출도 한 번만 합니다.
+- 데이터 루트는 설치 시 선택하며 기본값은 `%LOCALAPPDATA%\CampusLife`입니다. OneDrive·Dropbox 같은 동기화 폴더 아래면 거부합니다. SQLite가 동기화 클라이언트와 충돌하기 때문입니다.
+- 삭제와 정리:
+  - Attachment를 tombstone 처리한 뒤 휴지통(기본 30일)을 거칩니다. 그다음 어떤 Attachment·Artifact·AnnotationLayer도 참조하지 않는 Blob만 정리합니다.
+  - commit되지 않은 업로드 Blob은 7일 뒤 정리합니다.
+  - 교수자·참여자가 삭제를 요청하면 휴지통을 건너뛰는 즉시 purge 경로를 씁니다. Blob과 파생물, 인덱스까지 지우고, 백업 세대에는 남아 있음을 UI에 알립니다.
+- 사람이 읽을 수 있는 `과목/날짜/원래파일명` 트리는 export 기능으로 생성합니다.
 
 **결과:**
-- 피드 레코드는 엔터티 변경과 **같은 SQLite 트랜잭션**에서 기록합니다(별도 이벤트 로그와 DB가 어긋나지 않음).
-- 같은 엔터티의 이전 피드 레코드는 지워도 됩니다(엔터티당 최신 1건만 남기면 됨). 따라서 full reconcile은 "cursor=0부터 pull"과 같은 경로이며 별도 프로토콜이 필요 없습니다.
-- 삭제는 `deleted=true`인 tombstone 스냅샷으로 전파합니다.
-- 내부 작업 상태 전이(ProcessingJob 재시도 등)는 피드에 넣지 않습니다. 클라이언트가 보여줘야 하는 요약 상태만 엔터티 필드로 노출합니다.
-- 스트림은 Hub당 하나입니다. `stream_id`는 두지 않습니다.
+- 클라이언트가 몰라도 되는 엔터티가 다섯 개 줄었습니다.
+- 파일 하나를 여러 강의에 연결하는 일은 Relation 행을 하나 추가하는 것뿐입니다.
+- 교차 문서 분석의 범위는 "한 LectureSession Item에 Relation으로 연결된 모든 Attachment"입니다.
 
 ---
 
-## D4. ID는 클라이언트가 만들고, 멱등 키를 경로별로 고정한다
+## D3. 동기화는 상태 기반 변경 피드이며, 복원은 `epoch`로 감지한다
 
-**문제:** "capture_id/attachment_id 및 idempotency key"라고만 적혀 있어 무엇이 같은 요청인지 정의가 없었습니다.
+**문제:**
+- SyncEvent(operation), stream_id, 서버 쪽 SyncCursor, "retention을 벗어나면 full reconcile"이 따로 정의되어 있었습니다. 이벤트 로그를 보관하고 만료시키는 별도 체계가 필요한 설계였습니다.
+- Hub를 백업에서 복원하면 sequence가 되감기는데, 클라이언트가 이를 감지할 방법이 없었습니다. 그러면 클라이언트 cursor가 Hub보다 앞서서 이후 변경을 영원히 놓칩니다.
+
+**검토한 안:**
+- A. append-only 연산 로그를 재생한다.
+- B. 행마다 `rev`(마지막 쓰기 시점의 전역 `change_seq`)를 두고, cursor 이후 바뀐 행의 **현재 상태**를 내려준다.
+- C. CRDT 복제.
+
+**결정:** B.
+- Hub에는 SQLite 전역 카운터 `change_seq`가 하나 있습니다. 동기화 대상 테이블의 쓰기는 같은 트랜잭션에서 `change_seq += 1`을 하고 그 값을 행의 `rev`에 넣습니다.
+- `GET /v1/changes?since=<seq>&limit=500`은 다음을 돌려줍니다: `{hub_id, epoch, changes:[{type, id, rev, deleted, data}], next_since, has_more}`. 스트림은 하나입니다.
+- cursor는 클라이언트가 저장합니다. 같은 페이지를 다시 받아도 행을 덮어쓰기만 하므로 멱등입니다. full reconcile은 `since=0`과 같은 경로입니다.
+- tombstone은 휴지통 purge 후에도 `(id, deleted)` 행으로 남깁니다. 작아서 무기한 보존할 수 있으므로 "retention 초과" 상황이 없습니다.
+- **`hub_id`와 `epoch`:** 모든 응답에 싣습니다. `epoch`은 복원하거나 새 노트북으로 이전할 때 새로 발급합니다. 클라이언트는 epoch가 바뀐 것을 보면 다음을 합니다.
+  1. 로컬 캐시를 버리고 `since=0`부터 다시 받습니다.
+  2. ACK를 받았지만 Hub에 없는 Capture를 다시 올립니다. D14의 보존 규칙 덕분에 원본이 아직 남아 있습니다.
+  3. 미전송 Mutation을 다시 보냅니다.
+- 클라이언트는 pairing 때 저장한 `hub_id`와 응답의 `hub_id`가 다르면 동기화를 중단합니다.
+- 피드에 넣지 않는 것: ContentBlock, ProcessingJob 상세, FTS. 파생 콘텐츠는 Artifact Blob으로 필요할 때 받습니다. Artifact·Suggestion의 메타데이터 행은 피드에 포함합니다.
+- 감사가 필요한 사건(외부 AI 전송, 삭제, revoke, 충돌 해소)은 Hub 전용 append-only `audit_log`에 기록하고 동기화하지 않습니다.
+- CRDT는 쓰지 않습니다. Hub가 유일한 권위이고 모바일끼리 직접 동기화하지 않는 구조라 이득이 없습니다. 같은 Note를 두 기기에서 자주 충돌시키는 사용 패턴이 관측되면 재검토합니다.
+
+**결과:** 클라이언트 sync 엔진은 "cursor 하나 + 페이지 루프 + upsert"가 전부입니다.
+
+---
+
+## D4. ID는 생성자가 만드는 UUIDv4이며, 그 ID가 곧 멱등 키다
+
+**문제:** "capture_id/attachment_id 및 idempotency key"처럼 ID와 멱등 키가 별개 개념인 것처럼 적혀 있었습니다.
+
+**검토한 안:** UUIDv4 / UUIDv7 / ULID, 그리고 별도 `Idempotency-Key` 헤더.
 
 **결정:**
-- 모든 엔터티 ID는 생성한 장치가 만드는 **UUIDv7**입니다. 오프라인에서 만든 Capture·Note·Annotation도 서버 왕복 없이 ID를 가집니다.
-- 멱등 규칙:
+- 엔터티, Mutation, Capture, Attachment ID는 생성한 쪽(클라이언트 또는 Hub)이 만드는 소문자 UUIDv4입니다.
+  - 순서는 ID가 아니라 Hub의 `change_seq`가 정합니다.
+  - UUIDv7은 Kotlin·Swift 표준 라이브러리에 생성기가 없어 세 언어에 같은 구현을 따로 넣어야 하므로 택하지 않았습니다.
+- Blob ID는 sha256 소문자 hex입니다.
+- 같은 ID + 같은 내용이 다시 오면 이전 결과를 그대로 돌려줍니다. 같은 ID + 다른 내용이면 `409 id_reuse`로 거부합니다.
+- ProcessingJob은 `job_key = hash(job_type, 입력 blob/artifact 해시 목록, pipeline_version, provider, model, prompt_version, params)`에 UNIQUE를 겁니다. 같은 키면 기존 Artifact를 재사용합니다. 사용자가 명시적으로 "다시 생성"을 누를 때만 params에 nonce를 넣어 새 키를 만듭니다.
 
-| 경로 | 멱등 키 | 같은 키 + 같은 내용 | 같은 키 + 다른 내용 |
-|---|---|---|---|
-| Attachment 업로드 | `attachment_id` | 기존 ACK를 그대로 반환 | `409 conflict`, 덮어쓰지 않음 |
-| Capture 등록 | `capture_id` | 기존 결과 반환 | `409 conflict` |
-| Mutation | `mutation_id` | 첫 처리 결과 반환 | `409 conflict` |
-| ProcessingJob | `(job_type, 입력 blob 해시 목록, pipeline_version, provider, model, prompt_version)` | 기존 Artifact 재사용 | 해당 없음(키가 다르면 새 작업) |
-
-**결과:** 재시도는 항상 안전하며, AI 프롬프트나 모델을 바꿨을 때만 새 산출물과 새 비용이 생깁니다.
+**결과:** 별도 멱등 헤더가 없습니다. 재전송 안전성이 ID 규칙 하나로 설명됩니다.
 
 ---
 
 ## D5. 네트워크 노출은 `tailscale serve`가 맡고, Agent는 localhost에만 바인딩한다
 
-**문제:** "HTTPS API"라고만 적혀 있고 인증서 발급 방법이 없었습니다. iPadOS는 App Transport Security 때문에 유효한 TLS가 사실상 필요하고, 자체 서명 인증서는 백그라운드 URLSession에서 다루기 번거롭습니다. 또한 Agent를 tailnet 인터페이스에 직접 바인딩하면 Windows 방화벽 규칙을 따로 관리해야 합니다.
+**문제:** "HTTPS API"라고만 적혀 있고 인증서를 어떻게 얻는지가 없었습니다.
+- iPadOS ATS와 Android(targetSdk 28+의 cleartext 차단)는 신뢰된 인증서의 HTTPS를 기본으로 요구합니다.
+- 자체 서명 인증서를 쓰면 클라이언트마다 신뢰 설정이나 pinning을 구현해야 합니다. iOS 백그라운드 URLSession에서는 서버 신뢰 확인을 위해 앱을 깨워야 하는 부담도 생깁니다.
+- ATS 예외(`NSAllowsLocalNetworking`)가 tailnet 주소나 `*.ts.net`에 적용되는지는 확인하지 못했으므로 여기에 기대지 않습니다.
 
 **검토한 안:**
-- A. Agent가 Tailscale 인터페이스에 직접 바인딩하고 자체 서명 인증서 + 클라이언트 pinning.
-- B. Agent는 `127.0.0.1`에만 바인딩하고, `tailscale serve`가 MagicDNS 이름(`<machine>.<tailnet>.ts.net`)의 유효한 인증서로 HTTPS를 종단해 localhost로 전달한다.
+- A. 자체 서명 인증서 + 클라이언트 pinning.
+- B. 평문 HTTP + ATS·cleartext 예외.
+- C. `tailscale cert`로 받은 인증서를 Agent가 직접 로드.
+- D. Agent는 `127.0.0.1`에만 바인딩하고, `tailscale serve`가 `<machine>.<tailnet>.ts.net`의 공인 인증서로 HTTPS를 종단한다.
+
+**결정:** D. C는 측정 결과 serve에 문제가 있을 때 쓰는 대체안입니다(미결 O3).
+- **listener를 둘로 나눕니다.**
+  - sync 포트(`127.0.0.1:P1`)만 serve로 노출합니다. 모든 요청에 장치 토큰이 필요하며, pairing 엔드포인트도 여기 있습니다.
+  - admin 포트(`127.0.0.1:P2`)는 serve에 연결하지 않습니다. 로컬 웹 UI, pairing 코드 발급, revoke가 여기 있습니다. 인증은 DPAPI로 보호한 로컬 admin 토큰으로 합니다. 장치 토큰으로는 admin 경로에 접근할 수 없습니다.
+- serve를 거친 요청은 Agent에서 출발지가 127.0.0.1로 보이므로 **출처로 권한을 판단하지 않습니다.**
+- serve는 요청에 `Tailscale-User-Login` 등 신원 헤더를 붙이고, 외부에서 넣은 같은 이름의 헤더는 지웁니다. 하지만 tag가 붙은 장치에서 온 요청에는 이 헤더가 채워지지 않습니다. 그래서 인증 근거로는 쓰지 않고 감사 기록에만 남깁니다.
+- Tailscale HTTPS 인증서를 켜면 장치 FQDN이 공개 Certificate Transparency 로그에 기록됩니다(Tailscale 공식 문서로 확인). 노트북 장치 이름에 실명이나 학교명을 쓰지 않습니다.
+- Funnel은 쓰지 않으며 꺼져 있음을 테스트로 확인합니다. Tailscale ACL은 "내 기기 → Hub:443"만 허용합니다.
+- SFTP·FolderSync·OpenSSH는 제품과 PoC 모두에서 쓰지 않습니다. 해시와 ACK를 우회하는 두 번째 수집 경로이기 때문입니다.
+- 운영 한계로 문서화할 것:
+  - Android와 iOS는 VPN을 동시에 하나만 쓰는 것으로 알고 있습니다(확인 필요). 학교 VPN을 켜면 Hub에 닿지 못할 수 있으므로, 앱이 그 사유를 표시합니다.
+  - 노트북이 sleep 상태면 serve도 응답하지 않습니다.
+
+---
+
+## D6. 장치 인증은 QR 한 번의 pairing과 만료 없는 불투명 토큰이다
+
+**문제:**
+- "token rotation/expiry", DeviceSession, `reauthentication_required` 같은 개념이 나열만 되어 있었습니다.
+- 짧은 만료는 두 가지와 충돌합니다. 며칠 쌓인 오프라인 Outbox가 만료 토큰 때문에 통째로 401이 되고, 요청 헤더가 task 생성 시점에 고정되는 iOS 백그라운드 URLSession도 실패합니다.
+- pairing 절차는 "코드 발급 → 장치 스캔 → Hub UI에서 다시 승인"이었습니다. Hub 화면에 코드를 띄우는 행위 자체가 이미 물리적 승인이므로 승인 단계가 중복이었습니다.
+
+**검토한 안:**
+- A. 단기 access token + refresh token.
+- B. 장치 키쌍 서명 요청 또는 mTLS.
+- C. 장치별 256-bit 불투명 토큰. 만료 없이 revoke와 수동 재발급만 둔다.
+
+**결정:** C.
+- **Pairing:**
+  1. Hub admin UI에서 "장치 추가"를 누르면 QR이 뜹니다. QR에는 `{hub_url, hub_id, 128-bit pairing secret}`이 담기고, 유효 5분·1회용입니다. 수동 입력용 코드도 함께 보여 줍니다.
+  2. 장치가 `POST /v1/pair {secret, platform, device_name, app_version}`를 보냅니다.
+  3. Hub가 `{device_id, token}`을 한 번만 반환합니다.
+  - 실패 시도에는 rate limit을 겁니다. 이미 쓴 secret이 다시 오면 거부하고, 그 secret으로 발급된 장치도 revoke합니다(재사용 탐지).
+- **저장:** Hub는 `SHA-256(token)`만 저장합니다.
+  - Android는 Keystore 키로 감싼 저장소에 둡니다.
+  - iOS는 Keychain에 `AfterFirstUnlockThisDeviceOnly`로 둡니다. 잠금 상태에서도 백그라운드 전송이 토큰을 읽을 수 있어야 하기 때문입니다. 앱과 Share Extension은 access group으로 같은 토큰을 씁니다.
+- **장치 상태:** `active | dormant | revoked` 셋입니다.
+  - 설정한 기간(기본 90일) 동안 접속이 없으면 `dormant`가 되어 재승인이 필요합니다. 데이터·cursor·Outbox는 보존합니다.
+  - 사용자가 "토큰 재발급"을 누르면 새 토큰을 발급합니다. 이전 토큰은 클라이언트가 새 토큰 저장을 확인한 뒤에 폐기합니다.
+- **revoke:** 해당 토큰 요청은 401 `device_revoked`가 되고 열린 업로드 세션도 폐기합니다.
+  - 그 장치의 미전송 데이터는 재pairing 후 다시 올릴 수 있습니다. Capture는 ID로 멱등이고, Mutation은 CAS로 재판정되기 때문입니다.
+- **Windows UI·CLI는 Device가 아닙니다.** admin 포트를 씁니다. 로컬 import의 출처 표기에만 `hub` pseudo-device를 씁니다.
+
+---
+
+## D7. 업로드는 Blob을 먼저 올린 뒤 봉인된 Capture를 commit한다
+
+**문제:**
+- 수신 방식이 두 가지였습니다. ARCHITECTURE의 디렉터리 + READY 마커 방식과 MULTI-DEVICE의 첨부별 upload session 방식이 공존했습니다.
+- ACK의 의미가 정의되어 있지 않았고, 파일 일부만 도착한 Capture를 Hub가 어떻게 다룰지도 없었습니다.
+- iOS 백그라운드 URLSession은 파일 기반 upload task만 지원하고 실행 순서를 시스템이 정합니다. 따라서 순서대로 이어 붙이는 방식(tus 식 append)과 맞지 않습니다.
+
+**검토한 안:**
+- A. manifest 먼저 → Capture별 upload session.
+- B. Blob을 먼저 올리고(sha256이 세션 키, 순서 무관 chunk), 모든 Blob이 있으면 Capture를 commit한다.
+- C. tus·IETF Resumable Uploads 같은 표준 프로토콜. Python 서버 구현이 성숙하지 않았고 두 클라이언트에 대응 구현이 고르지 않아 택하지 않았습니다.
 
 **결정:** B.
 
-**결과:**
-- Windows 방화벽에 CampusLife용 inbound 규칙을 열 필요가 없습니다.
-- `tailscale serve`를 거친 요청은 Agent 입장에서 모두 localhost에서 온 것으로 보입니다. 따라서 **pairing 승인·장치 revoke 같은 관리 API는 별도 localhost 전용 포트로 분리**하고 그 포트는 serve에 연결하지 않습니다. 동기화 API 포트의 요청은 출처와 무관하게 항상 장치 credential을 검증합니다.
-- Tailscale HTTPS 인증서를 켜면 장치 이름과 tailnet 이름이 공개 Certificate Transparency 로그에 기록됩니다. 노트북의 Tailscale 장치 이름은 실명·학교명이 드러나지 않게 정합니다.
-- SFTP/FolderSync는 Phase 0 연결 확인 용도로만 남고 Agent에는 SFTP 수신 경로를 구현하지 않습니다.
-
----
-
-## D6. 장치 credential은 만료 없는 불투명 토큰 + revoke로 시작한다
-
-**문제:** "token rotation/expiry"가 요구사항에 있었지만, Hub가 꺼져 있는 동안 iPad가 2주 오프라인이었다가 돌아오면 만료된 토큰 때문에 Windows에서 재승인을 해야 합니다. 또한 iPadOS 백그라운드 URLSession 작업은 생성 시점의 헤더로 나중에 실행되므로, 짧은 수명의 access token은 OS가 작업을 늦게 실행할 때 401로 실패합니다.
-
-**검토한 안:**
-- A. 짧은 access token + refresh token 회전.
-- B. 장치마다 256-bit 무작위 불투명 토큰 하나를 발급하고, Hub는 그 해시만 저장한다. 기본 만료는 없고 revoke·수동 회전·장기 미접속(설정값) 시에만 무효가 된다.
-
-**결정:** B. 단일 사용자·사설망 환경에서 A가 막아 주는 위협(토큰 탈취 후 장기 사용)은 revoke로 대응하고, A가 만드는 실패(오프라인 복귀 후 잠김, 백그라운드 전송 401)는 피합니다.
-
-**결과:**
-- 토큰은 Android Keystore로 감싼 저장소, iPadOS Keychain에 둡니다. Hub DB에는 해시만 있습니다.
-- 회전은 "새 토큰 발급 → 클라이언트 저장 확인 → 이전 토큰 폐기" 순서로, 클라이언트가 확인하기 전에는 이전 토큰을 끊지 않습니다.
-- 위협 모델이 바뀌면(예: 다중 사용자) 이 결정을 다시 검토합니다.
-
----
-
-## D7. Capture manifest는 한 번 보내면 바뀌지 않는다
-
-**문제:** "기존 자료 묶음에 추가"가 가능한데, Capture manifest에 첨부를 나중에 더하면 manifest가 바뀌고 멱등 판단이 깨집니다. 또한 첨부 N개 중 일부만 올라간 Capture를 Hub가 어떻게 보여줄지 정의가 없었습니다.
-
-**결정:**
-- Capture manifest는 생성 시점의 첨부 목록을 선언하고 이후 바뀌지 않습니다.
-- 나중에 파일을 더하면 **새 Capture**를 만들고, CourseMaterialSet·LectureSession 연결은 Relation mutation으로 합니다.
-- Hub는 manifest를 먼저 등록하고, 선언된 첨부가 모두 `verified`가 되면 그 Capture를 완결로 봅니다. 미완결 Capture도 받은 첨부까지는 열람할 수 있고 "n/m 수신" 상태로 보입니다.
-- ACK는 첨부 단위입니다. 클라이언트는 첨부별로 재시도합니다.
-
----
-
-## D8. cloud policy는 하나의 enum이며, 파생 데이터는 가장 엄격한 입력을 따른다
-
-**문제:** 이름이 `cloud_policy`(Capture), `cloud_processing_allowed`(manifest, boolean), `cloud_processing_policy`(Attachment) 세 가지였고, boolean으로는 5단계 정책을 표현할 수 없었습니다. 또한 필기·transcript·요약처럼 여러 원본에서 나온 데이터의 정책 규칙이 없었습니다.
-
-**결정:**
-- 필드 이름은 `cloud_policy` 하나, 값은 `local_only | manual_review | cloud_redacted | cloud_allowed | blocked`.
-- Capture에 기본값을 두고, Attachment는 필요할 때만 override합니다. 유효 정책 = `Attachment.cloud_policy ?? Capture.cloud_policy ?? source_type별 기본값`.
-- 파생 데이터(Artifact, Annotation, Note 요약 등)의 유효 정책은 **입력들 중 가장 엄격한 값**입니다. 엄격도 순서: `blocked > local_only > manual_review > cloud_redacted > cloud_allowed`.
-- 정책 검사는 provider adapter 호출 직전의 단일 함수가 수행합니다. adapter를 직접 부르는 다른 경로는 두지 않습니다.
-- `cloud_redacted`는 redaction 파이프라인이 구현되기 전까지 `manual_review`와 동일하게 동작합니다.
-- source_type별 기본값: 강의 녹음 `manual_review`, 그 외 `local_only`. 사용자가 과목·유형 단위로 바꿀 수 있습니다.
-
----
-
-## D9. AI 산출물은 불변 버전이고, 사용자 편집은 별도 엔터티다
-
-**문제:** "파생 결과는 재생성 가능"과 "사용자가 수정한 내용은 수정 이력 보존"이 같은 Artifact에 걸려 있어, 재생성이 사용자 편집을 덮어쓸 수 있었습니다.
-
-**결정:**
-- Artifact는 생성 후 바뀌지 않습니다. 재처리는 새 Artifact 버전을 만듭니다.
-- 사용자가 AI 노트를 고치면 `Note(derived_from_artifact_id=…)`가 생기고, 이후 편집은 Note의 revision으로 관리됩니다.
-- 새 Artifact 버전이 나와도 기존 Note는 바뀌지 않으며, UI가 "새 AI 버전 있음"을 알려 비교하게 합니다.
-
----
-
-## D10. Item은 상위 타입이고, 유형별 엔터티는 1:1 상세 레코드다
-
-**문제:** 범용 `Item(item_type, title, status, …)`과 `Assignment`·`CampusEvent`·`Task` 등 유형 엔터티의 관계가 정의되지 않아 제목·상태를 어디에 둘지 두 곳이 생길 수 있었습니다.
-
-**결정:**
-- `Item`이 ID, 제목, 설명, `review_state`, 중요도, 태그, 출처 연결을 가집니다.
-- `Assignment`, `Exam`, `CampusEvent`, `Announcement`, `Opportunity`, `Task`, `Note` 등은 같은 ID를 공유하는 1:1 상세 레코드로, 유형 고유 필드(마감일, 장소, 지원 요건, 진행 상태 등)만 가집니다.
-- AI 분류가 바뀌어 유형이 바뀌면 상세 레코드를 교체하고 Item ID는 유지합니다.
-
----
-
-## D11. Annotation의 동기화 단위는 (DocumentRevision, page) 레이어다
-
-**문제:** `Annotation`과 `AnnotationLayer`가 모두 document_id·page_index·revision을 가져 어느 쪽이 동기화·충돌 단위인지 불분명했고, `DocumentVersion`(§8)과 `DocumentRevision`(§9)이 같은 개념을 중복 정의했습니다.
-
-**결정:**
-- `DocumentVersion`을 없애고 `DocumentRevision`으로 통일합니다.
-- 동기화·revision·충돌 단위는 `AnnotationLayer(document_revision_id, page_index)` 하나입니다. 개별 stroke·highlight·text note는 레이어 payload 안의 요소이며 독립 엔터티가 아닙니다.
-- 서로 다른 페이지의 필기는 다른 레이어이므로 자동으로 충돌하지 않습니다. 같은 페이지 레이어를 두 장치가 동시에 고치면 D3/MULTI-DEVICE 충돌 규칙을 따릅니다.
-- 교수자가 자료 v2를 다시 배포하면 새 DocumentRevision이 생기고, v1의 필기는 v1에 남습니다. 자동 이전은 하지 않으며 UI에서 "이전 버전 필기 보기"를 제공합니다.
-
----
-
-## D12. 원본 위치(locator)는 하나의 스키마로 정의한다
-
-**문제:** 원본 위치 표현이 DOMAIN-MODEL §5, ContentBlock locator, SourceReference, ARCHITECTURE §8.4, Annotation 좌표에 서로 다른 필드 이름으로 다섯 번 정의되어 있었습니다.
-
-**결정:** `packages/api-contracts`의 JSON Schema에 `Locator`를 하나 정의하고 ContentBlock, SourceReference, AnnotationLayer가 모두 이를 씁니다.
-
-```json
-{ "schema_version": 1, "kind": "pdf_page", "page": 12, "rect": [0.1, 0.2, 0.5, 0.3] }
-{ "schema_version": 1, "kind": "slide", "slide": 7, "shape": 3 }
-{ "schema_version": 1, "kind": "sheet_range", "sheet": "Result", "range": "B4:B18" }
-{ "schema_version": 1, "kind": "heading_path", "path": ["2. 제출 일정"], "paragraph": 4 }
-{ "schema_version": 1, "kind": "time_range", "start_ms": 1930000, "end_ms": 1985000 }
-{ "schema_version": 1, "kind": "image_region", "rect": [0, 0, 1, 1] }
-{ "schema_version": 1, "kind": "url_anchor", "url": "https://…", "anchor": "section-2" }
-{ "schema_version": 1, "kind": "whole_document" }
+```
+POST /v1/blobs/uploads            {sha256, size, chunk_size} → 200 exists | 201 {received:[i…]}
+PUT  /v1/blobs/uploads/{sha}/chunks/{i}   (순서 무관, 같은 바이트 재전송은 no-op)
+POST /v1/blobs/uploads/{sha}/finalize     → 200 stored | 409 hash_mismatch (chunk 폐기)
+POST /v1/mutations  [{type: capture.commit, capture_id, origin, links[], attachments[], timeline?}]
+     → applied | retry{missing_blobs[]} | conflict(id_reuse)
+GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 ```
 
-`rect`는 페이지 회전·crop box를 반영한 0–1 정규화 좌표입니다. 정확한 위치를 모르면 `whole_document`를 쓰고 추정하지 않습니다.
+- finalize 순서: 각 chunk fsync → 결합 → 전체 sha256·size 검증 → 같은 볼륨 원자 이동 → DB 등록. Windows Defender 등이 파일을 잠깐 잠그면 짧게 재시도합니다.
+- **ACK = `capture.commit`의 applied 응답입니다.** "모든 Blob이 최종 경로에 있고, Capture·Attachment 행과 초기 ProcessingJob이 한 트랜잭션(`synchronous=FULL`)으로 커밋되었다"는 뜻입니다. 따라서 Hub에는 반쯤 도착한 Capture가 없습니다.
+- **Capture 봉인:** Capture는 클라이언트에서 `open → sealed`로 바뀌며 commit은 sealed에서만 합니다.
+  - 녹음 중에도 닫힌 세그먼트·사진 Blob은 미리 올릴 수 있습니다.
+  - 봉인 후 생긴 자료는 새 Capture로 만들고, Relation으로 같은 LectureSession에 묶습니다.
+- `links[]`는 사용자가 직접 고른 연결(녹음 화면에서 고른 과목·강의 세션)입니다. 사용자의 선택이므로 Suggestion이 아니라 확정 Relation으로 들어갑니다.
+- **클라이언트 저장 위치:** manifest 파일과 READY 마커는 없앱니다. 클라이언트 상태는 로컬 DB(Room/SQLite) 한 곳에 둡니다.
+- **Share Extension(iPad)·Share Intent(Android):** 수신 즉시 파일을 앱 Outbox(iPad는 App Group 공유 컨테이너)로 복사하면서 sha256을 스트리밍으로 계산합니다. 업로드는 본 앱의 sync 엔진이 합니다. Extension에서 업로드를 끝까지 하지 않습니다.
+- **Windows 로컬 import:** 드래그앤드롭도 같은 함수(Blob 저장 + `capture.commit`, device=`hub`)를 호출합니다.
+- **기본 chunk 크기:** 8 MiB입니다(미결 O8). 50 MB를 넘는 Blob은 기본적으로 unmetered 네트워크에서만 보내며, 사용자가 바꿀 수 있습니다.
 
 ---
 
-## D13. 녹음은 세그먼트 파일로 저장하고, 시간은 녹음 시작 기준 오프셋으로 연결한다
+## D8. cloud policy는 3단계 전순서 enum이며, 파생 데이터는 가장 엄격한 입력을 따른다
 
-**문제:** 60분 녹음을 MPEG-4 파일 하나로 기록하면 프로세스가 강제 종료될 때 파일 끝의 메타데이터(moov)가 쓰이지 않아 전체 녹음을 재생할 수 없게 됩니다. 또한 사진–transcript 연결을 벽시계 시각으로 하면 네트워크 시간 동기화나 시간대 변경 때 어긋납니다.
+**문제:**
+- 정책 표현이 셋이었습니다. Capture의 `cloud_policy`, manifest의 boolean `cloud_processing_allowed`, Attachment의 `cloud_processing_policy`.
+- 5개 값이 한 축이 아니었습니다.
+  - `manual_review`는 데이터 등급이 아니라 동의 방식입니다.
+  - `cloud_redacted`는 redactor가 없어서 구현할 수 없습니다.
+  - `blocked`가 로컬 처리까지 막는지 모호했습니다.
+- 여러 원본에서 나온 데이터의 정책 규칙이 없었습니다. 예: `local_only` 녹음을 로컬 STT로 받아 적은 transcript가 cloud LLM 요약으로 가는 것을 막는 규칙이 없었습니다.
 
-**결정:**
-- Android는 녹음을 일정 길이(기본 5분)의 세그먼트로 이어서 기록합니다(`MediaRecorder.setNextOutputFile`, API 26+). 비정상 종료 시 잃는 범위는 마지막 세그먼트로 제한됩니다.
-- 한 녹음 세션의 세그먼트들은 같은 Capture의 첨부이며 manifest에 순서와 세션 내 시작 오프셋을 기록합니다.
-- 앱 안에서 찍은 사진은 `captured_at_utc`와 함께 **녹음 세션 시작 기준 경과 시간**(`elapsedRealtime` 차이)을 기록합니다. 사진–transcript 연결은 이 오프셋을 우선 사용하고, 외부 사진은 EXIF 시각(+`OffsetTime`이 있으면 사용)으로 대체하되 정확도를 낮게 표시합니다.
+**검토한 안:**
+- A. 5값을 유지하고 문서화한다.
+- B. 처리 위치를 3단계 전순서 값으로 두고, 동의 방식은 별도 설정으로 분리한다.
+
+**결정:** B.
+- **값:** `blocked < local_only < cloud_allowed`. 필드 이름은 `cloud_policy` 하나입니다.
+  - `blocked`: 보존, 해시, 형식 검증, 텍스트 추출, FTS만 합니다. 모델 추론은 로컬이든 클라우드든 하지 않습니다.
+  - `local_only`: Hub 안의 로컬 provider만 씁니다.
+  - `cloud_allowed`: 설정의 provider allow-list로 전송할 수 있습니다.
+- **부착 위치:** Attachment에 둡니다. Capture를 만들 때 클라이언트가 해석한 값을 기록하므로 오프라인에서도 가능합니다.
+  - 해석 순서: 명시값 → 연결된 Course Item의 `default_cloud_policy` → 전역 기본 `local_only`.
+  - 과목 기본값을 `cloud_allowed`로 바꿀 때는 "이 과목은 녹음 처리 허용을 확인함"을 한 번 받고 그 사실을 기록합니다.
+- **파생 규칙:** Artifact, Suggestion, AnnotationLayer, Note 요약의 유효 정책은 `min(입력들)`입니다.
+  - 같은 Blob을 가리키는 여러 Attachment의 정책도 min입니다.
+  - 계산은 저장하지 않고 provider 호출 시점에 입력의 현재 정책으로 합니다. 그래서 정책을 엄격하게 바꾸면 그 뒤의 호출부터 막힙니다.
+- **단일 검사 지점:** 모든 provider 호출은 `ProviderGateway.call(capability, inputs, payload)`를 거칩니다. 판정은 `allow | deny(reason) | needs_confirmation`입니다. adapter를 gateway 밖에서 import할 수 없도록 테스트로 강제합니다.
+- **동의 방식:** 정책이 아니라 설정입니다.
+  - `confirm_each_send`(전역 또는 과목, 기본 false): true면 전송 전에 provider, 모델, 입력 종류·크기, 예상 비용, 취소 방법을 보여 줍니다.
+  - budget guard: 월 예산이나 job당 상한을 넘으면 job이 `budget_blocked`가 되어 사용자 승인을 기다립니다.
+- **전송 기록:** 외부 호출마다 `audit_log`에 `{시각, provider, model, 입력 id, 바이트, 정책 스냅샷, 확인 여부, 비용}`을 남깁니다. 정책을 엄격하게 바꾸면 "이미 N회 전송됨(회수 불가)"을 UI에 표시합니다.
+- `cloud_redacted`는 v1에 없습니다. 한국어 PII 탐지기의 재현율이 검증되면(미결 O5) `local_only`와 `cloud_allowed` 사이 값으로 추가합니다.
+
+**결과:**
+- 세 클라이언트가 알아야 할 것은 "값 3개와 min"뿐입니다.
+- 로컬 STT가 없으면 `local_only` 녹음의 STT는 `blocked` 상태로 남습니다(미결 O1).
 
 ---
 
-## D14. 원본 로컬 사본은 Hub 백업 확인 후에만 자동 정리한다
+## D9. AI 산출물은 불변 버전이고, 사용자 편집은 Note로 fork한다
 
-**문제:** "보존 정책이 정해지기 전까지 원본을 자동 삭제하지 않는다"만 있어 정책이 비어 있었습니다. Hub ACK 직후 지우면 노트북 디스크 고장 시 유일한 사본을 잃습니다.
+**문제:**
+- "파생 결과는 재생성 가능"과 "사용자 수정 이력 보존"이 같은 Artifact에 걸려 있었습니다.
+- LLM 출력은 같은 입력으로도 결정적이지 않으므로 "재생성 가능"은 사실이 아닙니다. 이 문구 때문에 Artifact를 캐시로 착각해 백업에서 빠뜨릴 위험이 있습니다.
+
+**검토한 안:**
+- A. Artifact를 편집 가능하게 하고 재실행 시 병합한다.
+- B. Artifact는 불변이고, 사용자 편집은 별도 Note로 만든다.
+
+**결정:** B.
+- `Artifact{id, artifact_type, subject_ref, job_key, provider, model, prompt_version, pipeline_version, input_hashes[], content_blob, created_at}`.
+- 재실행은 새 Artifact를 만듭니다. `(subject_ref, artifact_type)`별 `current` 포인터는 Hub가 소유합니다.
+- "AI 노트 편집"을 누르면 `Note` Item(`fields.forked_from_artifact`)이 생기고, 본문과 인용이 복사됩니다. 이후 편집은 Note의 Mutation입니다.
+- 새 AI 버전이 나오면 UI는 "새 버전 있음(비교)"만 보여 주고 Note를 바꾸지 않습니다.
+- 문서 표현을 "**기록된 입력으로 재실행 가능**(결과는 달라질 수 있음)"으로 고칩니다.
+  - Artifact는 백업 대상입니다.
+  - 캐시로 취급하는 것은 FTS 인덱스, 썸네일, overlay 렌더링뿐입니다.
+
+---
+
+## D10. Item은 kind와 kind별 fields를 가진 단일 엔터티이고, AI 제안은 별도 Suggestion이다
+
+**문제:**
+- 범용 Item과 유형 엔터티 16개(Course, Assignment, CampusEvent…)의 관계가 정의되지 않았습니다. 독립 테이블이라면 세 언어가 각각 16개 모델과 충돌 규칙을 구현해야 합니다.
+- AI 결과를 `review_state=suggested`인 Item으로 저장하는 구조도 문제였습니다. Item을 읽는 쿼리 중 하나만 `confirmed` 필터를 빠뜨려도 미확정 AI 날짜가 일정·알림에 섞입니다. 재처리 때마다 같은 후보가 중복으로 생기고, 기각한 후보가 다시 살아나는 문제도 있었습니다.
+
+**검토한 안:**
+- A. 타입별 테이블과 API.
+- B. Item 상위 타입 + 유형별 1:1 상세 테이블.
+- C. 단일 Item(공통 열 + kind별 JSON Schema로 검증하는 `fields`), AI 제안은 Suggestion 엔터티로 분리.
+
+**결정:** C.
+- **Item 구조:** `Item{id, kind, schema_version, title, body?, status?, starts_at?, due_at?, all_day?, fields{…}, rev, deleted_at?}`.
+  - 일정 로직에 필요한 날짜·상태는 공통 열에 둡니다. 질의가 필요한 fields는 Hub에서 generated column으로 승격합니다.
+  - MVP kind: `term, course, lecture_session, note, task, assignment, exam`.
+  - 후속 kind: `event, announcement, opportunity, organization, place, person`.
+  - 시간표 슬롯은 `course.fields.schedule_slots[]`이고, 반복 일정은 D11의 `local_time_rule` 타입입니다.
+- **LectureSession 생성:** 사용자가 녹음을 시작할 때 생깁니다. Android가 (course, 날짜)로 기존 세션을 찾고, 없으면 create Mutation을 보냅니다. 두 장치가 같은 강의에 세션을 각각 만들면 Item 병합 액션(Relation 이전 + 하나 삭제)으로 정리합니다.
+- **Suggestion:** `Suggestion{id, source_artifact_id, action: create_item|patch_item|add_relation, proposed{…}, evidence[](Locator), fingerprint, state: open|accepted|dismissed|superseded}`.
+  - 수락은 `suggestion.accept{id, edits?}` Mutation입니다. Hub가 한 트랜잭션으로 Item을 만들고 근거를 Relation으로 복사합니다.
+  - `fingerprint = hash(action, kind, 정규화한 핵심 필드)`입니다. 기각된 fingerprint는 재처리해도 다시 열리지 않습니다.
+  - 상충하는 날짜·지시는 서로 `conflicts_with`로 참조하는 Suggestion 쌍이며, 사용자가 하나를 고릅니다.
+- **클라이언트 호환 규칙:** 모르는 kind는 제목·날짜·본문만으로 일반 렌더링합니다. patch는 바꾼 필드만 보내므로, 모르는 필드를 보존할 필요가 없습니다.
+
+**결과:**
+- Item 테이블에는 사용자가 확정한 사실만 있습니다. Planner·알림·검색에서 예외 처리가 필요 없습니다.
+- 세 클라이언트의 모델은 다음이 전부입니다.
+  - 편집 가능: Item, Relation, Tag, AnnotationLayer, ConflictRecord
+  - 읽기 전용: Capture, Attachment, Artifact, Suggestion
+
+---
+
+## D11. 시간은 세 타입으로 구분하고, 모든 문자열은 NFC로 정규화한다
+
+**문제:**
+- "UTC로 저장, Asia/Seoul로 표시"를 모든 경우에 적용하는 규칙은 맞지 않는 곳이 있습니다. 종일 마감("10월 3일까지")은 순간이 아니라 날짜이고, 매주 반복되는 시간표는 현지 시각 규칙입니다.
+- EXIF `DateTimeOriginal`은 시간대가 없을 수 있습니다.
+- Apple 기기에서 온 파일명·텍스트는 한글이 NFD(자모 분해)로 들어올 수 있습니다. 그러면 NFC로 입력한 검색어와 일치하지 않습니다.
 
 **결정:**
-- Hub는 첨부별로 `backed_up_at`(그 Blob이 포함된 첫 백업 세대 완료 시각)을 엔터티 필드로 노출합니다.
-- 클라이언트의 기본 정책은 "ACK + `backed_up_at` 존재 + 7일 경과 후 로컬 사본 정리"이며 사용자가 바꿀 수 있습니다. ACK 전 삭제는 어떤 설정으로도 허용하지 않습니다.
-- 저장 공간이 부족하면 자동으로 지우지 않고 사용자에게 정리 대상을 제안합니다.
+- `instant`(UTC, RFC 3339 `Z`): 생성·수정·촬영·녹음처럼 **이미 일어난 일**.
+- `local_date`(+ IANA tz): 종일 일정, 날짜 마감.
+- `local_time_rule`(`HH:MM` + IANA tz + 요일·기간): 시간표 반복. 표시할 때 전개합니다.
+- "23:59까지" 같은 마감은 `instant`로 저장하고, 원문 표현은 `fields.due_text`에 보존합니다. "자정"처럼 모호한 표현은 Suggestion으로 확인을 받습니다.
+- 저장·비교하는 모든 문자열(파일명, 제목, 본문, 검색어)은 NFC로 정규화하고 원문 문자열을 함께 보존합니다. Blob 바이트는 건드리지 않습니다.
+
+---
+
+## D12. Annotation은 (Blob, page, device) 단위의 작성자 하나짜리 레이어다
+
+**문제:**
+- Annotation과 AnnotationLayer가 공존해서 동기화 단위가 레이어인지, 개별 주석인지, stroke인지 정해지지 않았습니다.
+- overlay PDF를 iPad의 PDFKit으로 만들면 iPad가 꺼져 있을 때 Windows·Android에서 필기를 볼 수 없습니다.
+- PDFKit은 PPTX·DOCX·HWP를 렌더링하지 못하므로 PDF 렌디션이 필요합니다. 그런데 렌디션이 다시 만들어지면 필기 위치가 어긋나는 문제를 어느 문서도 다루지 않았습니다.
+
+**검토한 안:**
+- 레이어 크기: 문서당 하나 / 페이지당 하나 / stroke 이벤트.
+- 작성자: 여러 장치가 공유하는 레이어 / 장치별 레이어.
+
+**결정:**
+- **레이어 단위:** `AnnotationLayer(target_blob_sha256, page_number(1-based), author_device_id)`.
+  - 각 레이어는 작성자가 하나이므로 정상 경로에서는 충돌이 없습니다.
+  - 화면에서는 같은 (Blob, page)의 모든 레이어를 겹쳐 그립니다. 다른 장치의 레이어는 읽기 전용입니다.
+  - 기기를 바꾸거나 앱을 재설치하면 `layer.adopt`로 기존 레이어를 복사해 새 장치 소유로 이어 씁니다. 원본 레이어는 보존합니다.
+  - 복원 같은 예외 상황에서 `rev`가 맞지 않으면, 제출본을 `conflict_of`가 붙은 형제 레이어로 저장하고 사용자가 "둘 다 유지 / 하나 선택"을 고릅니다. stroke 단위 자동 병합은 하지 않습니다.
+- **payload:** 레이어 revision마다 Blob 두 개를 둡니다.
+  - `drawing.pkd`: PKDrawing 원본. 불투명하며 iPad만 편집합니다.
+  - `strokes.v1.json`: 표준 표현. ink stroke(points, 잉크 종류·색·굵기), highlight, text note를 담습니다.
+  - 좌표는 회전·CropBox를 적용한 표시 방향 페이지 기준 `[0,1]` 정규화 좌표입니다. 원점은 좌상단이고, `page_box{w, h, rotation}`을 함께 기록합니다.
+  - Hub는 PKDrawing을 해석하지 않습니다.
+- **overlay 렌더링:** overlay PDF·PNG는 **Hub가** `strokes.v1.json`으로 렌더링합니다. Artifact이며 캐시입니다. Android와 Windows는 이것을 엽니다. 렌더러는 Hub 하나입니다.
+- **렌디션 고정:** PPTX·DOCX·HWP는 Hub가 PDF 렌디션 Blob을 만들고 `Relation(rendition_of)`로 원본에 연결합니다. 필기는 **렌디션 Blob에 고정**됩니다.
+  - 렌디션에 레이어가 하나라도 생기면 그 렌디션 Blob은 pin되어 재생성·정리 대상에서 빠집니다.
+  - 변환기 버전이 바뀌면 새 렌디션은 새 Blob이 되므로 기존 필기가 어긋나지 않습니다.
+- **개정판 처리:** 개정판(새 Blob)으로 필기를 자동 이동하지 않습니다. `supersedes` Relation이 있고 페이지 수가 같으면 "필기 이월" Suggestion을 냅니다.
+- **저장과 업로드 주기:** 펜을 떼고 잠시 뒤, 페이지를 넘길 때, 앱이 백그라운드로 갈 때 로컬 revision을 저장합니다. 업로드는 아직 못 올린 최신 revision 하나만 합니다.
+- **AI 처리:** 필기 OCR·AI 입력은 strokes를 이미지로 렌더링한 뒤 gateway를 거칩니다. 정책은 대상 문서에서 상속합니다(D8).
+
+---
+
+## D13. 원본 위치(Locator)는 하나의 스키마로 정의하고, AI 인용은 block id로만 한다
+
+**문제:**
+- 원본 위치 표현이 다섯 곳에 서로 다른 필드 이름으로 정의되어 있었습니다.
+- 페이지 기준이 없었습니다. PDFKit은 0-based이고 사용자 표시는 1-based입니다.
+- 오디오 오프셋을 처리용 STT chunk 기준으로 저장하면, chunk 분할 방식이 바뀌는 순간 근거가 틀어집니다.
+- LLM에게 페이지 번호를 직접 쓰게 하면 근거를 꾸며낼 수 있습니다.
+
+**결정:** `packages/api-contracts`의 JSON Schema에 `Locator` 하나를 정의하고, 앵커는 Blob 해시입니다.
+
+```json
+{ "v": 1, "blob": "<sha256>", "kind": "pdf_page", "page": 12, "box": [0.1, 0.2, 0.5, 0.3] }
+{ "v": 1, "blob": "<sha256>", "kind": "slide", "slide": 7, "shape": 3 }
+{ "v": 1, "blob": "<sha256>", "kind": "doc_path", "heading_path": ["2. 제출 일정"], "block_index": 4 }
+{ "v": 1, "blob": "<sha256>", "kind": "sheet_range", "sheet": "Result", "a1": "B4:B18" }
+{ "v": 1, "capture": "<id>", "kind": "media_time", "start_ms": 1930000, "end_ms": 1985000 }
+{ "v": 1, "blob": "<sha256>", "kind": "image_region", "box": [0, 0, 1, 1] }
+{ "v": 1, "blob": "<snapshot sha256>", "kind": "web_snapshot", "url": "https://…", "anchor": "section-2" }
+{ "v": 1, "layer": "<id>", "rev": 5, "kind": "annotation", "box": [0.2, 0.4, 0.3, 0.1] }
+{ "v": 1, "blob": "<sha256>", "kind": "document" }
+```
+
+- **좌표·번호 규약:**
+  - page와 slide는 1-based이고, PDFKit 0-based는 클라이언트 경계에서 변환합니다.
+  - `box`는 D12와 같은 정규화 좌표입니다.
+  - 시간은 정수 ms입니다.
+- **녹음 시간:** `media_time`은 Capture 녹음 타임라인(D15의 세그먼트를 이어 붙인 절대 시각) 기준입니다. 처리 chunk 오프셋은 Artifact를 만들기 전에 반드시 이 절대 시각으로 변환합니다.
+- **URL:** 앵커는 저장한 스냅샷 Blob입니다. 스냅샷이 없는 URL은 `document` 수준 근거만 가집니다.
+- **정밀 위치를 모를 때:** `document`를 쓰고 추정하지 않습니다.
+- **ContentBlock:** `ContentBlock.id = hash(blob_sha256, extractor_id, extractor_version, ordinal)`이므로 결정적입니다.
+- **인용 생성:**
+  1. LLM 입력에는 `[B:<block_id>]` 태그를 붙인 블록만 넣고, 출력에서 그 id만 인용하게 합니다.
+  2. Hub는 인용된 id를 검증합니다. 모르는 id는 제거하고, 해당 주장은 "근거 없음"으로 표시합니다.
+  3. 남은 id를 Locator로 치환합니다.
+  - 이렇게 하면 LLM이 페이지 번호나 시각을 직접 만드는 경로가 없습니다.
+- **Artifact 본문:** 구조화 JSON(`blocks[{text, refs:[ref_id]}]`)이며 Markdown은 렌더링 결과입니다. Note로 fork할 때 refs도 복사됩니다.
+
+---
+
+## D14. 모바일 원본은 Hub 백업 확인 후에만 자동 정리한다
+
+**문제:** "보존 정책이 정해지기 전까지 삭제하지 않는다"만 있어 폰 저장 공간이 계속 찼습니다. 반대로 ACK 직후 지우면 원본이 노트북 한 대에만 남고, Hub를 복원할 때(D3) 다시 올릴 원천도 없습니다.
+
+**결정:**
+- Hub는 백업 세대가 완료되면 해당 Blob을 참조하는 Attachment의 `backed_up_at`을 갱신해 피드로 보냅니다.
+- **자동 삭제 조건:** `committed ∧ backed_up_at 존재 ∧ 보존 기간(기본 7일, 설정) 경과`. ACK 전 삭제는 어떤 설정으로도 허용하지 않습니다.
+- **수동 정리:** 사용자가 "공간 확보"를 누르면 committed 항목만 대상입니다. `backed_up_at`이 없으면 "노트북에만 있음" 경고를 거칩니다.
+- **백업이 없을 때:** 백업이 한 번도 돌지 않았으면 자동 삭제가 일어나지 않고 Hub와 앱이 경고합니다.
+- **iPad 캐시:** 다운로드 캐시는 LRU로 정리합니다. 사용자가 "오프라인 보관"으로 고정한 자료와 미전송 레이어는 제외합니다.
+
+---
+
+## D15. 녹음은 크래시에 견디는 세그먼트와 단조 시계 타임라인으로 기록한다
+
+**문제:**
+- 녹음 방식이 MediaRecorder와 AudioRecord 사이에서 미정이었고, 문서는 단일 `audio.m4a`를 전제했습니다.
+- MPEG-4 파일은 녹음을 끝낼 때 파일 끝에 인덱스(moov)를 씁니다. 그래서 프로세스 강제 종료, 방전, 저장 공간 부족 시 60분 녹음 전체를 재생하지 못하게 됩니다.
+- 사진–녹음 연결 기준도 없었습니다.
+  - EXIF는 1초 해상도이고 시간대가 없을 수 있습니다.
+  - 벽시계는 NTP 보정으로 갑자기 바뀔 수 있습니다.
+  - 일시정지하면 녹음 위치와 실제 경과 시간이 달라집니다.
+
+**결정 (계약, 확정):**
+- **세그먼트:** 녹음 산출물은 세그먼트 목록입니다. 각 세그먼트는 5분 이하이고, 닫히면 단독으로 재생할 수 있습니다. 크래시로 잃는 범위는 열려 있던 세그먼트 하나입니다.
+  - 각 세그먼트는 Attachment(`role=audio_segment`, `seq`)입니다.
+- **`timeline`:** `capture.commit`에 포함되는 녹음 타임라인입니다.
+  - 이벤트 목록: `start, pause, resume, stop, interrupted, silenced, segment_open, segment_close`. 각 이벤트에 `mono_ns`, `wall_ms`, `media_pos_ms`를 기록합니다.
+  - `mono_ns = SystemClock.elapsedRealtimeNanos()`입니다. 기기가 절전 중에도 계속 가는 단조 시계입니다.
+  - wall clock은 anchor 한 쌍 `(wall_ms, mono_ns)`과 `boot_id`만 기록합니다.
+- **사진 연결:** 앱 안에서 찍은 사진은 셔터 시점의 `mono_ns`를 기록합니다.
+  - 녹음 시작 앵커는 `AudioRecord.getTimestamp`로 얻을 수 있으면 그 값을 씁니다. MediaRecorder를 쓰면 시작 호출 시각과 `start_uncertainty_ms`를 함께 기록하고, 정밀한 척하지 않습니다.
+  - 외부 사진은 EXIF 시각을 쓰되 정확도를 낮게 표시합니다.
+- **Hub 처리:** Hub는 타임라인으로 세그먼트를 이어 붙여 정규 녹음 타임라인을 만들고, 사진의 `mono_ns`를 `media_time` Locator로 변환합니다.
+  - provider가 세그먼트 형식(예: ADTS)을 받지 않으면, 원본은 그대로 두고 FFmpeg로 remux한 파생 파일을 보냅니다.
+- **시작과 복구:**
+  - 녹음 시작은 항상 포그라운드 Activity에서 사용자가 한 번 탭해서 합니다. 수업 전 알림은 Activity를 직접 여는 PendingIntent입니다.
+  - 앱이 다시 시작되면 `open` Capture를 찾아 마지막 세그먼트를 복구하고 봉인한 뒤 "복구된 녹음"으로 표시합니다.
+  - 통화·오디오 포커스 상실·마이크 무음은 `interrupted`/`silenced` 이벤트로 기록합니다.
+
+**구현 수단 (미결 O3):** 후보는 셋입니다.
+- (a) `MediaRecorder` + `setNextOutputFile`(API 26+)로 MPEG-4 세그먼트를 회전
+- (b) `MediaRecorder` `AAC_ADTS` 출력
+- (c) `AudioRecord → MediaCodec → ADTS` 직접 프레이밍. 잃는 범위가 수 초로 줄지만 코드가 가장 많습니다.
+
+기본 출발점은 (a)이며, 실기기 측정 결과로 확정합니다.
+
+---
+
+## D16. Hub 프로세스와 백업
+
+**결정:**
+- **프로세스 구성:** 단일 Hub 프로세스(FastAPI + asyncio job runner)로 시작합니다.
+  - 상주 방식: Windows 로그온 시 Task Scheduler로 시작합니다. 재부팅 후 로그인 전에는 Hub가 없다는 한계를 문서화하고, Windows 서비스로 바꿀지는 미결 O8에서 판단합니다.
+  - SQLite는 WAL 모드로 쓰고 ACK 경로는 `synchronous=FULL`입니다. 쓰기는 연결 하나로 직렬화합니다.
+  - 기동 시 `sqlite_version() ≥ 3.34`와 FTS5 컴파일 여부를 검사하고, 조건이 맞지 않으면 기동을 거부합니다.
+- **외부 도구 격리:** extractor, FFmpeg, LibreOffice는 subprocess로 실행합니다. 실행 시간 제한, Windows Job Object 메모리 상한을 두고, 결과는 stdout JSON으로 받습니다. parser가 크래시하거나 멈춰도 Hub는 살아 있습니다.
+- **백업 순서:**
+  1. SQLite Online Backup API로 DB 스냅샷을 만듭니다.
+  2. 스냅샷이 참조하는 Blob 중 백업 대상에 없는 것만 복사합니다. 내용 주소 저장이라 증분 판단이 자명합니다.
+  3. 세대 manifest를 기록합니다.
+  4. 해당 Attachment의 `backed_up_at`을 갱신합니다.
+  - 백업에서 복원하면 새 `epoch`를 발급합니다.
+- **무결성 점검:** `hub fsck` 명령으로 해시를 재계산하고 고아·누락 Blob을 탐지합니다.
+
+---
+
+## D17. 계약 패키지는 JSON Schema가 원천이고, golden fixture로 세 언어를 검증한다
+
+**문제:** README에 `packages/domain`과 `packages/api-contracts`가 따로 있었고, 무엇이 원천인지 정해지지 않았습니다.
+
+**검토한 안:**
+- A. OpenAPI에서 세 언어 코드를 생성한다.
+- B. JSON Schema(+ 이를 참조하는 OpenAPI)를 원천으로 하고, 공유 golden JSON fixture로 세 언어의 직렬화·역직렬화를 CI에서 검증한다. 코드 생성은 선택이다.
+
+**결정:** B. Swift 생성기 품질과 생성 코드 유지 부담이 크고, D7·D10 덕분에 계약 면적이 작습니다.
+- `packages/api-contracts/`에 다음을 둡니다.
+  - `schemas/`: manifest·commit, Item kind, Locator, Mutation, changes, AnnotationLayer payload, error
+  - `openapi.yaml`
+  - 클라이언트 로컬 sync 테이블 DDL: `entity_cache`, `mutation_outbox`, `blob_transfer`, `meta(cursor, hub_id, epoch)`
+  - `fixtures/`
+- 버전 규칙: 경로는 `/v1`입니다. 스키마는 추가하는 변경만 하위 호환으로 허용합니다. Hub는 `GET /v1/hub`로 `min_client_version`을 알립니다.
+
+---
+
+## D18. 충돌은 필드 단위 compare-and-set으로 판정하고, 클라이언트에는 병합 로직이 없다
+
+**문제:**
+- 문서는 "서로 다른 필드는 자동 병합, 같은 note body는 사용자 선택"을 요구했습니다. 하지만 엔터티 revision 하나(`base_revision`)만으로는 어느 필드가 바뀌었는지 판단할 수 없습니다.
+- 삭제 대 편집 충돌, Relation·Tag 같은 집합 연산도 정의되어 있지 않았습니다.
+
+**검토한 안:**
+- A. 엔터티 단위 `base_rev`가 다르면 무조건 충돌로 본다. 오탐이 지나치게 많습니다.
+- B. Hub가 필드별 rev를 저장한다.
+- C. patch가 필드마다 이전 값(긴 텍스트는 이전 값의 해시)을 함께 보내는 compare-and-set.
+
+**결정:** C.
+- **Mutation 형식:** `{mutation_id, entity, id, op: create|patch|delete|restore|suggestion.accept|…, set:{field:{from, to}}}`.
+  - 긴 텍스트 필드(스키마에 `x-text: true`)는 `from` 대신 `from_hash`를 보냅니다.
+- **적용 규칙:** Hub의 현재 값이 `from`과 같으면 그 필드를 적용하고, 다르면 그 필드만 충돌입니다.
+  - 스칼라 필드: 같은 필드를 동시에 바꾼 경우만 충돌이고, 나머지 필드는 적용합니다.
+  - 텍스트 본문(Note body): 충돌하면 Hub 값을 유지하고, 제출된 값은 `ConflictRecord{entity_ref, field, theirs_rev, mine_value_blob, state}`로 보존합니다. 사용자가 비교 UI에서 고르거나 직접 합친 결과를 일반 patch로 보내면 해소됩니다. 자동 텍스트 병합은 하지 않습니다.
+  - Relation·Tag: 각각 독립 행이고 추가·삭제가 멱등이라 충돌이 없습니다. Relation ID는 `"{from}|{type}|{to}"`입니다.
+  - delete: 소프트 삭제라 항상 적용됩니다. 삭제된 엔터티에 patch가 오면 거부하되 제출 값은 ConflictRecord로 보존합니다.
+- **재전송:** `mutation_id`는 Hub `applied_mutations`의 PK이고 90일 보관합니다. 그보다 오래된 재전송이 와도 CAS가 다시 판정하므로 두 번 적용되지 않습니다.
+- **클라이언트 동작:** 로컬에 낙관적으로 먼저 반영합니다. conflict 응답을 받으면 Hub 상태로 덮어쓰고 ConflictRecord(동기화 대상)를 표시합니다.
+- last-write-wins는 어디에도 없습니다. 결과가 같은 값으로 모이는 경우는 충돌이 아닙니다.
+
+**결과:** 충돌 판정 코드는 Hub(Python) 한 곳에만 있고, Hub가 필드별 rev를 저장할 필요도 없습니다.
+
+---
+
+## D19. 알림은 각 클라이언트가 로컬에서 예약한다
+
+**문제:** Reminder가 Hub 엔터티처럼 적혀 있었습니다. 하지만 노트북이 꺼지면 Hub는 동작하지 않고, 푸시 서버(클라우드)도 두지 않으므로 Hub가 폰에 알림을 보낼 방법이 없습니다.
+
+**결정:**
+- 알림 시각은 Item 필드 `fields.reminders[]`입니다. 각 클라이언트가 동기화된 사본으로 OS 로컬 알림을 예약합니다.
+  - Android: 정확한 시각 알람에는 권한이 필요할 수 있으므로, 권한이 없으면 근사 알람으로 대체합니다.
+  - iPad: `UNUserNotificationCenter`로 예약합니다. 앱당 대기 알림 개수 제한을 고려해 가까운 것부터 예약합니다.
+- Reminder 엔터티는 없앱니다.
+
+**결과:** 노트북 상태와 관계없이 알림이 울립니다. 단, 마지막 동기화 이후 바뀐 일정은 반영되지 않습니다.
 
 ---
 
 ## 미결 결정
 
-| 항목 | 결정 시점 | 판단 기준 |
+모든 수치 기준은 제안값이며, 측정은 합성·공개 데이터로 로컬에서 합니다.
+
+| # | 질문 | 판단 기준 |
 |---|---|---|
-| 한국어 전문 검색 tokenizer (FTS5 `unicode61` / `trigram` / 형태소 분석 후 색인) | #11 착수 전 | 합성 한국어 자료로 2음절 검색어(예: "과제")·조사 결합("자료구조를")·부분 문자열 재현율 측정. `trigram`은 3글자 미만 질의가 MATCH로 걸리지 않으므로 단독 사용 불가 |
-| HWP 5 바이너리 변환 도구 | #7 | 라이선스, Windows 설치 난이도, 합성 fixture에서 표·수식 보존률 |
-| iPad 로컬 저장소 (SwiftData / GRDB 등 SQLite) | #16 착수 시 | pending mutation의 트랜잭션 보장, 마이그레이션 용이성 |
-| 녹음 세그먼트 길이 | #3 | 실기기에서 세그먼트 경계 공백(gap) 측정 |
+| O1 | 로컬 STT(faster-whisper, whisper.cpp 등)를 MVP에 넣을지 | 대상 노트북에서 60분 한국어 강의 음원 처리 시간 ≤ 녹음 길이, cloud STT 대비 CER 차이 ≤ 5%p면 `local_only` 기본 provider로 탑재 |
+| O2 | 한국어 전문 검색 분석기 | 분석기는 `TextAnalyzer` 인터페이스 뒤에 두고 인덱스에 `analyzer_id@version`을 기록, 바꾸면 전체 재색인. 후보: `unicode61` / `trigram` + 3글자 미만 LIKE / 한글 겹침 2-gram 선토큰화 + `unicode61` / 형태소 분석. 합성 코퍼스로 2음절 질의·조사 결합·영한 혼합의 recall@10, p95 응답 시간, 인덱스 크기 측정. `trigram`은 3글자 미만 MATCH가 걸리지 않으므로 단독 사용 불가 |
+| O3 | Android 녹음 구현 수단(D15 a/b/c)과 세그먼트 길이 | 강제 종료·전원 차단 후 복구율, 세그먼트 경계 공백 ≤ 100 ms, 60분 배터리·CPU, 접힘·화면 꺼짐·Samsung 절전에서 FGS 생존 |
+| O4 | HWP 5 변환 도구, Office → PDF 렌디션 도구 | 합성·공개 fixture에서 표·수식 보존률, 라이선스, Windows 설치 난이도 |
+| O5 | `cloud_redacted` 도입 | 한국어 PII(학번, 전화, 이름) 탐지 재현율 ≥ 0.98일 때만 값 추가 |
+| O6 | Hub가 켜진 뒤 업로드가 시작되기까지의 지연, 푸시 깨우기 필요성 | Doze 포함 지연 중앙값이 15분을 넘으면 FCM/APNs 깨우기 검토(외부 의존·비용 평가 포함) |
+| O7 | iPad 배포·서명 | 무료 Apple 계정의 프로비저닝 유효기간, App Group·Background Modes·Share Extension 사용 가능 여부. #16 착수 전에 배포 방식 확정 |
+| O8 | `tailscale serve` 대용량 전송, chunk 크기, Hub 상주 방식 | LTE·DERP relay 경유 4/8/16 MiB chunk 업로드의 실패율 < 1%와 재개 정상 여부, 절전 복귀 후 serve·인증서 유지. 실패 시 D5 대체안(C) 사용 |
