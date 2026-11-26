@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/device/pair_response.json",
   "title": "Pair response",
-  "description": "The Device's id and token, returned once (D6). The Hub keeps only SHA-256(token). Open.",
+  "description": "The Device's id and token, from POST /v1/pair once or from POST /v1/devices/me/token when the token is replaced (D6). The Hub keeps only SHA-256(token). Open.",
   "type": "object",
   "required": ["device_id", "token"],
   "properties": {

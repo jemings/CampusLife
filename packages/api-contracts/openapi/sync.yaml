@@ -396,12 +396,41 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /v1/devices/me/token:
+    post:
+      operationId: reissueToken
+      summary: Replace this Device's token (D6).
+      description: >-
+        Authenticated with the current token, takes no body, and returns a new
+        token for the same Device. The old token stays valid until the new one
+        first authenticates successfully, and is revoked at that moment: that
+        first use is the client's proof it stored the new token. Until then
+        both tokens work, and asking again returns the same unused new token,
+        so a lost response costs nothing.
+      parameters:
+        - $ref: "#/components/parameters/Contract"
+      responses:
+        "200":
+          description: The new token, with this Device's id.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/device/pair_response.json"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 components:
   securitySchemes:
     device:
       type: http
       scheme: bearer
-      description: The opaque token from POST /v1/pair (device/pair_response token). It does not expire; revoke ends it (D6).
+      description: The opaque token from POST /v1/pair or POST /v1/devices/me/token (device/pair_response token). It does not expire; revoke or a reissued token's first use ends it (D6).
   parameters:
     Contract:
       name: CampusLife-Contract
