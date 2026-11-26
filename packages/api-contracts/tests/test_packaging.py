@@ -23,9 +23,10 @@ def wheel(tmp_path_factory) -> Path:
     return built
 
 
-def test_wheel_carries_schemas_as_package_data(wheel):
+def test_wheel_carries_schemas_and_fixtures_as_package_data(wheel):
     names = set(zipfile.ZipFile(wheel).namelist())
     assert "campuslife_contracts/contract/schemas/common/uuid.json" in names
+    assert any(name.startswith("campuslife_contracts/contract/fixtures/valid/") for name in names)
     assert "campuslife_contracts/vocabulary.json" in names
 
 

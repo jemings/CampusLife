@@ -28,9 +28,10 @@ packages = ["src/campuslife_contracts"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "schemas" = "campuslife_contracts/contract/schemas"
+"fixtures" = "campuslife_contracts/contract/fixtures"
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "schemas", "tests", "HARNESS.md"]
+include = ["src", "schemas", "fixtures", "tests", "HARNESS.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
