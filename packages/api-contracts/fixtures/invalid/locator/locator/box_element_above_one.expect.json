@@ -1,0 +1,10 @@
+[
+  {
+    "path": "/box/2",
+    "keyword": "maximum"
+  },
+  {
+    "path": "/box",
+    "rule": "box_extent"
+  }
+]
