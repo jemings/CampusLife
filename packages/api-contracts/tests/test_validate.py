@@ -165,3 +165,14 @@ def test_entity_ref_rejects_entities_outside_the_list_by_uuid(entity):
 def test_box_parsed_with_nan_is_refused():
     with pytest.raises(TypeError):
         validate("common/box", json.loads("[NaN, 0, 0, 0]"))
+
+
+def test_each_member_a_present_member_depends_on_is_reported_where_it_is_missing(make_contract):
+    contract = make_contract({"t/file": {"type": "object", "dependentRequired": {"raw": ["text", "kind"], "other": ["x"]}}})
+    assert contract.validate("t/file", {"raw": "a", "kind": "k"}) == [
+        SchemaViolation(path="/text", keyword="dependentRequired")
+    ]
+    assert contract.validate("t/file", {"raw": "a"}) == [
+        SchemaViolation(path="/kind", keyword="dependentRequired"),
+        SchemaViolation(path="/text", keyword="dependentRequired"),
+    ]

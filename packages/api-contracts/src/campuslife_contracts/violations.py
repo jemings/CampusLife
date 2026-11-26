@@ -11,6 +11,8 @@ class Rule(enum.StrEnum):
     BOX_EXTENT = "box_extent"
     CALENDAR = "calendar"
     RANGE_ORDER = "range_order"
+    RAW_FORM = "raw_form"
+    RELATION_ID = "relation_id"
     TZ_EXISTS = "tz_exists"
 
 

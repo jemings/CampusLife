@@ -15,6 +15,11 @@ def _missing_members(error: ValidationError) -> list[str]:
     return [name for name in error.validator_value if name not in error.instance]
 
 
+def _missing_dependencies(error: ValidationError) -> list[str]:
+    present = [name for name in error.validator_value if name in error.instance]
+    return [need for name in present for need in error.validator_value[name] if need not in error.instance]
+
+
 def _unexpected_members(error: ValidationError) -> list[str]:
     declared = error.schema.get("properties", {})
     return [name for name in error.instance if name not in declared]
@@ -23,6 +28,7 @@ def _unexpected_members(error: ValidationError) -> list[str]:
 MEMBER_KEYWORDS: dict[str, Callable[[ValidationError], list[str]]] = {
     "required": _missing_members,
     "additionalProperties": _unexpected_members,
+    "dependentRequired": _missing_dependencies,
 }
 
 

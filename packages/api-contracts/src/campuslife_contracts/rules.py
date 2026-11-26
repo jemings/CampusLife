@@ -7,6 +7,7 @@ defect yields one violation.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import unicodedata
 from datetime import date
 from functools import cache
 from importlib.resources import files
@@ -79,6 +80,42 @@ def _range_order(validator, pairs, instance, schema):
             )
 
 
+def _members_fit(validator, schema: dict, instance: dict, names: list[str]) -> bool:
+    return all(_member_fits(validator, schema, name, instance[name]) for name in names)
+
+
+def _raw_form(validator, pairs, instance, schema):
+    if not isinstance(instance, dict):
+        return
+    for pair in pairs:
+        raw, text = instance.get(pair["raw"]), instance.get(pair["text"])
+        if not (isinstance(raw, str) and isinstance(text, str)):
+            continue
+        if not _members_fit(validator, schema, instance, [pair["raw"], pair["text"]]):
+            continue
+        if raw == text or unicodedata.normalize("NFC", raw) != text:
+            yield ValidationError(
+                f"{pair['raw']} must be the non-NFC form {pair['text']} was received in",
+                path=[pair["raw"]],
+            )
+
+
+RELATION_PARTS = ("from", "type", "to")
+
+
+def _relation_id(validator, enabled, instance, schema):
+    if not isinstance(instance, dict):
+        return
+    parts = [instance.get(name) for name in RELATION_PARTS]
+    identifier = instance.get("id")
+    if not all(isinstance(value, str) for value in [identifier, *parts]):
+        return
+    if not _members_fit(validator, schema, instance, ["id", *RELATION_PARTS]):
+        return
+    if identifier != "|".join(parts):
+        yield ValidationError(f"id must be {'|'.join(parts)!r}", path=["id"])
+
+
 def _box_extent(validator, enabled, instance, schema):
     if not (isinstance(instance, list) and len(instance) == 4 and all(map(_is_number, instance))):
         return
@@ -97,4 +134,6 @@ RULE_KEYWORDS = {
     "x-tz-exists": RuleKeyword(Rule.TZ_EXISTS, _tz_exists),
     "x-range-order": RuleKeyword(Rule.RANGE_ORDER, _range_order),
     "x-box-extent": RuleKeyword(Rule.BOX_EXTENT, _box_extent),
+    "x-raw-form": RuleKeyword(Rule.RAW_FORM, _raw_form),
+    "x-relation-id": RuleKeyword(Rule.RELATION_ID, _relation_id),
 }
