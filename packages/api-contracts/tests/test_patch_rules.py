@@ -56,6 +56,8 @@ SCHEMAS = {
                          "additionalProperties": {"$ref": "../t/mood.json"}, "x-owner": "user"},
             "code_then_moods": {"type": "array", "prefixItems": [{"type": "integer"}], "items": {"$ref": "../t/mood.json"},
                                 "x-owner": "user"},
+            "mood_then_code": {"type": "array", "prefixItems": [{"$ref": "../t/mood.json"}, {"type": "integer"}],
+                               "items": False, "x-owner": "user"},
         },
     },
     "t/mood": {"type": "string", "pattern": "^[a-z]+$", "examples": ["calm", "busy"], "x-open": True},
@@ -127,6 +129,13 @@ def test_items_after_prefix_items_take_only_known_values_of_an_open_enum(patch):
     assert patch({"code_then_moods": {"from": None, "to": [3, "calm", "busy"]}}, entity="other") == []
     assert patch({"code_then_moods": {"from": None, "to": [3, "sleepy"]}}, entity="other") == [
         set_type("/set/code_then_moods/to")
+    ]
+
+
+def test_an_open_enum_inside_prefix_items_takes_only_its_known_values(patch):
+    assert patch({"mood_then_code": {"from": None, "to": ["calm", 3]}}, entity="other") == []
+    assert patch({"mood_then_code": {"from": None, "to": ["sleepy", 3]}}, entity="other") == [
+        set_type("/set/mood_then_code/to")
     ]
 
 
