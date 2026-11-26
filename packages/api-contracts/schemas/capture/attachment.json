@@ -9,7 +9,12 @@
     "id": { "$ref": "../common/uuid.json", "x-owner": "client" },
     "capture_id": { "description": "Filled by the Hub from the Capture the Attachment came in with.", "$ref": "../common/uuid.json", "x-owner": "hub" },
     "blob_sha256": { "$ref": "../common/sha256.json", "x-owner": "hub" },
-    "role": { "enum": ["audio_segment", "photo", "file", "web_snapshot", "text"], "x-owner": "client" },
+    "role": {
+      "description": "Known roles are the examples; a newer Hub may send others, which a client keeps but does not interpret. capture.commit takes only the known ones.",
+      "type": "string", "pattern": "^[a-z][a-z_]*$",
+      "examples": ["audio_segment", "photo", "file", "web_snapshot", "text"],
+      "x-owner": "client"
+    },
     "seq": { "description": "Order of an audio segment within its recording.", "$ref": "../common/int64.json#/$defs/non_negative", "x-owner": "client" },
     "original_filename": { "description": "File name as the user saw it, NFC.", "type": "string", "minLength": 1, "x-owner": "client" },
     "original_filename_raw": {
