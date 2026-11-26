@@ -142,7 +142,8 @@ def test_error_code_catalogue_is_exactly_the_contract_list():
     schema = json.loads((contract_root() / "schemas/common/error.json").read_text(encoding="utf-8"))
     assert schema["properties"]["code"]["enum"] == catalogue
     for code in catalogue:
-        assert validate("common/error", {"code": code, "message": "m"}) == []
+        details = {"details": {"missing_chunks": [0]}} if code == "incomplete" else {}
+        assert validate("common/error", {"code": code, "message": "m", **details}) == []
 
 
 UUID = "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
