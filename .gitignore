@@ -55,3 +55,10 @@ local.properties
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Xcode / Swift
+DerivedData/
+.build/
+.swiftpm/
+*.xcuserstate
+*.xcuserdatad/
