@@ -106,3 +106,8 @@ CampusLife는 강의 녹음·정리만을 위한 앱이 아닙니다. 수업, �
 | Ingestion | [#13 ZIP·코드·Jupyter·동영상·자막](https://github.com/jemings/CampusLife/issues/13) |
 | Quality | [#14 E2E 테스트·운영 가이드](https://github.com/jemings/CampusLife/issues/14) |
 
+
+## 디자인 프로토타입
+
+- [UX/UI 디자인 기준](docs/UX-DESIGN.md)
+- [인터랙티브 웹 프로토타입](apps/prototype/index.html) — 브라우저에서 열어 PC / Fold8 접은 화면 / Fold8 펼친 4:3 화면을 전환해 볼 수 있습니다.
