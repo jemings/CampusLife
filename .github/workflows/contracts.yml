@@ -28,3 +28,5 @@ jobs:
         run: |
           shopt -s globstar
           uv run check-jsonschema --check-metaschema schemas/**/*.json
+      - name: Check the OpenAPI document and the schemas it references
+        run: uv run openapi-spec-validator openapi/sync.yaml
