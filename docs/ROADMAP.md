@@ -194,3 +194,44 @@ Phase 3 강의 AI pipeline과 통합 Inbox 사이에 다중 파일 ingest를 완
 | Ingestion | [#13 ZIP·코드·Jupyter·동영상·자막](https://github.com/jemings/CampusLife/issues/13) |
 | Quality | [#14 E2E 테스트·운영 가이드](https://github.com/jemings/CampusLife/issues/14) |
 
+
+
+## Phase 8 — Multi-device Sync & Device Management
+
+- 공통 HTTPS Sync API 및 versioned API contract
+- Device enrollment, device credential, revocation
+- device별 SyncCursor와 server event sequence
+- resumable upload/download 및 idempotent mutation
+- optimistic concurrency 및 conflict records
+- 노트북 오프라인 동안 각 client local outbox 유지
+- Windows/Android/iPadOS cross-device E2E tests
+- iPadOS background URLSession 재시도/복구 검증
+
+완료 기준:
+- Fold8과 iPad에서 생성한 변경이 노트북에 안전하게 수렴
+- 노트북이 오프라인일 때도 모바일 자료와 필기가 손실되지 않음
+- 장치 하나를 분실해도 해당 credential만 폐기 가능
+- 동시에 수정한 동일 자료를 무조건 덮어쓰지 않고 충돌을 보존
+- 변경 이벤트를 cursor로 추적해 전체 데이터를 매번 재전송하지 않음
+
+## Phase 9 — iPadOS Native Companion
+
+- SwiftUI 앱 골격 및 공통 API client
+- offline metadata cache 및 file download cache
+- Files/Share Extension 기반 자료 수집
+- CourseMaterialSet, PDF, 슬라이드, 강의 노트 브라우징
+- PDFKit 기반 페이지 열람/검색
+- PencilKit 기반 Apple Pencil drawing 및 page annotation layer
+- annotation revision과 sync mutation 연결
+- PDF overlay export 및 Windows/Android 공통 열람
+- AI 노트와 원본 자료의 split-view 학습 workspace
+- Stage Manager, Split View, 외부 키보드, Apple Pencil, orientation 대응
+- background URLSession upload/download 및 relaunch reconciliation
+
+완료 기준:
+- iPad에서 PDF 강의자료에 Pencil로 필기하고 앱 종료/재실행 후에도 유지
+- 노트북 온라인 시 annotation이 동기화되고 Windows/Android에서 export 결과 확인
+- iPad offline 상태에서도 다운로드한 자료의 annotation 작성 가능
+- 백그라운드 전송 중단/강제 종료/인증 만료 이후 재시도
+- 창 크기 변경과 멀티태스킹 중 선택 과목/문서 페이지/필기 상태 유지
+
