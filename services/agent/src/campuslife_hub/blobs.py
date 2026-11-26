@@ -120,7 +120,8 @@ class BlobStore:
     def discard_staging_leftovers(self) -> list[KeptLeftover]:
         """Remove the staging files of dead runs; only the hub.lock holder calls this, so no live run owns one.
 
-        What cannot be removed stays for the next start to try again and is returned.
+        A file another process still holds open, or an entry that is not a regular file, stays for the
+        next start and is returned. Any other failure to remove a leftover raises.
         """
         kept = []
         for leftover in sorted(self._staging_dir.glob(f"*{STAGING_SUFFIX}")):
@@ -130,7 +131,9 @@ class BlobStore:
             try:
                 self._retry_while_locked(lambda leftover=leftover: self._files.unlink(leftover))
             except OSError as error:
-                kept.append(KeptLeftover(leftover, f"could not remove it: {error}"))
+                if not is_sharing_violation(error):
+                    raise
+                kept.append(KeptLeftover(leftover, f"still in use: {error}"))
         return kept
 
     def _move_into_place(self, staging: Path, final: Path) -> None:
