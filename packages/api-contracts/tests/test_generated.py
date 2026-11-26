@@ -241,6 +241,8 @@ REQUIRED = {
     "item/fields/term#": {"year", "semester", "starts_on", "ends_on"},
     "item/item#": {"id", "kind", "schema_version", "title", "fields", "rev"},
     "relation/relation#": {"id", "from", "type", "to"},
+    "common/error#/allOf/0/then": {"details"},
+    "common/error#/$defs/incomplete_details": {"missing_chunks"},
     "mutation/batch_request#": {"mutations"},
     "mutation/batch_response#": {"results"},
     "mutation/mutation#": {"mutation_id", "op"},
@@ -300,4 +302,5 @@ LENGTHS = {
     "mutation/result#/properties/conflicted_fields": {("minItems", 1)},
     "mutation/result#/properties/missing_blobs": {("minItems", 1)},
     "sync/changes_page#/$defs/change/properties/id": NON_EMPTY,
+    "common/error#/$defs/incomplete_details/properties/missing_chunks": {("minItems", 1)},
 }
