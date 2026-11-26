@@ -51,7 +51,6 @@ HANDLERS: dict[str, Handler] = {
 CONTRACT_OPS = frozenset(
     json.loads((contract_root() / "schemas" / "mutation" / "mutation.json").read_text(encoding="utf-8"))["properties"]["op"]["enum"]
 )
-UNAPPLIED_OPS = CONTRACT_OPS - HANDLERS.keys()
 
 
 def _mutation_id(mutation: object) -> str:
@@ -63,7 +62,7 @@ def _mutation_id(mutation: object) -> str:
 
 def _refuse_unapplied_op(raw_mutation: dict) -> None:
     op = raw_mutation.get("op")
-    if isinstance(op, str) and op in UNAPPLIED_OPS:
+    if isinstance(op, str) and op in CONTRACT_OPS and op not in HANDLERS:
         raise UnsupportedOp(f"this Hub does not apply op {op} yet")
 
 
