@@ -141,8 +141,9 @@ def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
 
     When every key won, a row a client could not create means the client broke the contract: schema. When a key
     lost, it holds back the rest of its BOUND_KEYS group, a group or key that would leave such a row on its own
-    is held back too, and the others are written; held-back keys count as conflicted. A losing x-text value,
-    and every value sent to an entity that is not live, goes to the conflict stash (E8).
+    is held back too, and the others are written; held-back keys count as conflicted. So beside a key that lost,
+    a key that breaks the row on its own shows as a conflict; resent with current froms, it shows as schema.
+    A losing x-text value, and every value sent to an entity that is not live, goes to the conflict stash (E8).
     """
     ref = EntityRef(Entity(mutation["entity"]), mutation["id"])
     if ref.entity not in PATCHABLE:
