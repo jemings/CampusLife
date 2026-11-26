@@ -161,7 +161,7 @@ def test_vocabulary_names_every_rule_keyword():
     from campuslife_contracts.vocabulary import VOCABULARY
 
     extension_keywords = set(VOCABULARY["propertyNames"]["then"]["enum"])
-    assert extension_keywords == {"x-owner", "x-text", "x-set-targets", "x-open", *RULE_KEYWORDS}
+    assert extension_keywords == {"x-owner", "x-text", "x-set-targets", "x-set-edits", "x-open", *RULE_KEYWORDS}
 
 
 @pytest.mark.parametrize(
