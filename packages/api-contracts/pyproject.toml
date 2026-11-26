@@ -1,0 +1,27 @@
+[project]
+name = "campuslife-contracts"
+version = "0.1.0"
+description = "CampusLife wire contract: JSON Schemas, golden fixtures and the reference validator"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+campuslife-contracts = "campuslife_contracts.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/campuslife_contracts"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
