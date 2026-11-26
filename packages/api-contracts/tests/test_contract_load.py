@@ -116,6 +116,8 @@ def test_discriminated_union_maps_every_enum_value_to_one_branch(tmp_path):
         {**DISCRIMINATED, "discriminator": {"propertyName": "kind", "mapping": {"a": "a.json", "b": "b.json", "c": "b.json"}}},
         {**DISCRIMINATED, "oneOf": [{"$ref": "a.json"}, {"$ref": "b.json", "minProperties": 1}]},
         {key: value for key, value in DISCRIMINATED.items() if key != "type"},
+        {**DISCRIMINATED, "oneOf": [{"$ref": "a.json"}, {"$ref": "a.json"}],
+         "discriminator": {"propertyName": "kind", "mapping": {"a": "a.json", "b": "a.json"}}},
         {**DISCRIMINATED, "discriminator": "kind"},
         {**DISCRIMINATED, "discriminator": {"propertyName": "kind", "mapping": [["a", "a.json"]]}},
         {**DISCRIMINATED, "discriminator": {"propertyName": ["kind"], "mapping": {"a": "a.json", "b": "b.json"}}},
@@ -131,7 +133,7 @@ def test_discriminated_union_maps_every_enum_value_to_one_branch(tmp_path):
     ],
     ids=["not-required", "not-enumerated", "no-oneOf", "no-mapping", "enum-value-unmapped",
          "two-values-one-branch", "mapping-beyond-enum", "branch-not-a-bare-ref", "not-object-typed",
-         "discriminator-is-a-string", "mapping-is-an-array",
+         "duplicate-branch-and-mapping", "discriminator-is-a-string", "mapping-is-an-array",
          "property-name-is-an-array", "oneOf-is-an-object", "enum-is-a-string",
          "mapping-value-number", "mapping-value-array", "mapping-value-null", "ref-number", "ref-array",
          "enum-value-array", "enum-value-object"],
@@ -145,3 +147,18 @@ def test_pattern_properties_are_not_part_of_the_vocabulary(tmp_path):
     write_schema(tmp_path, "t/p", {"type": "object", "patternProperties": {"^[a-z]+$": {}}})
     with pytest.raises(ContractError, match="patternProperties"):
         Contract.load(tmp_path)
+
+
+@pytest.mark.parametrize("value", [False, "yes", 1])
+def test_text_marker_is_only_true(tmp_path, value):
+    write_schema(tmp_path, "item/a", _object_with({"type": "string", "x-text": value}))
+    with pytest.raises(ContractError, match="item/a"):
+        Contract.load(tmp_path)
+
+
+def test_vocabulary_names_every_rule_keyword():
+    from campuslife_contracts.rules import RULE_KEYWORDS
+    from campuslife_contracts.vocabulary import VOCABULARY
+
+    extension_keywords = set(VOCABULARY["propertyNames"]["then"]["enum"])
+    assert extension_keywords == {"x-owner", "x-text", *RULE_KEYWORDS}
