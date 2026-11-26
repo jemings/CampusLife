@@ -3,7 +3,16 @@ from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 
-from campuslife_hub.data_root import Allowed, InsideSyncFolder, UncPath, check_data_root, detect_sync_roots, dropbox_roots, onedrive_roots
+from campuslife_hub.data_root import (
+    Allowed,
+    DevicePath,
+    InsideSyncFolder,
+    UncPath,
+    check_data_root,
+    detect_sync_roots,
+    dropbox_roots,
+    onedrive_roots,
+)
 
 
 @pytest.mark.parametrize(
@@ -12,10 +21,33 @@ from campuslife_hub.data_root import Allowed, InsideSyncFolder, UncPath, check_d
         (r"\\server\share\CampusLife", r"\\server\share"),
         ("//server/share/CampusLife", r"\\server\share"),
         (r"\\?\UNC\server\share\CampusLife", r"\\?\UNC\server\share"),
+        (r"\\.\UNC\server\share\CampusLife", r"\\.\UNC"),
     ],
 )
 def test_a_unc_root_is_refused_and_names_its_drive(root, drive):
     assert check_data_root(PureWindowsPath(root), []) == UncPath(drive)
+
+
+@pytest.mark.parametrize(
+    ("root", "drive"),
+    [
+        (r"\\.\C:\CampusLife", r"\\.\C:"),
+        (r"\\?\Volume{0f8fad5b-d9cb-469f-a165-70867728950e}\CampusLife", r"\\?\Volume{0f8fad5b-d9cb-469f-a165-70867728950e}"),
+        (r"\\.\pipe\CampusLife", r"\\.\pipe"),
+    ],
+)
+def test_a_root_on_another_drive_starting_with_two_backslashes_is_refused_as_a_device_path(root, drive):
+    assert check_data_root(PureWindowsPath(root), []) == DevicePath(drive)
+
+
+def test_an_extended_drive_letter_path_is_judged_as_the_plain_path():
+    verdict = check_data_root(PureWindowsPath(r"\\?\C:\Users\u\AppData\Local\CampusLife"), [PureWindowsPath(r"C:\Users\u\OneDrive")])
+    assert verdict == Allowed(PureWindowsPath(r"C:\Users\u\AppData\Local\CampusLife"))
+
+
+def test_an_extended_drive_letter_path_inside_a_sync_folder_is_refused():
+    onedrive = PureWindowsPath(r"C:\Users\u\OneDrive")
+    assert check_data_root(PureWindowsPath(r"\\?\c:\Users\u\OneDrive\CampusLife"), [onedrive]) == InsideSyncFolder(onedrive)
 
 
 def test_a_unc_root_is_refused_before_the_sync_folders_are_looked_at():
