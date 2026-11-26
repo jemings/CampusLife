@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/locator/locator.json",
   "title": "Locator",
-  "description": "One place in an original (D13, E17): the single shape every citation, Suggestion evidence and evidence Relation uses. Anchored to a Blob by its sha256, or for media_time to a Capture's recording timeline. Pages and slides count from 1; other indexes count from 0. When the precise place is unknown the Hub writes document and does not guess. The Hub makes Locators: an LLM cites only the ContentBlock ids it was given, and the Hub checks those ids and turns them into Locators. Open, as the Hub sends it: a known kind is checked by its branch (known), and an unknown kind matching the name pattern is kept with whatever members it has; a client shows it as document-level evidence when it has a blob and as evidence of unknown place otherwise. v is at least 1 and may grow. Input that carries a Locator uses the closed view input (D20).",
+  "description": "One place in an original (D13, E17): the single shape every citation, Suggestion evidence and evidence Relation uses. Anchored to a Blob by its sha256, or for media_time to a Capture's recording timeline. Pages and slides count from 1; other indexes count from 0. When the precise place is unknown the Hub writes document and does not guess. The Hub makes Locators: an LLM cites only the ContentBlock ids it was given, and the Hub checks those ids and turns them into Locators. Open, as the Hub sends it: a known kind is checked by its branch (known), and an unknown kind matching the name pattern is kept with whatever members it has, except that blob (a sha256) and capture (a UUID) keep their type in every kind; a client shows it as document-level evidence when it has a blob and as evidence of unknown place otherwise. v is at least 1 and may grow. Input that carries a Locator uses the closed view input (D20).",
   "type": "object",
   "required": ["v", "kind"],
   "properties": {
@@ -13,7 +13,10 @@
       "pattern": "^[a-z][a-z_]*$",
       "examples": ["pdf_page", "slide", "doc_path", "sheet_range", "media_time", "image_region", "web_snapshot", "document"],
       "x-open": true
-    }
+    },
+    "blob": { "$ref": "#/$defs/blob" },
+    "capture": { "$ref": "../common/uuid.json" },
+    "box": { "$ref": "../common/box.json" }
   },
   "if": { "properties": { "kind": { "$ref": "#/$defs/known/properties/kind" } }, "required": ["kind"] },
   "then": { "$ref": "#/$defs/known" },
