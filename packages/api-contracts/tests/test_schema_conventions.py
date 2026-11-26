@@ -62,7 +62,11 @@ def test_every_integer_goes_through_int64():
     assert found == {"common/int64.json#/"}
 
 
+HUB = "hub"
 OWNERS = {
+    "artifact/artifact": dict.fromkeys(
+        ["id", "artifact_type", "subject_ref", "job_key", "provider", "model", "prompt_version", "pipeline_version",
+         "input_hashes", "content_blob", "created_at"], HUB),
     "capture/attachment": {
         "id": "client", "capture_id": "hub", "blob_sha256": "hub", "role": "client", "seq": "client",
         "original_filename": "client", "original_filename_raw": "client", "declared_mime": "client",

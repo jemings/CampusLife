@@ -1,0 +1,15 @@
+{
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "artifact_type": "summary",
+  "subject_ref": "item:6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "job_key": "abababababababababababababababababababababababababababababababab",
+  "provider": "openai",
+  "model": "gpt-x",
+  "prompt_version": "lecture-note-3",
+  "pipeline_version": "note-0.2.0",
+  "input_hashes": [
+    "baa5a0964d3320fbc0c6a922140453c8513ea24ab8fd0577034804a967248096"
+  ],
+  "content_blob": "baa5a0964d3320fbc0c6a922140453c8513ea24ab8fd0577034804a967248096",
+  "created_at": "2026-03-02T01:10:00.000Z"
+}

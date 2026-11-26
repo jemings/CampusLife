@@ -1,0 +1,12 @@
+{
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "artifact_type": "rendition",
+  "subject_ref": "blob:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "job_key": "abababababababababababababababababababababababababababababababab",
+  "pipeline_version": "libreoffice-24.2",
+  "input_hashes": [
+    "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+  ],
+  "content_blob": "baa5a0964d3320fbc0c6a922140453c8513ea24ab8fd0577034804a967248096",
+  "created_at": "2026-03-02T01:10:00.000Z"
+}
