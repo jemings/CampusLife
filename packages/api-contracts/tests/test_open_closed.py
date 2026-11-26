@@ -148,7 +148,8 @@ def test_create_and_patch_know_the_same_kinds_as_the_item():
 
 
 def test_create_writes_the_relation_and_tag_columns_minus_the_id():
-    assert names(MUTATION["relation_data"]) == names(schema("relation/relation")) - {"id"}
+    """A Relation's locators are the Hub's: it copies them from a Suggestion's evidence on accept."""
+    assert names(MUTATION["relation_data"]) == names(schema("relation/relation")) - {"id", "locators"}
     assert names(MUTATION["tag_data"]) == names(schema("tag/tag")) - {"id"}
 
 

@@ -14,6 +14,7 @@ class Rule(enum.StrEnum):
     RAW_FORM = "raw_form"
     RELATION_ID = "relation_id"
     RELATION_SELF = "relation_self"
+    LOCATOR_ANCHOR = "locator_anchor"
     A1_ORDER = "a1_order"
     OWNER = "owner"
     BATCH_ORDER = "batch_order"

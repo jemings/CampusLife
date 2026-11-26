@@ -452,6 +452,35 @@ def test_byte_range_runs_forward_inside_the_size(make_contract, text, expected):
     assert make_contract({"t/r": BYTE_RANGE}).validate("t/r", text) == [RuleViolation("", rule) for rule in expected]
 
 
+ANCHORED = {
+    "type": "object",
+    "properties": {
+        "type": {"type": "string", "examples": ["evidence", "about"]},
+        "to": {"type": "string"},
+        "locators": {"type": "array", "items": {"type": "object", "properties": {"page": {"type": "integer", "minimum": 1}}}},
+    },
+    "x-locator-anchor": True,
+}
+
+
+@pytest.mark.parametrize(
+    ("relation", "expected"),
+    [
+        ({"type": "evidence", "to": "blob:aa", "locators": [{"blob": "aa"}, {"capture": "c1"}]},
+         [RuleViolation(path="/locators/1/capture", rule=Rule.LOCATOR_ANCHOR)]),
+        ({"type": "evidence", "to": "capture:c1", "locators": [{"capture": "c1"}, {"kind": "later"}]}, []),
+        ({"type": "about", "to": "blob:aa", "locators": [{"blob": "aa"}]}, [RuleViolation(path="/locators", rule=Rule.LOCATOR_ANCHOR)]),
+        ({"type": "cites", "to": "blob:aa", "locators": [{"blob": "bb"}]}, []),
+        ({"type": "evidence", "locators": [{"blob": "aa"}]}, []),
+        ({"type": "evidence", "to": "blob:aa", "locators": [{"blob": "bb", "page": 0}]},
+         [SchemaViolation(path="/locators/0/page", keyword="minimum")]),
+    ],
+    ids=["other-anchor", "capture-and-anchorless", "known-non-evidence", "unknown-type", "no-to", "broken-locator"],
+)
+def test_locator_anchor_ties_evidence_locators_to_the_target(make_contract, relation, expected):
+    assert make_contract({"t/rel": ANCHORED}).validate("t/rel", relation) == expected
+
+
 A1 = {"type": "string", "pattern": "^[A-Z]+[1-9][0-9]*(:[A-Z]+[1-9][0-9]*)?$", "x-a1-order": True}
 
 
