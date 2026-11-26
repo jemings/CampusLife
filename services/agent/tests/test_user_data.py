@@ -1,6 +1,7 @@
 import pytest
 from conftest import contract_fixture
-from test_capture_commit import apply, blob_store, device, feed, new_id, store_bytes
+from campuslife_contracts import validate
+from test_capture_commit import apply, blob_store, commit, device, feed, new_id, store_bytes, text_capture
 
 __all__ = ["blob_store", "device"]
 
@@ -148,3 +149,124 @@ async def test_a_relation_between_stored_blobs_is_applied(db, device, blob_store
     assert (await apply(db, device, rendition))[0]["result"] == "applied"
 
     assert rows(await feed(db), "relation")[rendition["id"]]["data"] == {"id": rendition["id"], **rendition["data"]}
+
+
+def op(name, entity, identifier):
+    return {"mutation_id": new_id(), "op": name, "entity": entity, "id": identifier}
+
+
+async def test_deleting_an_item_keeps_its_row_with_the_time_it_was_deleted(db, device):
+    await apply(db, device, create_item(ITEM))
+    [created] = rows(await feed(db), "item").values()
+
+    assert (await apply(db, device, op("delete", "item", ITEM)))[0]["result"] == "applied"
+
+    [deleted] = rows(await feed(db), "item").values()
+    assert deleted["deleted"] is False
+    assert deleted["rev"] > created["rev"]
+    assert validate("common/instant", deleted["data"].pop("deleted_at")) == []
+    assert deleted["data"] == {**created["data"], "rev": deleted["rev"]}
+
+
+async def test_deleting_a_deleted_or_absent_item_is_applied_and_writes_nothing(db, device):
+    await apply(db, device, create_item(ITEM), op("delete", "item", ITEM))
+    before = await feed(db)
+
+    results = await apply(db, device, op("delete", "item", ITEM), op("delete", "item", OTHER_ITEM))
+
+    assert [result["result"] for result in results] == ["applied", "applied"]
+    assert await feed(db) == before
+
+
+async def test_restoring_a_deleted_item_removes_the_time_it_was_deleted(db, device):
+    await apply(db, device, create_item(ITEM))
+    [created] = rows(await feed(db), "item").values()
+    await apply(db, device, op("delete", "item", ITEM))
+
+    assert (await apply(db, device, op("restore", "item", ITEM)))[0]["result"] == "applied"
+
+    [restored] = rows(await feed(db), "item").values()
+    assert restored["data"] == {**created["data"], "rev": restored["rev"]}
+
+
+async def test_restoring_a_live_item_is_applied_and_writes_nothing(db, device):
+    await apply(db, device, create_item(ITEM))
+    before = await feed(db)
+
+    assert (await apply(db, device, op("restore", "item", ITEM)))[0]["result"] == "applied"
+    assert await feed(db) == before
+
+
+async def test_restoring_an_item_the_hub_lacks_is_rejected_as_deleted(db, device):
+    restore = op("restore", "item", ITEM)
+
+    assert await apply(db, device, restore) == [{"mutation_id": restore["mutation_id"], "result": "rejected", "reason": "deleted"}]
+
+
+async def test_deleting_a_relation_leaves_a_tombstone_and_creating_it_again_brings_it_back(db, device):
+    await apply(db, device, create_item(ITEM), create_item(OTHER_ITEM))
+    create = relation(f"item:{ITEM}", "about", f"item:{OTHER_ITEM}")
+    await apply(db, device, create)
+
+    assert (await apply(db, device, op("delete", "relation", create["id"])))[0]["result"] == "applied"
+    tombstone = rows(await feed(db), "relation")[create["id"]]
+    assert tombstone["deleted"] is True
+    assert "data" not in tombstone
+
+    assert (await apply(db, device, {**create, "mutation_id": new_id()}))[0]["result"] == "applied"
+    assert rows(await feed(db), "relation")[create["id"]]["data"] == {"id": create["id"], **create["data"]}
+
+
+@pytest.mark.parametrize("case", ["delete_relation", "delete_tag"])
+async def test_deleting_an_absent_relation_or_tag_is_applied_and_writes_nothing(db, device, case):
+    assert (await apply(db, device, mutation(case)))[0]["result"] == "applied"
+    assert await feed(db) == []
+
+
+async def test_deleting_a_tag_removes_the_relations_to_it_and_leaves_the_others(db, device):
+    await apply(db, device, create_item(ITEM), create_item(OTHER_ITEM), mutation("create_tag"))
+    tagged = relation(f"item:{OTHER_ITEM}", "tagged", f"tag:{TAG}")
+    from_tag = relation(f"tag:{TAG}", "about", f"item:{ITEM}")
+    about = relation(f"item:{ITEM}", "about", f"item:{OTHER_ITEM}")
+    await apply(db, device, tagged, from_tag, about)
+
+    assert (await apply(db, device, mutation("delete_tag")))[0]["result"] == "applied"
+
+    changes = await feed(db)
+    assert rows(changes, "tag")[TAG]["deleted"] is True
+    assert rows(changes, "relation")[tagged["id"]]["deleted"] is True
+    assert rows(changes, "relation")[from_tag["id"]]["deleted"] is True
+    assert rows(changes, "relation")[about["id"]]["deleted"] is False
+    assert (await apply(db, device, {**tagged, "mutation_id": new_id()}))[0].get("reason") == "link_target_missing"
+
+
+@pytest.mark.parametrize(
+    ("name", "entity", "identifier"),
+    [
+        ("delete", "attachment", ITEM),
+        ("restore", "attachment", ITEM),
+        ("restore", "tag", TAG),
+        ("restore", "relation", f"item:{ITEM}|about|item:{OTHER_ITEM}"),
+    ],
+)
+async def test_an_op_that_does_not_apply_to_the_entity_is_unsupported_entity(db, device, name, entity, identifier):
+    unsupported = op(name, entity, identifier)
+
+    assert await apply(db, device, unsupported) == [{"mutation_id": unsupported["mutation_id"], "result": "rejected", "reason": "unsupported_entity"}]
+
+
+async def test_a_deleted_item_is_still_a_target_for_a_commit_link_and_a_relation(db, device, blob_store, tmp_path):
+    await apply(db, device, create_item(ITEM), create_item(OTHER_ITEM), op("delete", "item", ITEM))
+    capture = await text_capture(blob_store, tmp_path)
+    capture["links"] = [{"type": "about", "to": f"item:{ITEM}"}]
+
+    linking = relation(f"item:{OTHER_ITEM}", "about", f"item:{ITEM}")
+
+    results = await apply(db, device, commit(capture), linking)
+
+    assert [result["result"] for result in results] == ["applied", "applied"]
+    relations = rows(await feed(db), "relation")
+    source = f"attachment:{capture['attachments'][0]['id']}"
+    link = f"{source}|about|item:{ITEM}"
+    assert relations[link]["data"] == {"id": link, "from": source, "type": "about", "to": f"item:{ITEM}"}
+    assert relations[linking["id"]]["data"] == {"id": linking["id"], **linking["data"]}
