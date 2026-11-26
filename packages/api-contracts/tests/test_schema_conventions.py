@@ -101,8 +101,15 @@ def test_every_entity_column_names_its_owner():
         assert unmarked == set(), schema_id
 
 
+OPEN_NAME = "^[a-z][a-z_]*$"
+
+
 def test_open_enums_name_their_known_values():
-    """x-open marks a string the Hub may send new values of; set_type lets a patch write only its examples."""
+    """x-open marks a string the Hub may send new values of; set_type lets a patch write only its examples.
+
+    Every open enum takes the same names, lowercase letters and underscores starting with a letter, so a
+    harness can decode all of them with one rule.
+    """
     def walk(node, at):
         if isinstance(node, dict):
             if node.get("x-open") is True:
@@ -115,7 +122,7 @@ def test_open_enums_name_their_known_values():
 
     for path in SCHEMAS.rglob("*.json"):
         for at, node in walk(read_strict(path), ""):
-            assert node.get("type") == "string" and "pattern" in node, f"{path.name}#{at}"
+            assert node.get("type") == "string" and node.get("pattern") == OPEN_NAME, f"{path.name}#{at}"
             assert node.get("examples") and all(isinstance(value, str) for value in node["examples"]), f"{path.name}#{at}"
 
 
