@@ -44,6 +44,9 @@ class OutcomeCode(enum.StrEnum):
     UNSAFE_INPUT = "unsafe_input"
 
 
+MAX_ATTEMPTS = 5
+"""Attempts a job gets before it fails: errors, and Hub restarts while it ran, count alike."""
+
 TRANSITIONS: Mapping[JobState, frozenset[JobState]] = {
     JobState.RUNNING: frozenset({JobState.PENDING, JobState.RETRY_WAIT}),
     JobState.RETRY_WAIT: frozenset({JobState.RUNNING}),
