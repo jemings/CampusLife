@@ -181,6 +181,7 @@ class FileOps:
 
     replace: Callable[[Path, Path], None] = os.replace
     unlink: Callable[[Path], None] = _unlink_if_present
+    rmdir: Callable[[Path], None] = Path.rmdir
     sleep: Callable[[float], None] = time.sleep
 
 
@@ -370,7 +371,7 @@ class BlobStore:
         if kept:
             return kept
         try:
-            directory.rmdir()
+            self._files.rmdir(directory)
         except OSError as error:
             if not is_sharing_violation(error):
                 raise
