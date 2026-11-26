@@ -99,3 +99,15 @@ CampusLife는 대학 생활 중 여러 앱·채팅방·웹사이트·문서·종
 - TXT, Markdown, HTML 및 참고 URL
 
 원본은 불변 보존하고 형식별 extractor로 텍스트·표·페이지·슬라이드·시트·시간 정보를 추출합니다. 여러 파일의 내용을 통합 분석하되, AI가 만든 주장과 과제/마감 일정은 원본 위치를 근거로 연결하고 사용자 확인 전 확정하지 않습니다. 상세 설계는 FILE-INGESTION.md를 따릅니다.
+
+## Device Experience
+
+CampusLife는 다음 세 가지 first-class client를 지원합니다.
+
+- **Galaxy Z Fold8 / Android:** 강의 녹음·사진·자료 수집, 이동 중 빠른 Capture, 일정 확인.
+- **iPad Pro 13 / iPadOS:** 강의 자료 열람, Apple Pencil 필기, PDF 주석, AI 노트와 원본 자료 비교, 복습.
+- **Windows 11 / Local Hub:** 원본 보관, 공통 API, AI 처리, 통합 검색과 백업.
+
+각 장치는 같은 사용자의 CampusLife 공간을 사용하지만 별도 Device ID와 credential을 가지며 offline cache/Outbox를 유지합니다. 특정 운영체제의 네이티브 저장소나 iCloud를 필수로 하지 않습니다. 공통 동기화 및 충돌 정책은 [Multi-device Architecture](MULTI-DEVICE-ARCHITECTURE.md)를 따릅니다.
+
+iPad는 단순히 Fold8 UI를 확대하지 않습니다. SwiftUI의 adaptive layout, PencilKit 필기, PDFKit 문서 열람, Split View 및 Stage Manager에 맞춘 Study Workspace를 제공합니다.
