@@ -222,3 +222,14 @@ def test_ls_in_a_read_only_database_directory_without_wal_files_fails_with_a_mes
     finally:
         directory.chmod(0o755)
     assert capsys.readouterr().err.startswith("campuslife-hub: ")
+
+
+def test_ls_refuses_a_root_inside_a_sync_folder_it_detects_itself(tmp_path, capsys, monkeypatch):
+    onedrive = tmp_path / "OneDrive"
+    root = onedrive / "CampusLife"
+    hub(root, "init")
+    capsys.readouterr()
+    monkeypatch.setenv("OneDrive", str(onedrive))
+
+    assert hub(root, "ls") == 1
+    assert "sync folder" in capsys.readouterr().err
