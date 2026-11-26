@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/item/fields/assignment.json",
+  "title": "assignment fields",
+  "description": "Work handed in for a course; the deadline itself is the Item's due_at. Open.",
+  "type": "object",
+  "required": ["course_id"],
+  "properties": {
+    "course_id": { "description": "id of the course Item.", "$ref": "../../common/uuid.json" },
+    "due_text": { "description": "The deadline as originally worded, such as 23:59까지 (D11).", "type": "string", "minLength": 1 },
+    "submission": { "description": "How to hand it in, as worded by the course.", "type": "string", "minLength": 1 }
+  }
+}

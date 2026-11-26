@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/relation/relation.json",
+  "title": "Relation",
+  "description": "A typed link between two entities (D2, E14). Adding and removing are idempotent and never conflict (D18). Tagging is a tagged Relation from an item to a tag. Open: clients ignore members they do not know.",
+  "type": "object",
+  "required": ["id", "from", "type", "to"],
+  "properties": {
+    "id": { "description": "from|type|to (rule relation_id).", "type": "string", "pattern": "^[^|]+\\|[a-z_]+\\|[^|]+$", "x-owner": "client" },
+    "from": { "$ref": "../common/entity_ref.json", "x-owner": "client" },
+    "type": { "enum": ["about", "supersedes", "rendition_of", "evidence", "tagged", "conflicts_with"], "x-owner": "client" },
+    "to": { "$ref": "../common/entity_ref.json", "x-owner": "client" }
+  },
+  "if": { "properties": { "type": { "const": "tagged" } }, "required": ["type"] },
+  "then": {
+    "properties": {
+      "from": { "pattern": "^item:" },
+      "to": { "pattern": "^tag:" }
+    }
+  },
+  "x-relation-id": true,
+  "x-relation-not-self": true
+}

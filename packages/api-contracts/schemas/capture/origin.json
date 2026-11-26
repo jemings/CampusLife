@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/capture/origin.json",
+  "title": "Capture origin",
+  "description": "How a Capture came in and, for distributed material, who handed it out (D2: replaces Source and CourseMaterialSet). Written once by the capturing client. Open; capture.commit closes it.",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": { "enum": ["record", "camera", "share", "import", "manual"] },
+    "uri": { "description": "Where the shared item came from, as the sharing app reported it.", "type": "string", "minLength": 1 },
+    "app": { "description": "Sharing app identifier, such as an Android package name.", "type": "string", "minLength": 1 },
+    "publisher": { "type": "string", "minLength": 1 },
+    "distributed_by": { "description": "Who distributed the material: instructor, TA, school.", "type": "string", "minLength": 1 },
+    "distributed_at": { "$ref": "../common/instant.json" }
+  }
+}

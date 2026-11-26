@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/tag/tag.json",
+  "title": "Tag",
+  "description": "A user label, attached to items through tagged Relations. Open: clients ignore members they do not know.",
+  "type": "object",
+  "required": ["id", "name", "color"],
+  "properties": {
+    "id": { "$ref": "../common/uuid.json", "x-owner": "client" },
+    "name": { "type": "string", "minLength": 1, "x-owner": "user" },
+    "color": { "description": "Lowercase #rrggbb.", "type": "string", "pattern": "^#[0-9a-f]{6}$", "x-owner": "user" }
+  }
+}

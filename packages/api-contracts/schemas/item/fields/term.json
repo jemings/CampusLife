@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/item/fields/term.json",
+  "title": "term fields",
+  "description": "An academic term. Open.",
+  "type": "object",
+  "required": ["year", "semester", "starts_on", "ends_on"],
+  "properties": {
+    "year": { "$ref": "../../common/int64.json#/$defs/non_negative", "minimum": 1, "maximum": 9999 },
+    "semester": { "description": "first and second are the regular terms; summer and winter the seasonal ones.", "enum": ["first", "summer", "second", "winter"] },
+    "starts_on": { "$ref": "../../common/local_date.json" },
+    "ends_on": { "$ref": "../../common/local_date.json" }
+  }
+}
