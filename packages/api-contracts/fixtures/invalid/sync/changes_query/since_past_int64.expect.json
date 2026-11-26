@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/since",
+    "rule": "int64_text"
+  }
+]

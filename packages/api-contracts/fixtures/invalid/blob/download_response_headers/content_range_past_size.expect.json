@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/Content-Range",
+    "rule": "byte_range"
+  }
+]

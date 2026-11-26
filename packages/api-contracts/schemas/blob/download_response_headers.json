@@ -8,6 +8,6 @@
   "properties": {
     "ETag": { "description": "The Blob's sha256 as a strong entity tag; a Blob never changes, so the tag never does either.", "type": "string", "pattern": "^\"[0-9a-f]{64}\"$" },
     "Accept-Ranges": { "const": "bytes" },
-    "Content-Range": { "description": "On 206: the range served and the Blob's size.", "type": "string", "pattern": "^bytes [0-9]{1,19}-[0-9]{1,19}/[0-9]{1,19}$" }
+    "Content-Range": { "description": "On 206: the range served and the Blob's size.", "type": "string", "pattern": "^bytes [0-9]{1,19}-[0-9]{1,19}/[0-9]{1,19}$", "x-int64-text": true, "x-byte-range": true }
   }
 }

@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/Content-Range",
+    "rule": "int64_text"
+  }
+]

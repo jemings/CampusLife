@@ -18,6 +18,8 @@ class Rule(enum.StrEnum):
     BATCH_ORDER = "batch_order"
     FEED_ORDER = "feed_order"
     CHUNK_INDEX = "chunk_index"
+    INT64_TEXT = "int64_text"
+    BYTE_RANGE = "byte_range"
     ORIGINAL_ID = "original_id"
     SET_TYPE = "set_type"
     TZ_EXISTS = "tz_exists"

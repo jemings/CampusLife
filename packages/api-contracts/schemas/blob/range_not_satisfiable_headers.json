@@ -6,6 +6,6 @@
   "type": "object",
   "required": ["Content-Range"],
   "properties": {
-    "Content-Range": { "description": "The Blob's size with no range, so the client can ask again inside it (RFC 9110).", "type": "string", "pattern": "^bytes \\*/[0-9]{1,19}$" }
+    "Content-Range": { "description": "The Blob's size with no range, so the client can ask again inside it (RFC 9110).", "type": "string", "pattern": "^bytes \\*/[0-9]{1,19}$", "x-int64-text": true }
   }
 }

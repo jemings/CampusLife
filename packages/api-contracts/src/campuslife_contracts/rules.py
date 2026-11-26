@@ -7,6 +7,7 @@ defect yields one violation.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import re
 import unicodedata
 from datetime import date
 from functools import cache
@@ -186,6 +187,34 @@ def _feed_order(validator, enabled, instance, schema):
         yield ValidationError("next_since is at least the highest rev of the page", path=["next_since"])
 
 
+INT64_MAX = 2**63 - 1
+
+
+def _numbers(text: str) -> list[int]:
+    return [int(digits) for digits in re.findall(r"[0-9]+", text)]
+
+
+def _int64_text(validator, enabled, instance, schema):
+    if isinstance(instance, str) and _fits_own_pattern(instance, schema) and max(_numbers(instance), default=0) > INT64_MAX:
+        yield ValidationError(f"{instance!r} holds a number past int64")
+
+
+def _byte_range(validator, enabled, instance, schema):
+    if not (isinstance(instance, str) and _fits_own_pattern(instance, schema)):
+        return
+    # Numbers past int64 are rule int64_text's to report.
+    if max(_numbers(instance), default=0) > INT64_MAX:
+        return
+    found = re.search(r"([0-9]+)-([0-9]+)(?:/([0-9]+))?$", instance)
+    if found is None:
+        return
+    first, last = int(found[1]), int(found[2])
+    if first > last:
+        yield ValidationError(f"{instance!r} ends before it starts")
+    elif found[3] is not None and last >= int(found[3]):
+        yield ValidationError(f"{instance!r} reaches past the size")
+
+
 def _chunk_index(validator, enabled, instance, schema):
     if not isinstance(instance, dict) or not all(name in instance for name in ("size", "chunk_size", "received")):
         return
@@ -222,6 +251,8 @@ RULE_KEYWORDS = {
     "x-original-id": RuleKeyword(Rule.ORIGINAL_ID, _original_id),
     "x-feed-order": RuleKeyword(Rule.FEED_ORDER, _feed_order),
     "x-chunk-index": RuleKeyword(Rule.CHUNK_INDEX, _chunk_index),
+    "x-int64-text": RuleKeyword(Rule.INT64_TEXT, _int64_text),
+    "x-byte-range": RuleKeyword(Rule.BYTE_RANGE, _byte_range),
     "x-set-owner": RuleKeyword(Rule.OWNER, set_owner),
     "x-set-type": RuleKeyword(Rule.SET_TYPE, set_type),
 }

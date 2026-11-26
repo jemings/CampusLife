@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/Range",
+    "rule": "byte_range"
+  }
+]

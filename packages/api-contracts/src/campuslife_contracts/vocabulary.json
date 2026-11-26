@@ -76,6 +76,14 @@
       "description": "Rule chunk_index: in an upload session, every received index is below the chunk count, ceil(size / chunk_size) (E19).",
       "const": true
     },
+    "x-int64-text": {
+      "description": "Rule int64_text: every run of decimal digits in the string is at most 2^63-1, so a query or header value fits the int64 it stands for.",
+      "const": true
+    },
+    "x-byte-range": {
+      "description": "Rule byte_range: in a first-last byte range the first is <= the last, and when a size follows (/size) the last is below it (RFC 9110).",
+      "const": true
+    },
     "x-relation-not-self": {
       "description": "Rule relation_self: from and to are different entities.",
       "const": true
@@ -118,7 +126,7 @@
   },
   "propertyNames": {
     "if": { "pattern": "^x-" },
-    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self", "x-batch-order", "x-original-id", "x-feed-order", "x-chunk-index", "x-open", "x-set-targets", "x-set-owner", "x-set-type"] }
+    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self", "x-batch-order", "x-original-id", "x-feed-order", "x-chunk-index", "x-int64-text", "x-byte-range", "x-open", "x-set-targets", "x-set-owner", "x-set-type"] }
   },
   "x-discriminated-union": true
 }
