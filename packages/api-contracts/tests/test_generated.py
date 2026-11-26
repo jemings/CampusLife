@@ -251,6 +251,7 @@ REQUIRED = {
     "blob/stored#": {"sha256", "size"},
     "blob/download_response_headers#": {"ETag", "Accept-Ranges"},
     "blob/range_not_satisfiable_headers#": {"Content-Range"},
+    "sync/changes_query#": {"since"},
     "mutation/batch_request#": {"mutations"},
     "mutation/batch_response#": {"results"},
     "mutation/mutation#": {"mutation_id", "op"},
