@@ -230,7 +230,11 @@ class JobRunner:
 
     async def run_forever(self, stop: asyncio.Event, *, idle_s: float = 5.0) -> None:
         """Run jobs as they come and fall due until stop is set. A job running then is stopped, within stop_grace,
-        and left running for the recovery when the Hub opens again (E12)."""
+        and left running; the next run_forever, or the Hub opening again, recovers it (E12)."""
+        now = self._clock()
+        recovered = await self.context.db.write(lambda tx: jobs.recover_after_restart(tx, now=now))
+        if recovered:
+            log.warning("%d jobs were running when the runner last stopped; they wait again or failed", recovered)
         serving = asyncio.create_task(self._serve(idle_s))
         stopping = asyncio.create_task(stop.wait())
         try:
