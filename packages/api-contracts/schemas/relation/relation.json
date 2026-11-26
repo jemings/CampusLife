@@ -6,12 +6,13 @@
   "type": "object",
   "required": ["id", "from", "type", "to"],
   "properties": {
-    "id": { "description": "from|type|to (rule relation_id).", "type": "string", "pattern": "^[^|]+\\|[a-z_]+\\|[^|]+$", "x-owner": "client" },
+    "id": { "description": "from|type|to (rule relation_id).", "type": "string", "pattern": "^[^|]+\\|[a-z][a-z_]*\\|[^|]+$", "x-owner": "client" },
     "from": { "$ref": "../common/entity_ref.json", "x-owner": "client" },
     "type": {
       "description": "Known types are the examples; a newer Hub may send others, which a client keeps but does not interpret. Creating a Relation takes only the known ones.",
       "type": "string", "pattern": "^[a-z][a-z_]*$",
       "examples": ["about", "supersedes", "rendition_of", "evidence", "tagged", "conflicts_with"],
+      "x-open": true,
       "x-owner": "client"
     },
     "to": { "$ref": "../common/entity_ref.json", "x-owner": "client" }
