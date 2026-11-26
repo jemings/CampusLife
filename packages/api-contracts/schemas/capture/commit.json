@@ -37,7 +37,7 @@
   "$defs": {
     "closed_origin": {
       "$ref": "origin.json",
-      "properties": { "type": true, "uri": true, "app": true, "publisher": true, "distributed_by": true, "distributed_at": true },
+      "properties": { "type": { "enum": ["record", "camera", "share", "import", "manual"] }, "uri": true, "app": true, "publisher": true, "distributed_by": true, "distributed_at": true },
       "additionalProperties": false
     },
     "closed_timeline": {

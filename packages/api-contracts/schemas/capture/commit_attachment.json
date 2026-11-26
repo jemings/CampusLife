@@ -8,7 +8,7 @@
   "properties": {
     "id": { "$ref": "attachment.json#/properties/id" },
     "blob_sha256": { "$ref": "attachment.json#/properties/blob_sha256" },
-    "role": { "$ref": "attachment.json#/properties/role" },
+    "role": { "enum": ["audio_segment", "photo", "file", "web_snapshot", "text"] },
     "seq": { "$ref": "attachment.json#/properties/seq" },
     "original_filename": { "$ref": "attachment.json#/properties/original_filename" },
     "original_filename_raw": { "$ref": "attachment.json#/properties/original_filename_raw" },

@@ -6,7 +6,11 @@
   "type": "object",
   "required": ["type"],
   "properties": {
-    "type": { "enum": ["record", "camera", "share", "import", "manual"] },
+    "type": {
+      "description": "Known types are the examples; a newer Hub may send others. capture.commit takes only the known ones.",
+      "type": "string", "pattern": "^[a-z][a-z_]*$",
+      "examples": ["record", "camera", "share", "import", "manual"]
+    },
     "uri": { "description": "Where the shared item came from, as the sharing app reported it.", "type": "string", "minLength": 1 },
     "app": { "description": "Sharing app identifier, such as an Android package name.", "type": "string", "minLength": 1 },
     "publisher": { "type": "string", "minLength": 1 },
