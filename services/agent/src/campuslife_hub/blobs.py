@@ -120,8 +120,9 @@ class BlobStore:
     def discard_staging_leftovers(self) -> list[KeptLeftover]:
         """Remove the staging files of dead runs; only the hub.lock holder calls this, so no live run owns one.
 
-        A file another process still holds open, or an entry that is not a regular file, stays for the
-        next start and is returned. Any other failure to remove a leftover raises.
+        Each leftover is tried once, so startup never waits on a lock. A file another process still holds
+        open, or an entry that is not a regular file, stays for the next start and is returned. Any other
+        failure to remove a leftover raises.
         """
         kept = []
         for leftover in sorted(self._staging_dir.glob(f"*{STAGING_SUFFIX}")):
@@ -129,11 +130,11 @@ class BlobStore:
                 kept.append(KeptLeftover(leftover, "not a regular file"))
                 continue
             try:
-                self._retry_while_locked(lambda leftover=leftover: self._files.unlink(leftover))
+                self._files.unlink(leftover)
             except OSError as error:
                 if not is_sharing_violation(error):
                     raise
-                kept.append(KeptLeftover(leftover, f"still in use: {error}"))
+                kept.append(KeptLeftover(leftover, f"still in use, left for the next start: {error}"))
         return kept
 
     def _move_into_place(self, staging: Path, final: Path) -> None:
