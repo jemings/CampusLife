@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/sync/hub.json",
+  "title": "Hub",
+  "description": "GET /v1/hub (E18). A client stops syncing when hub_id differs from the one it paired with, starts over from since=0 when epoch changes (D3), and refuses to talk to a Hub whose min_contract_version is above its own contract version. Open.",
+  "type": "object",
+  "required": ["hub_id", "epoch", "contract_version", "min_contract_version"],
+  "properties": {
+    "hub_id": { "description": "Fixed for the life of the Hub's data.", "$ref": "../common/uuid.json" },
+    "epoch": { "description": "A new UUIDv4 on every restore or migration, so restoring the same backup twice still gives different epochs.", "$ref": "../common/uuid.json" },
+    "contract_version": { "description": "The contract version the Hub speaks.", "$ref": "#/$defs/contract_version" },
+    "min_contract_version": { "description": "The oldest client contract version the Hub still accepts.", "$ref": "#/$defs/contract_version" }
+  },
+  "x-range-order": [{ "start": "min_contract_version", "end": "contract_version" }],
+  "$defs": {
+    "contract_version": { "$ref": "../common/int64.json", "minimum": 1 }
+  }
+}

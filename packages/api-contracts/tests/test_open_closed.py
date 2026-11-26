@@ -21,6 +21,7 @@ OPEN = {
     "capture/capture", "capture/attachment", "capture/origin", "capture/timeline",
     "item/item", "relation/relation", "tag/tag", "common/error",
     "mutation/result", "mutation/batch_response",
+    "sync/changes_page", "sync/hub", "sync/request_headers", "sync/response_headers",
     *(schema_id for schema_id in CONTRACT.schema_ids if schema_id.startswith("item/fields/")),
 }
 

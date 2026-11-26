@@ -1,0 +1,20 @@
+{
+  "hub_id": "c56a4180-65aa-42ec-a945-5fd21dec0538",
+  "epoch": "e4eaaaf2-d142-41ff-9e1f-2b3c4d5e6f70",
+  "changes": [
+    {
+      "entity": "capture",
+      "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+      "rev": 18,
+      "deleted": false,
+      "data": {
+        "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+        "created_at": "2026-03-02T00:30:00.000Z",
+        "user_note": "4주차 자료",
+        "device_id": "16fd2706-8baf-433b-82eb-8c7fada847da"
+      }
+    }
+  ],
+  "next_since": 18,
+  "has_more": false
+}

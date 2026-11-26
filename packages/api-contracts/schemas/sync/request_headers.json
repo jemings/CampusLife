@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/sync/request_headers.json",
+  "title": "Request headers",
+  "description": "Headers a client sends on every request (E18). Open: other headers pass; Authorization is described with the OpenAPI document.",
+  "type": "object",
+  "required": ["CampusLife-Contract"],
+  "properties": {
+    "CampusLife-Contract": {
+      "description": "The client's contract version as a decimal integer, the same number space as Hub contract_version.",
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,17}$"
+    }
+  }
+}

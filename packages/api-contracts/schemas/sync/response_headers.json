@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/sync/response_headers.json",
+  "title": "Response headers",
+  "description": "Headers on every Hub response (E18), named as sent; HTTP header names are case-insensitive, so match them that way. Open: other headers pass.",
+  "type": "object",
+  "required": ["CampusLife-Hub-Id", "CampusLife-Epoch"],
+  "properties": {
+    "CampusLife-Hub-Id": { "$ref": "hub.json#/properties/hub_id" },
+    "CampusLife-Epoch": { "$ref": "hub.json#/properties/epoch" }
+  }
+}

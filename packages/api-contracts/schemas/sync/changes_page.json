@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/sync/changes_page.json",
+  "title": "Changes page",
+  "description": "GET /v1/changes?since=N (D3, E18): the current state of every row whose rev is above N. The client overwrites its rows, stores next_since, and asks again while has_more. Open: clients ignore members, and rows of entities, they do not know.",
+  "type": "object",
+  "required": ["hub_id", "epoch", "changes", "next_since", "has_more"],
+  "x-feed-order": true,
+  "properties": {
+    "hub_id": { "$ref": "hub.json#/properties/hub_id" },
+    "epoch": { "$ref": "hub.json#/properties/epoch" },
+    "changes": { "description": "In rising rev (rule feed_order); a row's id is its data's id.", "type": "array", "items": { "$ref": "#/$defs/change" } },
+    "next_since": { "description": "The since for the next request: the highest rev in this page, or the request's since when the page is empty.", "$ref": "../common/int64.json#/$defs/non_negative" },
+    "has_more": { "type": "boolean" }
+  },
+  "$defs": {
+    "change": {
+      "type": "object",
+      "required": ["entity", "id", "rev", "deleted"],
+      "properties": {
+        "entity": {
+          "description": "Known entities are the examples; a client skips rows of entities it does not know.",
+          "type": "string",
+          "pattern": "^[a-z][a-z_]*$",
+          "examples": ["capture", "attachment", "item", "relation", "tag"]
+        },
+        "id": { "type": "string", "minLength": 1 },
+        "rev": { "$ref": "../common/int64.json#/$defs/non_negative" },
+        "deleted": {
+          "description": "true for a tombstone: the row is gone and data is absent. Tombstones are kept forever, so a cursor never expires (D3). A soft-deleted Item is not a tombstone; it arrives with deleted false and data.deleted_at set.",
+          "type": "boolean"
+        },
+        "data": { "description": "The row as the entity's schema describes it.", "type": "object" }
+      },
+      "allOf": [
+        { "if": { "properties": { "deleted": { "const": true } }, "required": ["deleted"] }, "then": { "properties": { "data": { "not": {} } } } },
+        { "if": { "properties": { "deleted": { "const": false } }, "required": ["deleted"] }, "then": { "required": ["data"] } },
+        { "if": { "$ref": "#/$defs/entity_is/capture" }, "then": { "properties": { "data": { "$ref": "../capture/capture.json" } } } },
+        { "if": { "$ref": "#/$defs/entity_is/attachment" }, "then": { "properties": { "data": { "$ref": "../capture/attachment.json" } } } },
+        { "if": { "$ref": "#/$defs/entity_is/item" }, "then": { "properties": { "data": { "$ref": "../item/item.json" } } } },
+        { "if": { "$ref": "#/$defs/entity_is/relation" }, "then": { "properties": { "data": { "$ref": "../relation/relation.json" } } } },
+        { "if": { "$ref": "#/$defs/entity_is/tag" }, "then": { "properties": { "data": { "$ref": "../tag/tag.json" } } } }
+      ]
+    },
+    "entity_is": {
+      "capture": { "properties": { "entity": { "const": "capture" } }, "required": ["entity"] },
+      "attachment": { "properties": { "entity": { "const": "attachment" } }, "required": ["entity"] },
+      "item": { "properties": { "entity": { "const": "item" } }, "required": ["entity"] },
+      "relation": { "properties": { "entity": { "const": "relation" } }, "required": ["entity"] },
+      "tag": { "properties": { "entity": { "const": "tag" } }, "required": ["entity"] }
+    }
+  }
+}

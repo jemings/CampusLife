@@ -1,0 +1,29 @@
+{
+  "hub_id": "c56a4180-65aa-42ec-a945-5fd21dec0538",
+  "epoch": "e4eaaaf2-d142-41ff-9e1f-2b3c4d5e6f70",
+  "changes": [
+    {
+      "entity": "item",
+      "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+      "rev": 21,
+      "deleted": false,
+      "data": {
+        "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+        "kind": "task",
+        "schema_version": 1,
+        "title": "자료구조",
+        "fields": {
+          "progress": "planned",
+          "reminders": [
+            "2026-03-08T12:00:00.000Z",
+            "2026-03-09T09:00:00.000Z"
+          ]
+        },
+        "rev": 21,
+        "pinned": true
+      }
+    }
+  ],
+  "next_since": 21,
+  "has_more": false
+}

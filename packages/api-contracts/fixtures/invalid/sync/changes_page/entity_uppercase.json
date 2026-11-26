@@ -1,0 +1,19 @@
+{
+  "hub_id": "c56a4180-65aa-42ec-a945-5fd21dec0538",
+  "epoch": "e4eaaaf2-d142-41ff-9e1f-2b3c4d5e6f70",
+  "changes": [
+    {
+      "entity": "Tag",
+      "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+      "rev": 23,
+      "deleted": false,
+      "data": {
+        "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+        "name": "시험",
+        "color": "#ff8800"
+      }
+    }
+  ],
+  "next_since": 23,
+  "has_more": false
+}
