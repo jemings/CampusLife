@@ -1,0 +1,30 @@
+name: contracts
+
+on:
+  push:
+    paths:
+      - "packages/api-contracts/**"
+      - ".github/workflows/contracts.yml"
+  pull_request:
+    paths:
+      - "packages/api-contracts/**"
+      - ".github/workflows/contracts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/api-contracts
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --frozen
+      - run: uv run pytest
+      - name: Check every schema against the JSON Schema 2020-12 metaschema
+        run: |
+          shopt -s globstar
+          uv run check-jsonschema --check-metaschema schemas/**/*.json
