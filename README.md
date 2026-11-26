@@ -45,8 +45,10 @@ CampusLife는 강의 녹음·정리만을 위한 앱이 아닙니다. 수업, �
 
     CampusLife/
     ├── apps/
-    │   ├── android/          # Kotlin + Jetpack Compose
-    │   └── windows/          # Windows companion UI / local API
+    │   ├── android/          # Kotlin + Jetpack Compose (Fold8)
+    │   ├── ipados/           # SwiftUI + PencilKit + PDFKit (iPad Pro)
+    │   ├── windows/          # Windows companion UI / local API
+    │   └── prototype/        # Responsive web design prototype
     ├── packages/
     │   ├── domain/           # 공통 도메인 계약
     │   └── api-contracts/    # 동기화 및 local-agent 계약
