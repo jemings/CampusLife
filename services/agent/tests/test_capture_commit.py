@@ -9,6 +9,7 @@ from campuslife_hub import changes, mutations, store
 from campuslife_hub.blobs import BlobStore
 from campuslife_hub.devices import ensure_hub_device
 from campuslife_hub.mutations import NoMutationId, Reason, UnsupportedOp, reason_for
+from campuslife_hub.outcomes import Applied
 from campuslife_hub.store import Entity, EntityRef
 
 ITEM_A = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
@@ -322,3 +323,13 @@ async def test_two_attachments_of_one_commit_with_the_same_id_are_rejected(db, d
     result = (await apply(db, device, commit(capture)))[0]
     assert (result["result"], result.get("reason")) == ("rejected", "schema")
     assert await feed(db) == []
+
+
+async def test_an_op_is_unapplied_only_while_no_handler_is_registered_for_it(db, device, monkeypatch):
+    create = contract_fixture("valid", "mutation/mutation", "create_course")
+    with pytest.raises(UnsupportedOp):
+        await mutations.apply(db, [create], device)
+
+    monkeypatch.setitem(mutations.HANDLERS, "create", lambda tx, mutation, device: Applied())
+
+    assert await apply(db, device, create) == [{"mutation_id": create["mutation_id"], "result": "applied"}]
