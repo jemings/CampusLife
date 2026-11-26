@@ -51,9 +51,18 @@ def test_closed_input_refuses_an_unknown_member(schema_id):
     assert CONTRACT.validate(schema_id, instance) == [SchemaViolation("/zz_unknown", "additionalProperties")]
 
 
-@pytest.mark.parametrize("schema_id", sorted(OPEN))
-def test_open_shape_ignores_an_unknown_member(schema_id):
-    assert CONTRACT.validate(schema_id, {**first_valid(schema_id), "zz_unknown": 1}) == []
+EVERY_OPEN_VALID = [
+    (c.schema_id, c.name, read_strict(c.path))
+    for c in CASES if c.kind is FixtureKind.VALID and c.schema_id in OPEN and isinstance(read_strict(c.path), dict)
+]
+
+
+@pytest.mark.parametrize(
+    ("schema_id", "instance"), [(schema_id, instance) for schema_id, _, instance in EVERY_OPEN_VALID],
+    ids=[f"{schema_id}/{name}" for schema_id, name, _ in EVERY_OPEN_VALID],
+)
+def test_open_shape_ignores_an_unknown_member(schema_id, instance):
+    assert CONTRACT.validate(schema_id, {**instance, "zz_unknown": 1}) == []
 
 
 def schema(schema_id):
