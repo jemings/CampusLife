@@ -5,11 +5,14 @@ import sqlite3
 import stat
 import sys
 import threading
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from campuslife_hub import mutations
 from campuslife_hub.blobs import BlobStore, FileOps, KeptLeftover, StoredBlob, has_blob, is_sharing_violation, with_lock_retry
+from campuslife_hub.devices import ensure_hub_device
 
 ABC_SHA256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -459,27 +462,27 @@ async def test_a_put_whose_file_a_collection_took_after_it_was_found_stores_the_
     assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
 
 
-class CollectsBeforeTheFirstWrite:
-    """The database, except that a collection runs just before the first write."""
+class RunsBeforeTheFirstWrite:
+    """The database, except that `before` runs just before the first write."""
 
-    def __init__(self, db, collect):
+    def __init__(self, db, before):
         self._db = db
-        self._collect = collect
+        self._before = before
 
     async def read(self, fn):
         return await self._db.read(fn)
 
     async def write(self, fn):
-        if self._collect is not None:
-            collect, self._collect = self._collect, None
-            await collect()
+        if self._before is not None:
+            before, self._before = self._before, None
+            await before()
         return await self._db.write(fn)
 
 
 async def test_a_put_whose_file_a_collection_took_before_its_row_was_written_stores_the_bytes_again(tmp_path, db):
     collector = store_in(tmp_path, db)
     await collector.put_file(source(tmp_path, "a.txt", b"abc"))
-    racing = store_in(tmp_path, CollectsBeforeTheFirstWrite(db, lambda: collector.collect_garbage(a_week_and_a_day_on())))
+    racing = store_in(tmp_path, RunsBeforeTheFirstWrite(db, lambda: collector.collect_garbage(a_week_and_a_day_on())))
 
     assert await racing.put_file(source(tmp_path, "again.txt", b"abc")) == StoredBlob(ABC_SHA256, 3)
 
@@ -501,3 +504,33 @@ async def test_a_blob_another_handle_holds_open_is_kept_and_collected_once_it_cl
     assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
     assert await blob_store.collect_garbage(a_week_and_a_day_on()) == []
     assert not final.exists()
+
+
+async def test_a_blob_put_again_after_the_collection_listed_it_is_kept(tmp_path, db):
+    other = store_in(tmp_path, db)
+    await other.put_file(source(tmp_path, "a.txt", b"abc"))
+    await age_blobs(db)
+    collector = store_in(tmp_path, RunsBeforeTheFirstWrite(db, lambda: other.put_file(source(tmp_path, "again.txt", b"abc"))))
+
+    assert await collector.collect_garbage(datetime.now(UTC)) == []
+
+    assert collector.path_of(ABC_SHA256).read_bytes() == b"abc"
+    assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+
+
+async def test_a_blob_committed_after_the_collection_listed_it_is_kept(tmp_path, db):
+    await store_in(tmp_path, db).put_file(source(tmp_path, "a.txt", b"abc"))
+    device = await db.write(ensure_hub_device)
+    attachment = {"id": str(uuid.uuid4()), "blob_sha256": ABC_SHA256, "role": "file", "original_filename": "a.txt", "cloud_policy": "local_only"}
+    capture = {"id": str(uuid.uuid4()), "created_at": "2026-03-02T00:30:00.000Z", "origin": {"type": "import"}, "links": [], "attachments": [attachment]}
+
+    async def commit():
+        [result] = await mutations.apply(db, [{"mutation_id": str(uuid.uuid4()), "op": "capture.commit", "capture": capture}], device)
+        assert result["result"] == "applied"
+
+    collector = store_in(tmp_path, RunsBeforeTheFirstWrite(db, commit))
+
+    assert await collector.collect_garbage(a_week_and_a_day_on()) == []
+
+    assert collector.path_of(ABC_SHA256).read_bytes() == b"abc"
+    assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))

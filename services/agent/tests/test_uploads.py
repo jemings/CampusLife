@@ -605,3 +605,48 @@ async def test_a_chunk_another_handle_holds_open_is_kept_and_swept_once_it_close
     assert kept.path == directory / "0"
     assert await store.expire_sessions(datetime.now(UTC)) == []
     assert session_dirs(tmp_path) == []
+
+
+async def test_files_in_a_session_directory_that_are_not_its_chunks_are_not_received(tmp_path, store, phone):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await store.put_chunk(phone, sha(DATA), 1, chunks(DATA)[1])
+    [directory] = (tmp_path / "uploads").iterdir()
+    for name in ["desktop.ini", "01", "99"]:
+        (directory / name).write_bytes(b"x")
+
+    assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == (1,)
+
+
+async def test_a_session_directory_still_in_use_is_kept_for_the_next_sweep(tmp_path, db, store, phone):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await store.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])
+    [directory] = (tmp_path / "uploads").iterdir()
+    held = {True}
+
+    def rmdir(path):
+        if held:
+            raise WindowsError_(32)
+        path.rmdir()
+
+    sweeping = uploads_in(tmp_path, db, FileOps(rmdir=rmdir, sleep=must_not_wait))
+
+    [kept] = await sweeping.expire_sessions(a_week_and_a_day_on())
+
+    assert kept.path == directory
+    assert "in use" in kept.reason
+    held.clear()
+    assert await sweeping.expire_sessions(datetime.now(UTC)) == []
+    assert session_dirs(tmp_path) == []
+
+
+async def test_a_session_directory_the_os_refuses_to_remove_for_another_reason_stops_the_sweep(tmp_path, db, store, phone):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await store.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])
+
+    def rmdir(path):
+        raise PermissionError(errno.EACCES, "denied", str(path))
+
+    sweeping = uploads_in(tmp_path, db, FileOps(rmdir=rmdir))
+
+    with pytest.raises(PermissionError):
+        await sweeping.expire_sessions(a_week_and_a_day_on())
