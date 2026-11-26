@@ -283,3 +283,75 @@ AI는 출처가 다른 내용을 하나로 섞지 않고 각 주장에 근거를
 - 암호화/DRM/비밀번호 보호 파일은 우회하지 않고 사용자에게 상태를 알립니다.
 - 파일 이름은 안전하게 정규화하고 저장 경로 탈출을 방지합니다.
 - AI API 전송은 attachment별 cloud_processing_policy가 허용할 때만 수행합니다.
+
+
+## 9. Multi-device Client Architecture
+
+기본 데이터 허브는 Windows 노트북 하나로 유지하되 클라이언트는 Android와 iPadOS를 정식 지원합니다.
+
+| Client | 주요 책임 | 로컬 저장 |
+|---|---|---|
+| Android / Fold8 | 시간표, 녹음, 사진, Share Intent, offline Outbox | Room + app-private files |
+| iPadOS / iPad Pro | 자료 열람, PDF 주석, Apple Pencil 필기, AI 노트 검토, Share Extension | SwiftData 또는 SQLite 계열 + app sandbox |
+| Windows | API, 파일 원본, SQLite, AI jobs, 검색 | NTFS + SQLite |
+
+클라이언트별 UI와 플랫폼 API는 네이티브로 구현하되 Domain ID, API contract, sync semantics, provenance schema는 공유합니다. 플랫폼 간 코드 강제 공유보다 OpenAPI/JSON Schema 등 버전이 명확한 계약 공유를 우선합니다.
+
+### 9.1 Common HTTPS Sync API
+
+제품용 동기화는 FolderSync/SFTP에 의존하지 않고 Windows Local Agent가 제공하는 공통 HTTPS API로 통합합니다.
+
+- Android와 iPadOS가 같은 API resource 및 sync protocol 사용
+- Tailscale MagicDNS 또는 장치 주소를 통해 노트북 서비스에 접속
+- 노트북은 필요한 인터페이스에서만 API를 제공하고 Windows 방화벽은 tailnet 범위로 제한
+- 각 앱은 device credential로 요청을 인증
+- 원본 파일은 upload session → temporary upload → checksum verification → atomic finalize → ACK 순으로 수신
+- 작은 변경은 versioned mutation/event API로 동기화
+- 대용량 파일은 background/resumable upload와 chunk hash 사용
+- client별 sync cursor로 마지막 반영 이벤트 이후 변경분만 수신
+- 노트북이 오프라인이면 각 client Outbox에 대기하고 재연결 후 재시도
+
+Tailscale은 연결성만 제공하며 HTTP API, 인증, 보관, retry queue는 CampusLife가 구현합니다. 초기 SFTP는 연결 PoC로 유지할 수 있으나 정식 앱의 단일 동기화 계약으로 사용하지 않습니다.
+
+### 9.2 iPadOS Client
+
+권장 기술:
+- SwiftUI: adaptive navigation, multi-column workspace, scene/window support
+- PencilKit: Apple Pencil drawing capture and serialization
+- PDFKit: PDF viewing, page navigation, text selection and annotation presentation
+- Share Extension / fileImporter: Files, Safari 및 다른 앱의 문서 수집
+- URLSession background configuration: 업로드·다운로드 작업의 시스템 위임
+- Local persistence: offline metadata, annotation edits, pending mutations
+
+주요 기능:
+- 강의별 CourseMaterialSet 및 모든 지원 문서 열람
+- PDF 페이지 위 Pencil 필기/하이라이트
+- AI 노트와 원본 PDF/PPT를 나란히 비교
+- 외부 앱에서 파일/URL을 CampusLife Inbox로 공유
+- 오프라인에서도 이미 동기화된 자료 열람 및 주석 작성
+- 백그라운드 전송 상태 및 재인증/재시도 UX
+
+백그라운드 전송은 OS가 실행 시점을 관리하며 보장된 실시간 처리가 아닙니다. 앱 강제 종료, 인증 만료, 네트워크 단절, 노트북 오프라인을 고려해 durable task record와 재시도 흐름을 둡니다. 앱이 다시 실행되면 URLSession task와 로컬 sync job 상태를 재조정합니다.
+
+### 9.3 Annotation Data Flow
+
+PencilKit drawing은 원본 PDF에 직접 덮어쓰지 않습니다.
+
+- 원본 PDF/문서는 immutable attachment
+- PencilKit PKDrawing은 별도 annotation layer로 저장
+- annotation은 document_id, revision_id, page index, normalized coordinate space, author_device_id, updated_at을 참조
+- annotation export 시 PDFKit 기반 overlay PDF를 별도 파생 파일로 생성
+- Windows/Android에서 보이는 공통 결과는 PDF overlay 또는 표준화된 annotation JSON으로 제공
+- iPadOS 원본 drawing 데이터는 편집 재개를 위해 함께 보존
+
+### 9.4 Device Identity and Enrollment
+
+각 설치 인스턴스는 별도의 Device ID 및 credential을 갖습니다. 같은 Apple/Google 계정에 로그인했다는 이유만으로 무제한 접근을 허용하지 않습니다.
+
+- 최초 pairing은 사용자가 Windows Hub에서 생성한 일회성 코드/QR로 승인
+- 등록된 device 목록에서 이름, 플랫폼, 마지막 접속 시각 확인
+- 장치별 토큰 폐기 및 재등록
+- 삭제/분실 장치의 접근 차단
+- 장치 간 공유 데이터 범위는 단일 사용자 기본 profile 내에서 동일하게 유지하되, local-only 자료는 정책으로 제외
+
+세부 프로토콜과 충돌 정책은 MULTI-DEVICE-ARCHITECTURE.md를 따릅니다.
