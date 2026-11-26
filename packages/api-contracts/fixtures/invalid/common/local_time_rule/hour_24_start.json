@@ -1,0 +1,11 @@
+{
+  "weekdays": [
+    1,
+    3
+  ],
+  "start": "24:00",
+  "end": "10:15",
+  "tz": "Asia/Seoul",
+  "from_date": "2026-03-02",
+  "until_date": "2026-06-19"
+}

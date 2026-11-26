@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/until_date",
+    "rule": "range_order"
+  }
+]
