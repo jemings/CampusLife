@@ -279,3 +279,23 @@ def test_a_handle_that_stays_open_fails_the_replace_with_a_sharing_violation(tmp
         with pytest.raises(OSError) as refused:
             with_lock_retry(lambda: os.replace(staging, tmp_path / "final"), attempts=3, sleep=lambda seconds: None)
     assert is_sharing_violation(refused.value)
+
+
+async def test_a_failed_put_keeps_its_own_error_when_its_staging_file_cannot_be_discarded(tmp_path, db):
+    def replace(src, dst):
+        raise PermissionError(errno.EACCES, "replace refused", str(dst))
+
+    discarded = []
+
+    def unlink(path):
+        discarded.append(path)
+        raise WindowsError_(32)
+
+    blob_store = store_in(tmp_path, db, FileOps(replace=replace, unlink=unlink, sleep=must_not_wait))
+
+    with pytest.raises(PermissionError, match="replace refused"):
+        await blob_store.put_file(source(tmp_path, "a.txt", b"abc"))
+
+    [staging] = (tmp_path / "staging").iterdir()
+    assert discarded == [staging]
+    assert not await db.read(lambda snap: has_blob(snap, ABC_SHA256))
