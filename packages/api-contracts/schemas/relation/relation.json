@@ -8,16 +8,22 @@
   "properties": {
     "id": { "description": "from|type|to (rule relation_id).", "type": "string", "pattern": "^[^|]+\\|[a-z_]+\\|[^|]+$", "x-owner": "client" },
     "from": { "$ref": "../common/entity_ref.json", "x-owner": "client" },
-    "type": { "enum": ["about", "supersedes", "rendition_of", "evidence", "tagged", "conflicts_with"], "x-owner": "client" },
+    "type": {
+      "description": "Known types are the examples; a newer Hub may send others, which a client keeps but does not interpret. Creating a Relation takes only the known ones.",
+      "type": "string", "pattern": "^[a-z][a-z_]*$",
+      "examples": ["about", "supersedes", "rendition_of", "evidence", "tagged", "conflicts_with"],
+      "x-owner": "client"
+    },
     "to": { "$ref": "../common/entity_ref.json", "x-owner": "client" }
   },
-  "if": { "properties": { "type": { "const": "tagged" } }, "required": ["type"] },
-  "then": {
-    "properties": {
-      "from": { "pattern": "^item:" },
-      "to": { "pattern": "^tag:" }
-    }
-  },
+  "allOf": [{ "$ref": "#/$defs/tagged_ends" }],
   "x-relation-id": true,
-  "x-relation-not-self": true
+  "x-relation-not-self": true,
+  "$defs": {
+    "tagged_ends": {
+      "description": "A tagged Relation goes from an item to a tag.",
+      "if": { "properties": { "type": { "const": "tagged" } }, "required": ["type"] },
+      "then": { "properties": { "from": { "pattern": "^item:" }, "to": { "pattern": "^tag:" } } }
+    }
+  }
 }
