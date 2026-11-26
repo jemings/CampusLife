@@ -39,3 +39,17 @@ CampusLife is a local-first personal campus-life information hub, not only a lec
 - Avoid coupling domain logic to a specific UI, storage provider, or AI vendor.
 - Add tests for failure paths as well as happy paths.
 - Document configuration and user-visible data retention behavior.
+
+
+## Multi-device requirements
+
+- Treat Windows as the primary local data hub, not as the only UI client.
+- Android, iPadOS, and Windows are first-class clients with separate device identities.
+- Use a common versioned HTTPS API and sync contract; do not make product sync depend on FolderSync/SFTP.
+- Keep SFTP only as an early connectivity PoC.
+- Each mobile client owns a durable offline Outbox and sync cursor.
+- Do not assume Tailscale provides storage, queueing, app authentication, or an always-awake Windows host.
+- Implement pairing, per-device tokens, revocation, idempotency, resumable transfer, and conflict handling.
+- iPadOS uses native SwiftUI; PencilKit drawing and PDFKit documents must be stored as separate annotation/revision layers, never by mutating the original attachment.
+- Preserve iPad annotations in a cross-platform form (structured annotation data and/or derived PDF overlay) so Windows and Android can view them.
+- Do not blindly last-write-wins overwrite concurrent edits to notes or annotation layers.
