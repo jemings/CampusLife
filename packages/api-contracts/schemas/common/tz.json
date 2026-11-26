@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/common/tz.json",
+  "title": "Time zone",
+  "description": "IANA tz database name of the Area/Location form, such as Asia/Seoul. It must exist in the tz database (rule tz_exists, judged by the PyPI tzdata package).",
+  "type": "string",
+  "pattern": "^[A-Z][A-Za-z_]*(/[A-Za-z0-9_+-]+)+$",
+  "x-tz-exists": true
+}

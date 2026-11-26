@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/common/error.json",
+  "title": "Error",
+  "description": "Body of every Hub error response. Clients ignore members they do not know.",
+  "type": "object",
+  "required": ["code", "message"],
+  "properties": {
+    "code": {
+      "description": "Error code catalogue. Mutation outcomes such as id_reuse or not_canonical also appear as a rejected result's reason (E12).",
+      "enum": [
+        "invalid_request",
+        "not_canonical",
+        "id_reuse",
+        "hash_mismatch",
+        "chunk_mismatch",
+        "incomplete",
+        "unauthorized",
+        "device_revoked",
+        "device_dormant",
+        "not_found",
+        "contract_too_old"
+      ]
+    },
+    "message": {
+      "description": "Human-readable explanation; never parsed.",
+      "type": "string"
+    },
+    "details": {
+      "description": "Code-specific data, such as missing_chunks for incomplete.",
+      "type": "object"
+    }
+  }
+}
