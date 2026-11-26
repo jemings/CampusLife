@@ -25,6 +25,7 @@ ENDPOINTS = {
     ("get", "/v1/changes"),
     ("get", "/v1/hub"),
     ("post", "/v1/devices/me/status"),
+    ("post", "/v1/devices/me/token"),
 }
 
 
@@ -186,6 +187,9 @@ RESPONSE_TABLE = {
     ("post", "/v1/devices/me/status", "204"): (None, STAMP),
     ("post", "/v1/devices/me/status", "400"): (ERROR, STAMP),
     ("post", "/v1/devices/me/status", "401"): (ERROR, STAMP),
+    ("post", "/v1/devices/me/token", "200"): ((JSON, "device/pair_response"), STAMP),
+    ("post", "/v1/devices/me/token", "400"): (ERROR, STAMP),
+    ("post", "/v1/devices/me/token", "401"): (ERROR, STAMP),
 }
 
 # Header component -> (schema it points at, required)
@@ -221,6 +225,7 @@ PARAMETER_TABLE = {
     },
     ("get", "/v1/hub"): CONTRACT_PARAMETER,
     ("post", "/v1/devices/me/status"): CONTRACT_PARAMETER,
+    ("post", "/v1/devices/me/token"): CONTRACT_PARAMETER,
 }
 
 # (method, path) -> request body as (media type, schema id), or None
@@ -234,6 +239,7 @@ REQUEST_TABLE = {
     ("get", "/v1/changes"): None,
     ("get", "/v1/hub"): None,
     ("post", "/v1/devices/me/status"): (JSON, "device/status"),
+    ("post", "/v1/devices/me/token"): None,
 }
 
 
@@ -302,6 +308,16 @@ def test_only_get_hub_never_answers_contract_too_old():
     assert "contract_too_old" in responses["BadRequest"]["description"]
     assert "Never contract_too_old" in responses["BadRequestAnyContract"]["description"]
     assert "GET /v1/hub is the one exception to `contract_too_old`" in " ".join(SPEC["info"]["description"].split())
+
+
+def test_a_reissued_token_replaces_the_old_one_at_its_first_use():
+    """D6: both tokens work until the new one authenticates; asking again returns the same unused token."""
+    operation = SPEC["paths"]["/v1/devices/me/token"]["post"]
+    assert "security" not in operation and "requestBody" not in operation
+    description = " ".join(operation["description"].split())
+    assert "until the new one first authenticates successfully" in description
+    assert "both tokens work" in description
+    assert "returns the same unused new token" in description
 
 
 def test_header_names_are_the_header_schemas_property_names():
