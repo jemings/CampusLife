@@ -9,11 +9,12 @@
 secrets/
 credentials/
 
-# Local CampusLife data
-CampusLifeData/
-LectureVault/
-data/
-local-data/
+# Local CampusLife data (anchored to the repo root so source packages named
+# `data` — e.g. Kotlin `…/data/` or Python `campuslife/data/` — stay tracked)
+/CampusLifeData/
+/LectureVault/
+/data/
+/local-data/
 *.sqlite
 *.sqlite3
 *.db
@@ -28,6 +29,20 @@ local-data/
 *.jpg
 *.jpeg
 *.png
+*.heic
+*.webp
+*.hwp
+*.hwpx
+*.docx
+*.pptx
+*.xlsx
+
+# Allowed exceptions: synthetic fixtures and app assets
+!examples/**
+!**/fixtures/**
+!apps/android/**/src/*/res/**
+!apps/ipados/**/*.xcassets/**
+!apps/prototype/assets/**
 
 # Python
 .venv/
@@ -49,9 +64,11 @@ build/
 local.properties
 *.iml
 
-# IDE / OS
+# IDE / OS / local agent tool config
 .idea/
 .vscode/
+.gemini/
+.impeccable/
 .DS_Store
 Thumbs.db
 desktop.ini
