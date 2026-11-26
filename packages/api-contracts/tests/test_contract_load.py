@@ -161,7 +161,7 @@ def test_vocabulary_names_every_rule_keyword():
     from campuslife_contracts.vocabulary import VOCABULARY
 
     extension_keywords = set(VOCABULARY["propertyNames"]["then"]["enum"])
-    assert extension_keywords == {"x-owner", "x-text", "x-set-targets", *RULE_KEYWORDS}
+    assert extension_keywords == {"x-owner", "x-text", "x-set-targets", "x-open", *RULE_KEYWORDS}
 
 
 @pytest.mark.parametrize(
@@ -177,10 +177,11 @@ def test_vocabulary_names_every_rule_keyword():
         {"x-set-targets": {"item": "a.json"}},
         {"x-original-id": False},
         {"x-feed-order": "yes"},
+        {"x-open": False},
     ],
     ids=["relation-id-number", "relation-id-empty", "batch-order-false", "set-owner-string", "set-type-false",
          "targets-without-schema", "targets-unknown-member", "targets-not-object", "original-id-false",
-         "feed-order-string"],
+         "feed-order-string", "open-false"],
 )
 def test_malformed_rule_keywords_are_rejected(tmp_path, keywords):
     write_schema(tmp_path, "t/k", {"type": "object", **keywords})
