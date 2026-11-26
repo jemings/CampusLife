@@ -1,4 +1,5 @@
-"""capture.commit (D7, E7, A5): a sealed Capture, its Attachments and the Relations its links make.
+"""capture.commit (D7, E7, A5, E14): a sealed Capture, its Attachments, the Relations its links make
+and its capture.ingest job.
 
 All checks run before the first write, so a commit either writes everything in
 its transaction or nothing.
@@ -6,11 +7,12 @@ its transaction or nothing.
 
 from __future__ import annotations
 
-from . import refs, store
+from . import jobs, refs, store
 from .blobs import has_blob
 from .created import earlier_create, remember_create
 from .db import Tx
 from .devices import DeviceId
+from .ingest import INGEST_PIPELINE, ingest_spec
 from .outcomes import Applied, Outcome, Reason, Rejected, Retry
 from .store import Entity, EntityRef
 
@@ -49,5 +51,6 @@ def commit_capture(tx: Tx, capture: dict, device: DeviceId) -> Outcome:
         store.write(tx, EntityRef(Entity.ATTACHMENT, attachment["id"]), {**attachment, "capture_id": capture["id"]})
     for relation_id, relation in _relations(capture).items():
         store.write(tx, EntityRef(Entity.RELATION, relation_id), relation)
+    jobs.enqueue(tx, ingest_spec(capture), INGEST_PIPELINE)
     remember_create(tx, capture_ref, capture)
     return Applied()
