@@ -83,8 +83,10 @@ class HubLock:
         if self._fd is None:
             return
         fd, self._fd = self._fd, None
-        _unlock(fd)
-        os.close(fd)
+        try:
+            _unlock(fd)
+        finally:
+            os.close(fd)
 
     def __enter__(self) -> Self:
         return self
