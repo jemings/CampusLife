@@ -139,6 +139,17 @@ async def test_only_due_jobs_of_the_given_types_are_claimed_oldest_first(db):
     assert await claim(db, now=NOW + timedelta(days=1)) is None
 
 
+async def test_the_ids_skipped_are_neither_claimed_nor_due(db):
+    held = await enqueue(db, now=NOW - timedelta(minutes=1))
+    other = await enqueue(db, extraction(params={"page": 2}))
+
+    assert await db.read(lambda snap: jobs.next_due(snap, ["extract.text"], skipping=[held.id])) == instant(NOW)
+    assert (await db.write(lambda tx: jobs.claim(tx, ["extract.text"], now=NOW, skipping=[held.id]))).id == other.id
+    assert await db.write(lambda tx: jobs.claim(tx, ["extract.text"], now=NOW, skipping=[held.id])) is None
+    assert await db.read(lambda snap: jobs.next_due(snap, ["extract.text"], skipping=[held.id])) is None
+    assert (await claim(db)).id == held.id
+
+
 @pytest.mark.parametrize(
     ("result", "state", "code", "error"),
     [
