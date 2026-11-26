@@ -29,6 +29,22 @@ body[data-mode="open"] .main{margin:0;min-width:0;min-height:0;flex:1;height:100
 body[data-mode="open"] .topbar{height:49px;min-height:49px;padding:0 17px;flex:none}body[data-mode="open"] .content{width:100%;max-width:none;margin:0;padding:14px 16px 18px;overflow:auto;flex:1;min-height:0}
 body[data-mode="open"] .title{font-size:20px}body[data-mode="open"] .stats{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}body[data-mode="open"] .stat{padding:9px}body[data-mode="open"] .statval{font-size:20px}
 body[data-mode="open"] .workspace,body[data-mode="open"] .lower{grid-template-columns:minmax(0,1.4fr) minmax(225px,.9fr);gap:10px}body[data-mode="open"] .panel{padding:12px}body[data-mode="open"] .coursegrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+
+body[data-mode="ipad"]{min-height:100svh;display:grid;place-items:center;padding:12px;background:radial-gradient(ellipse at top,#f4f0ff,#e8ebf3 72%)}
+body[data-mode="ipad"] .app{width:min(1180px,calc(100vw - 32px),calc((100svh - 32px)*4/3));aspect-ratio:4/3;height:auto;min-height:0;border:10px solid #282a37;border-radius:30px;overflow:hidden;background:var(--bg);display:flex;box-shadow:0 24px 70px #25294d45}
+body[data-mode="ipad"] .sidebar{position:relative;inset:auto;width:205px;min-width:205px;height:auto;padding:17px 12px;overflow:hidden}
+body[data-mode="ipad"] .main{margin:0;min-width:0;min-height:0;flex:1;height:100%;display:flex;flex-direction:column;overflow:hidden}
+body[data-mode="ipad"] .topbar{height:53px;min-height:53px;padding:0 18px;flex:none}
+body[data-mode="ipad"] .content{width:100%;max-width:none;margin:0;padding:17px 18px 20px;overflow:auto;flex:1;min-height:0}
+body[data-mode="ipad"] .title{font-size:21px}
+body[data-mode="ipad"] .stats{grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+body[data-mode="ipad"] .stat{padding:11px}
+body[data-mode="ipad"] .statval{font-size:21px}
+body[data-mode="ipad"] .workspace{grid-template-columns:minmax(0,1.35fr) minmax(245px,.9fr);gap:12px}
+body[data-mode="ipad"] .lower{grid-template-columns:1fr 1fr;gap:12px}
+body[data-mode="ipad"] .panel{padding:14px}
+body[data-mode="ipad"] .coursegrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+body[data-mode="ipad"] .bottomnav{display:none}
 @media(max-width:850px){.sidebar{width:190px}.main{margin-left:190px}.content{padding:22px 19px}.workspace{grid-template-columns:1fr}.lower{grid-template-columns:1fr}}
 @media(max-width:620px){.sidebar{display:none}.main{margin:0}.content{padding:17px 13px 76px}.topbar{height:54px;padding:0 12px}.searchbtn{width:34px;font-size:0}.stats{grid-template-columns:1fr 1fr}.workspace,.lower,.coursegrid{grid-template-columns:1fr}.bottomnav{display:flex;position:fixed;bottom:0;left:0;right:0;height:60px;background:#ffffffed;border-top:1px solid var(--line);justify-content:space-around;align-items:center;z-index:8}}
 @media(max-height:650px){body[data-mode="open"] .app{height:calc(100svh - 24px);aspect-ratio:auto;width:min(calc((100svh - 24px)*4/3),calc(100vw - 24px))}}
@@ -62,10 +78,10 @@ body[data-mode="open"] .workspace,body[data-mode="open"] .lower{grid-template-co
 <script>
 (function(){
 var labels={home:"대시보드",schedule:"시간표",courses:"내 과목",inbox:"통합 Inbox",planner:"과제 & 일정",learn:"AI 학습 도우미",campus:"캠퍼스 라이프"},mode="desktop",pages=document.querySelectorAll(".page");
-function setMode(next){mode=next;document.body.setAttribute("data-mode",mode);var b=document.getElementById("deviceToggle");b.textContent=mode==="desktop"?"▣ Fold8 접은 화면":mode==="cover"?"▱ Fold8 펼친 4:3 화면":"▣ PC 화면";b.title=mode==="desktop"?"Fold8 접은 화면 미리보기":mode==="cover"?"Fold8 펼친 4:3 화면 미리보기":"PC 화면으로 돌아가기"}
+function setMode(next){mode=next;document.body.setAttribute("data-mode",mode);var b=document.getElementById("deviceToggle");var labels={desktop:"▣ Fold8 접은 화면",cover:"▱ Fold8 펼친 4:3 화면",open:"▣ iPad Pro 13 화면",ipad:"▣ PC 화면"};var hints={desktop:"Fold8 접은 화면 미리보기",cover:"Fold8 펼친 4:3 화면 미리보기",open:"iPad Pro 13 4:3 학습 화면 미리보기",ipad:"PC 화면으로 돌아가기"};b.textContent=labels[mode];b.title=hints[mode]}
 function nav(name){pages.forEach(function(p){p.classList.toggle("active",p.id==="page-"+name)});document.querySelectorAll("[data-view]").forEach(function(b){b.classList.toggle("active",b.getAttribute("data-view")===name)});document.getElementById("crumb").textContent=labels[name]||"대시보드";var c=document.querySelector(".content");if(c)c.scrollTop=0}
 function addFile(name,type,meta,state){var row=document.createElement("div");row.className="fileitem";row.innerHTML='<span class="fileico"></span><div><div class="fname"></div><div class="fmeta"></div></div><span class="state"></span>';row.querySelector(".fileico").textContent=type;row.querySelector(".fname").textContent=name;row.querySelector(".fmeta").textContent=meta;row.querySelector(".state").textContent=state;document.getElementById("fileList").prepend(row);var count=document.getElementById("inboxCount");count.textContent=Number(count.textContent)+1}
-document.getElementById("deviceToggle").addEventListener("click",function(){setMode(mode==="desktop"?"cover":mode==="cover"?"open":"desktop")});
+document.getElementById("deviceToggle").addEventListener("click",function(){var modes=["desktop","cover","open","ipad"];setMode(modes[(modes.indexOf(mode)+1)%modes.length])});
 document.addEventListener("click",function(e){
 var navBtn=e.target.closest("[data-view]");if(navBtn){nav(navBtn.getAttribute("data-view"));return}
 var action=e.target.closest("[data-action]");if(action){var a=action.getAttribute("data-action");if(a==="browse")document.getElementById("fileInput").click();else if(a==="record")alert("디자인 데모입니다. 실제 녹음은 Android 앱 구현 단계에서 연결됩니다.");else if(a==="quick"){var memo=prompt("무엇을 기록할까요?");if(memo){addFile("메모: "+memo,"NOTE","방금 기록 · Inbox","저장됨");nav("inbox")}}else if(a==="task"){var title=prompt("새 할 일 제목을 입력해 주세요.");if(title){var row=document.createElement("div");row.className="taskrow";var check=document.createElement("button");check.className="check";check.setAttribute("data-check","");var info=document.createElement("div");var t=document.createElement("div");t.className="tasktitle";t.textContent=title;var m=document.createElement("div");m.className="taskmeta";m.textContent="개인 일정 · 날짜 미정";info.append(t,m);row.append(check,info);document.getElementById("plannerTasks").append(row);document.getElementById("taskList").append(row.cloneNode(true))}}return}
