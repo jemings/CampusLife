@@ -7,8 +7,11 @@
   "required": ["code", "message"],
   "properties": {
     "code": {
-      "description": "Error code catalogue. Mutation outcomes such as id_reuse or not_canonical also appear as a rejected result's reason (E12).",
-      "enum": [
+      "description": "Error code. Open (x-open): the Hub may add codes, and a client treats a code it does not know as a plain failure (E21). The known codes are the examples. Mutation outcomes such as id_reuse or not_canonical also appear as a rejected result's reason (E12).",
+      "type": "string",
+      "pattern": "^[a-z][a-z_]*$",
+      "x-open": true,
+      "examples": [
         "invalid_request",
         "not_canonical",
         "id_reuse",
