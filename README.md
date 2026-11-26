@@ -111,3 +111,19 @@ CampusLife는 강의 녹음·정리만을 위한 앱이 아닙니다. 수업, �
 
 - [UX/UI 디자인 기준](docs/UX-DESIGN.md)
 - [인터랙티브 웹 프로토타입](apps/prototype/index.html) — 브라우저에서 열어 PC / Fold8 접은 화면 / Fold8 펼친 4:3 화면을 전환해 볼 수 있습니다.
+
+
+## 멀티디바이스 지원
+
+CampusLife는 Fold8, iPad Pro, Windows 노트북을 하나의 개인 학습 환경으로 연결합니다.
+
+| 장치 | 역할 | 앱 |
+|---|---|---|
+| Galaxy Z Fold8 | 강의 녹음·사진·자료 수집, 빠른 캡처 | Android / Kotlin / Compose |
+| iPad Pro 13 | PDF 학습, Apple Pencil 필기, 자료 비교, AI 노트 검토 | iPadOS / SwiftUI / PencilKit / PDFKit |
+| Windows 11 노트북 | 기본 데이터 허브, 파일 저장, AI 처리, 검색 API | Python Agent / FastAPI / SQLite |
+
+- [멀티디바이스 아키텍처 및 동기화 설계](docs/MULTI-DEVICE-ARCHITECTURE.md)
+- [iPadOS Companion 설계](apps/ipados/README.md)
+
+세 앱은 공통 HTTPS Sync API를 사용합니다. Tailscale은 장치 간 사설 연결을 제공하고, 앱별 인증·동기화 상태·파일 재개·충돌 처리는 CampusLife가 담당합니다. 노트북이 꺼져 있으면 각 모바일 장치가 자체 Outbox를 보존하고, 온라인 복귀 후 동기화합니다.
