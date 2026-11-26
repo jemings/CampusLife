@@ -6,7 +6,7 @@ its transaction or nothing.
 
 from __future__ import annotations
 
-from . import store
+from . import refs, store
 from .blobs import has_blob
 from .created import earlier_create, remember_create
 from .db import Tx
@@ -15,11 +15,6 @@ from .outcomes import Applied, Outcome, Reason, Rejected, Retry
 from .store import Entity, EntityRef
 
 COMMIT_ONLY_MEMBERS = ("links", "attachments")
-
-
-def _is_live(tx: Tx, entity_ref: str) -> bool:
-    entity, _, identifier = entity_ref.partition(":")
-    return store.get(tx, EntityRef(Entity(entity), identifier)) is not None
 
 
 def _relations(capture: dict) -> dict[str, dict]:
@@ -45,7 +40,7 @@ def commit_capture(tx: Tx, capture: dict, device: DeviceId) -> Outcome:
     missing = sorted({sha for sha in (attachment["blob_sha256"] for attachment in capture["attachments"]) if not has_blob(tx, sha)})
     if missing:
         return Retry(tuple(missing))
-    if not all(_is_live(tx, link["to"]) for link in capture["links"]):
+    if not all(refs.exists(tx, link["to"]) for link in capture["links"]):
         return Rejected(Reason.LINK_TARGET_MISSING)
 
     row = {name: value for name, value in capture.items() if name not in COMMIT_ONLY_MEMBERS}
