@@ -347,6 +347,30 @@ def test_a_reissued_token_replaces_the_old_one_at_its_first_use():
     assert "returns the same unused new token" in description
 
 
+def prose(text):
+    return " ".join(text.split())
+
+
+def test_open_upload_states_the_session_key_and_its_end():
+    """E19, D6, D7: the wording a Hub implementation is held to."""
+    description = prose(SPEC["paths"]["/v1/blobs/uploads"]["post"]["description"])
+    assert "Keyed by (this Device, sha256)" in description
+    assert "another size while the session is open gets 400 invalid_request" in description
+    assert "Revoking the Device discards its open sessions" in description
+
+
+def test_finalize_of_a_stored_blob_answers_200_with_or_without_a_session():
+    description = prose(SPEC["paths"]["/v1/blobs/uploads/{sha}/finalize"]["post"]["description"])
+    assert "Finalizing a Blob the Hub already stores answers 200 whether or not a session is open" in description
+
+
+def test_the_bearer_scheme_says_when_a_token_ends():
+    description = prose(SPEC["components"]["securitySchemes"]["device"]["description"])
+    assert "It does not expire" in description
+    assert "revoke ends it" in description
+    assert "the new token's first use ends the old one" in description
+
+
 def test_header_names_are_the_header_schemas_property_names():
     """So contract_headers knows every header name the document uses."""
     for method, path, operation in operations():
