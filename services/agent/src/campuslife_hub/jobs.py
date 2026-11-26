@@ -13,7 +13,7 @@ import hashlib
 import json
 import re
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -247,13 +247,18 @@ def _change(tx: Tx, job_id: str, state: JobState, now: datetime | None, **column
     return cursor.rowcount == 1
 
 
-def claim(tx: Tx, job_types: Iterable[str], *, now: datetime) -> Job | None:
-    """The waiting job of one of job_types that has been due longest, now running and one attempt further."""
-    types = sorted(set(job_types))
+def _placeholders(values: Sequence[object]) -> str:
+    return ", ".join("?" for _ in values)
+
+
+def claim(tx: Tx, job_types: Iterable[str], *, now: datetime, skipping: Iterable[str] = ()) -> Job | None:
+    """The waiting job of one of job_types, other than the ids in skipping, that has been due longest, now running
+    and one attempt further."""
+    types, skipped = sorted(set(job_types)), sorted(set(skipping))
     row = tx.execute(
-        f"SELECT id FROM processing_jobs WHERE next_attempt_at <= ? AND job_type IN ({', '.join('?' for _ in types)})"
-        " ORDER BY next_attempt_at, rowid LIMIT 1",
-        (instant(now), *types),
+        f"SELECT id FROM processing_jobs WHERE next_attempt_at <= ? AND job_type IN ({_placeholders(types)})"
+        f" AND id NOT IN ({_placeholders(skipped)}) ORDER BY next_attempt_at, rowid LIMIT 1",
+        (instant(now), *types, *skipped),
     ).fetchone()
     if row is None:
         return None
@@ -262,11 +267,12 @@ def claim(tx: Tx, job_types: Iterable[str], *, now: datetime) -> Job | None:
     return get(tx, job.id)
 
 
-def next_due(runner: Tx | Snapshot, job_types: Iterable[str]) -> str | None:
-    """When the soonest waiting job of one of job_types is due."""
-    types = sorted(set(job_types))
+def next_due(runner: Tx | Snapshot, job_types: Iterable[str], *, skipping: Iterable[str] = ()) -> str | None:
+    """When the soonest waiting job of one of job_types, other than the ids in skipping, is due."""
+    types, skipped = sorted(set(job_types)), sorted(set(skipping))
     (due,) = runner.execute(
-        f"SELECT min(next_attempt_at) FROM processing_jobs WHERE job_type IN ({', '.join('?' for _ in types)})", types
+        f"SELECT min(next_attempt_at) FROM processing_jobs WHERE job_type IN ({_placeholders(types)}) AND id NOT IN ({_placeholders(skipped)})",
+        (*types, *skipped),
     ).fetchone()
     return due
 
