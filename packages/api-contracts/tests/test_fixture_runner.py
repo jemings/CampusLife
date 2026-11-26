@@ -141,7 +141,7 @@ def test_layout_problems_are_reported(root):
     ("text", "problem"),
     [
         ('{"ratio": 0.10000000000000000001}', "round trip changed /ratio: expected 0.10000000000000000001, got 0.1"),
-        ('{"ratio": 1e400}', "round trip did not produce strict JSON"),
+        ('{"ratio": 1e400}', "not strict JSON: 1e400 is beyond the range of a double"),
     ],
     ids=["beyond-double-precision", "beyond-double-range"],
 )

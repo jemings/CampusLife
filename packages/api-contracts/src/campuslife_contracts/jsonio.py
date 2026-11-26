@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable
 from decimal import Decimal
 from pathlib import Path
@@ -46,27 +47,35 @@ def _reject_lone_surrogates(value: object) -> None:
                 _reject_lone_surrogates(item)
 
 
+def _finite_float(text: str) -> float:
+    number = float(text)
+    if not math.isfinite(number):
+        raise NotStrictJson(f"{text} is beyond the range of a double")
+    return number
+
+
 def loads_strict(text: str, *, exact_numbers: bool = False) -> object:
     """Parse JSON text; with exact_numbers every number becomes a Decimal.
 
     Rejects duplicate members, NaN/Infinity, escapes of lone surrogates (JSON
-    syntax but not Unicode text) and, without exact_numbers, integers longer
-    than Python's int conversion limit.
+    syntax but not Unicode text) and, without exact_numbers, numbers a double
+    or a Python int cannot hold.
     """
-    number = Decimal if exact_numbers else None
     try:
         value = json.loads(
             text,
-            parse_float=number,
-            parse_int=number,
+            parse_float=Decimal if exact_numbers else _finite_float,
+            parse_int=Decimal if exact_numbers else None,
             parse_constant=_reject_constant,
             object_pairs_hook=_unique_members,
         )
+        _reject_lone_surrogates(value)
     except NotStrictJson:
         raise
     except ValueError as error:
         raise NotStrictJson(str(error)) from error
-    _reject_lone_surrogates(value)
+    except RecursionError as error:
+        raise NotStrictJson("nested deeper than Python can read") from error
     return value
 
 
@@ -118,6 +127,9 @@ def _canonical_text(value: object) -> str:
         case list():
             return "[" + ",".join(map(_canonical_text, value)) + "]"
         case dict():
+            for name in value:
+                if not isinstance(name, str):
+                    raise TypeError(f"member name {name!r} is not a str")
             members = sorted(value.items())
             return "{" + ",".join(f"{json.dumps(name, ensure_ascii=False)}:{_canonical_text(item)}" for name, item in members) + "}"
     raise TypeError(f"not a JSON value: {value!r}")
