@@ -154,22 +154,25 @@ def must_not_wait(seconds):
     raise AssertionError(f"waited {seconds}s")
 
 
-def test_a_leftover_still_locked_after_the_retries_is_kept_and_reported(tmp_path, db):
+def test_a_leftover_still_in_use_is_tried_once_and_kept_for_the_next_start(tmp_path, db):
     staging = tmp_path / "staging"
     staging.mkdir()
     (staging / "stuck.part").write_bytes(b"half")
     (staging / "free.part").write_bytes(b"half")
+    tries = []
 
     def unlink(path):
+        tries.append(path.name)
         if path.name == "stuck.part":
             raise WindowsError_(32)
         path.unlink(missing_ok=True)
 
-    blob_store = store_in(tmp_path, db, FileOps(unlink=unlink, sleep=lambda seconds: None))
+    blob_store = store_in(tmp_path, db, FileOps(unlink=unlink, sleep=must_not_wait))
     [kept] = blob_store.discard_staging_leftovers()
 
     assert kept.path == staging / "stuck.part"
     assert "locked" in kept.reason
+    assert sorted(tries) == ["free.part", "stuck.part"]
     assert [path.name for path in staging.iterdir()] == ["stuck.part"]
 
 
