@@ -18,7 +18,7 @@ from .clock import now_instant
 from .db import Database, Tx
 from .devices import DeviceId
 from .outcomes import Outcome, Reason, Rejected, outcome_json
-from .user_data import create, delete, restore
+from .user_data import create, delete, patch, restore
 
 REASON_BY_RULE: dict[Rule, Reason] = {Rule.NFC: Reason.NOT_CANONICAL, Rule.OWNER: Reason.OWNER}
 """Rules with a reason of their own; every other violation, and any rule added later, is schema."""
@@ -48,6 +48,7 @@ Handler = Callable[[Tx, dict, DeviceId], Outcome]
 HANDLERS: dict[str, Handler] = {
     "capture.commit": lambda tx, mutation, device: commit_capture(tx, mutation["capture"], device),
     "create": create,
+    "patch": patch,
     "delete": delete,
     "restore": restore,
 }

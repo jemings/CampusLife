@@ -21,7 +21,15 @@ class Reason(enum.StrEnum):
 
 @dataclass(frozen=True)
 class Applied:
-    pass
+    applied_fields: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class Conflict:
+    """Some set keys lost compare-and-set (D18); applied_fields are those now holding their to."""
+
+    applied_fields: tuple[str, ...]
+    conflicted_fields: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -34,13 +42,17 @@ class Retry:
     missing_blobs: tuple[str, ...]
 
 
-Outcome = Applied | Rejected | Retry
+Outcome = Applied | Conflict | Rejected | Retry
 
 
 def outcome_json(outcome: Outcome) -> dict:
     match outcome:
-        case Applied():
+        case Applied(None):
             return {"result": "applied"}
+        case Applied(applied_fields):
+            return {"result": "applied", "applied_fields": list(applied_fields)}
+        case Conflict(applied_fields, conflicted_fields):
+            return {"result": "conflict", "applied_fields": list(applied_fields), "conflicted_fields": list(conflicted_fields)}
         case Rejected(reason):
             return {"result": "rejected", "reason": reason.value}
         case Retry(missing_blobs):
