@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/item/fields/note.json",
+  "title": "note fields",
+  "description": "A user note; the text is the Item's body. refs[] arrives with the Artifact body shape (#8). Open.",
+  "type": "object",
+  "properties": {
+    "forked_from_artifact": { "description": "id of the Artifact this note was forked from (D9).", "$ref": "../../common/uuid.json" }
+  }
+}

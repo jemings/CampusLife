@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/item/fields/lecture_session.json",
+  "title": "lecture_session fields",
+  "description": "One meeting of a course, created when recording starts (D10). Open.",
+  "type": "object",
+  "required": ["course_id", "date"],
+  "properties": {
+    "course_id": { "description": "id of the course Item.", "$ref": "../../common/uuid.json" },
+    "date": { "$ref": "../../common/local_date.json" }
+  }
+}

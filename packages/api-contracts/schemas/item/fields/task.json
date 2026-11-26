@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/item/fields/task.json",
+  "title": "task fields",
+  "description": "A personal to-do. progress is the only task state (U4). Open.",
+  "type": "object",
+  "required": ["progress"],
+  "properties": {
+    "progress": { "enum": ["inbox", "planned", "in_progress", "blocked", "completed", "cancelled"] },
+    "reminders": {
+      "description": "When each client schedules a local notification (D19).",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "../../common/instant.json" }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/capture/commit_attachment.json",
+  "title": "Commit attachment",
+  "description": "One attachments[] entry of capture.commit (E16). Closed. Each member means the same as in the Attachment feed shape; capture_id, detected_mime and backed_up_at are the Hub's to fill.",
+  "type": "object",
+  "required": ["id", "blob_sha256", "role", "cloud_policy"],
+  "properties": {
+    "id": { "$ref": "attachment.json#/properties/id" },
+    "blob_sha256": { "$ref": "attachment.json#/properties/blob_sha256" },
+    "role": { "$ref": "attachment.json#/properties/role" },
+    "seq": { "$ref": "attachment.json#/properties/seq" },
+    "original_filename": { "$ref": "attachment.json#/properties/original_filename" },
+    "original_filename_raw": { "$ref": "attachment.json#/properties/original_filename_raw" },
+    "declared_mime": { "$ref": "attachment.json#/properties/declared_mime" },
+    "captured_at": { "$ref": "attachment.json#/properties/captured_at" },
+    "captured_at_precision": { "$ref": "attachment.json#/properties/captured_at_precision" },
+    "captured_mono_ns": { "$ref": "attachment.json#/properties/captured_mono_ns" },
+    "cloud_policy": { "$ref": "attachment.json#/properties/cloud_policy" }
+  },
+  "additionalProperties": false,
+  "allOf": [{ "$ref": "attachment.json#/$defs/consistency" }],
+  "x-raw-form": [{ "raw": "original_filename_raw", "text": "original_filename" }]
+}

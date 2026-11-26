@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/capture/capture.json",
+  "title": "Capture",
+  "description": "A sealed, immutable collection act as the Hub sends it in the changes feed. Its attachments arrive as Attachment rows and its links as Relations. Open: clients ignore members they do not know.",
+  "type": "object",
+  "required": ["id", "device_id", "created_at", "origin"],
+  "properties": {
+    "id": { "$ref": "../common/uuid.json", "x-owner": "client" },
+    "device_id": {
+      "description": "The Device whose token committed the Capture; the Hub's own Device row for a local import. Never sent by the client (E16).",
+      "$ref": "../common/uuid.json",
+      "x-owner": "hub"
+    },
+    "created_at": { "$ref": "../common/instant.json", "x-owner": "client" },
+    "origin": { "$ref": "origin.json", "x-owner": "client" },
+    "category_hint": { "description": "The capturing client's guess at what this is, for the Inbox.", "type": "string", "minLength": 1, "x-owner": "client" },
+    "user_note": { "type": "string", "minLength": 1, "x-owner": "client" },
+    "url": { "description": "No whitespace or control characters.", "type": "string", "pattern": "^https?://[^\\s\\u0000-\\u001f\\u007f-\\u009f]+$", "x-owner": "client" },
+    "timeline": { "$ref": "timeline.json", "x-owner": "client" }
+  }
+}

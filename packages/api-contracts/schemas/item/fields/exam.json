@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/item/fields/exam.json",
+  "title": "exam fields",
+  "description": "An exam of a course; its time is the Item's starts_at. Open.",
+  "type": "object",
+  "required": ["course_id"],
+  "properties": {
+    "course_id": { "description": "id of the course Item.", "$ref": "../../common/uuid.json" },
+    "scope_text": { "description": "What the exam covers, as worded by the course.", "type": "string", "minLength": 1 }
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/capture/commit.json",
+  "title": "Capture commit",
+  "description": "The capture of a capture.commit Mutation (D7, E16). Closed. device_id is not part of it: the Hub takes it from the token. At least one of a non-empty attachments, url or user_note is present, so text-only and link-only captures are allowed.",
+  "type": "object",
+  "required": ["id", "created_at", "origin", "links", "attachments"],
+  "properties": {
+    "id": { "$ref": "capture.json#/properties/id" },
+    "created_at": { "$ref": "capture.json#/properties/created_at" },
+    "origin": { "$ref": "#/$defs/closed_origin" },
+    "category_hint": { "$ref": "capture.json#/properties/category_hint" },
+    "user_note": { "$ref": "capture.json#/properties/user_note" },
+    "url": { "$ref": "capture.json#/properties/url" },
+    "links": {
+      "description": "Links the user chose while capturing, such as the course and lecture session on the recording screen. The Hub turns each into a confirmed Relation attachment:<id> -type-> <to> for every Attachment of the Capture, or capture:<id> -type-> <to> when the Capture has no Attachment (A5).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "to"],
+        "properties": {
+          "type": { "enum": ["about"] },
+          "to": { "description": "The course or lecture session Item the user picked (D7).", "$ref": "../common/entity_ref.json", "pattern": "^item:" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "attachments": { "type": "array", "items": { "$ref": "commit_attachment.json" } },
+    "timeline": { "$ref": "#/$defs/closed_timeline" }
+  },
+  "additionalProperties": false,
+  "anyOf": [
+    { "required": ["attachments"], "properties": { "attachments": { "minItems": 1 } } },
+    { "required": ["url"] },
+    { "required": ["user_note"] }
+  ],
+  "$defs": {
+    "closed_origin": {
+      "$ref": "origin.json",
+      "properties": { "type": true, "uri": true, "app": true, "publisher": true, "distributed_by": true, "distributed_at": true },
+      "additionalProperties": false
+    },
+    "closed_timeline": {
+      "$ref": "timeline.json",
+      "properties": {
+        "boot_id": true,
+        "anchors": { "items": { "$ref": "#/$defs/closed_anchor" } },
+        "start_uncertainty_ms": true,
+        "events": { "items": { "$ref": "#/$defs/closed_event" } }
+      },
+      "additionalProperties": false
+    },
+    "closed_anchor": {
+      "$ref": "timeline.json#/$defs/anchor",
+      "properties": { "wall_ms": true, "mono_ns": true },
+      "additionalProperties": false
+    },
+    "closed_event": {
+      "$ref": "timeline.json#/$defs/event",
+      "properties": { "type": true, "mono_ns": true, "media_pos_ms": true },
+      "additionalProperties": false
+    }
+  }
+}
