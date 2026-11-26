@@ -10,7 +10,7 @@ import json
 
 from campuslife_contracts import contract_root
 
-from . import store
+from . import refs, store
 from .created import earlier_create, remember_create
 from .db import Tx
 from .devices import DeviceId
@@ -40,15 +40,32 @@ def _create_item(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
         return Rejected(Reason.SCHEMA)
     if not all(_is_canonical_text(data.get(column)) for column in ITEM_TEXT_COLUMNS):
         return Rejected(Reason.NOT_CANONICAL)
+    return _create_once(tx, ref, data, {"id": ref.id, "schema_version": SCHEMA_VERSION, **data})
+
+
+def _create_once(tx: Tx, ref: EntityRef, data: dict, row: dict) -> Outcome:
     earlier = earlier_create(tx, ref, data)
     if earlier is not None:
         return earlier
-    store.write(tx, ref, {"id": ref.id, "schema_version": SCHEMA_VERSION, **data})
+    store.write(tx, ref, row)
     remember_create(tx, ref, data)
     return Applied()
 
 
-CREATES = {Entity.ITEM: _create_item}
+def _create_tag(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
+    return _create_once(tx, ref, data, {"id": ref.id, **data})
+
+
+def _create_relation(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
+    """A Relation is named by its ends, so creating it again adds it back after a delete (D18)."""
+    if not (refs.exists(tx, data["from"]) and refs.exists(tx, data["to"])):
+        return Rejected(Reason.LINK_TARGET_MISSING)
+    if store.get(tx, ref) is None:
+        store.write(tx, ref, {"id": ref.id, **data})
+    return Applied()
+
+
+CREATES = {Entity.ITEM: _create_item, Entity.TAG: _create_tag, Entity.RELATION: _create_relation}
 
 
 def create(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
