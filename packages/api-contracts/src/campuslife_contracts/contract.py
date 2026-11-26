@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -52,6 +53,8 @@ def _as_contract_resource(document: dict):
 
 def _require_json_loads_types(value: object) -> None:
     match value:
+        case float() if not math.isfinite(value):
+            raise TypeError(f"{value!r} is not a JSON number")
         case None | bool() | int() | float() | str():
             return
         case list():

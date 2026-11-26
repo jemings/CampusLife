@@ -124,8 +124,9 @@ def test_union_without_discriminator_keeps_the_oneof_error(make_contract):
 
 @pytest.mark.parametrize(
     "instance",
-    [Decimal("1.5"), {"page": Decimal("1")}, [1, (2, 3)], {1: "a"}, b"x"],
-    ids=["decimal", "nested-decimal", "tuple", "non-string-key", "bytes"],
+    [Decimal("1.5"), {"page": Decimal("1")}, [1, (2, 3)], {1: "a"}, b"x",
+     float("nan"), [0, float("inf")], {"x": float("-inf")}],
+    ids=["decimal", "nested-decimal", "tuple", "non-string-key", "bytes", "nan", "infinity", "minus-infinity"],
 )
 def test_instance_must_use_json_loads_types(make_contract, instance):
     contract = make_contract({"t/any": {}})
@@ -159,3 +160,8 @@ def test_entity_ref_names_each_uuid_entity(entity):
 )
 def test_entity_ref_rejects_entities_outside_the_list_by_uuid(entity):
     assert validate("common/entity_ref", f"{entity}:{UUID}") == [SchemaViolation(path="", keyword="pattern")]
+
+
+def test_box_parsed_with_nan_is_refused():
+    with pytest.raises(TypeError):
+        validate("common/box", json.loads("[NaN, 0, 0, 0]"))
