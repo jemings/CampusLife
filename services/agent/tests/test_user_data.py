@@ -1,6 +1,6 @@
 import pytest
 from conftest import contract_fixture
-from campuslife_contracts import validate
+from campuslife_contracts import text_hash, validate
 from test_capture_commit import apply, blob_store, commit, device, feed, new_id, store_bytes, text_capture
 
 __all__ = ["blob_store", "device"]
@@ -270,3 +270,320 @@ async def test_a_deleted_item_is_still_a_target_for_a_commit_link_and_a_relation
     link = f"{source}|about|item:{ITEM}"
     assert relations[link]["data"] == {"id": link, "from": source, "type": "about", "to": f"item:{ITEM}"}
     assert relations[linking["id"]]["data"] == {"id": linking["id"], **linking["data"]}
+
+
+def patch(entity, identifier, **changes):
+    return {"mutation_id": new_id(), "op": "patch", "entity": entity, "id": identifier, "set": changes}
+
+
+def patch_item(**changes):
+    return patch("item", ITEM, **{key.replace("__", "."): change for key, change in changes.items()})
+
+
+def task(**data):
+    return {
+        "mutation_id": new_id(), "op": "create", "entity": "item", "id": ITEM,
+        "data": {"kind": "task", "title": "과제 제출", "fields": {"progress": "planned"}, **data},
+    }
+
+
+async def item_row(db):
+    return rows(await feed(db), "item")[ITEM]
+
+
+def outcome(result):
+    return {name: value for name, value in result.items() if name != "mutation_id"}
+
+
+async def test_a_patch_whose_from_holds_is_applied_with_its_fields(db, device):
+    await apply(db, device, task())
+    before = await item_row(db)
+
+    [result] = await apply(db, device, patch_item(title={"from": "과제 제출", "to": "과제 1 제출"}))
+
+    assert outcome(result) == {"result": "applied", "applied_fields": ["title"]}
+    after = await item_row(db)
+    assert after["data"] == {**before["data"], "title": "과제 1 제출", "rev": after["rev"]}
+    assert after["rev"] > before["rev"]
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ({"title": {"from": "과제 제출", "to": "과제 1"}}, {"due_at": {"from": None, "to": "2026-03-09T14:59:00.000Z"}}),
+        ({"fields__progress": {"from": "planned", "to": "completed"}}, {"fields__reminders": {"from": None, "to": ["2026-03-08T12:00:00.000Z"]}}),
+    ],
+    ids=["title and due_at", "fields.progress and fields.reminders"],
+)
+async def test_two_patches_of_different_fields_from_the_same_state_both_apply(db, device, first, second):
+    await apply(db, device, task())
+
+    results = await apply(db, device, patch_item(**first), patch_item(**second))
+
+    assert [result["result"] for result in results] == ["applied", "applied"]
+    data = (await item_row(db))["data"]
+    for change_set in (first, second):
+        for key, change in change_set.items():
+            path = key.split("__")
+            assert (data[path[0]] if len(path) == 1 else data[path[0]][path[1]]) == change["to"]
+
+
+@pytest.mark.parametrize(
+    ("key", "first", "second", "kept"),
+    [
+        ("title", {"from": "과제 제출", "to": "과제 1"}, {"from": "과제 제출", "to": "과제 2"}, ("title",)),
+        ("fields__progress", {"from": "planned", "to": "completed"}, {"from": "planned", "to": "cancelled"}, ("fields", "progress")),
+    ],
+)
+async def test_the_second_of_two_patches_of_one_field_from_the_same_state_is_a_conflict(db, device, key, first, second, kept):
+    await apply(db, device, task())
+
+    results = await apply(db, device, patch_item(**{key: first}), patch_item(**{key: second}))
+
+    wire_key = key.replace("__", ".")
+    assert [outcome(result) for result in results] == [
+        {"result": "applied", "applied_fields": [wire_key]},
+        {"result": "conflict", "applied_fields": [], "conflicted_fields": [wire_key]},
+    ]
+    data = (await item_row(db))["data"]
+    assert (data[kept[0]] if len(kept) == 1 else data[kept[0]][kept[1]]) == first["to"]
+
+
+async def test_a_patch_with_a_stale_field_applies_its_other_fields(db, device):
+    await apply(db, device, task(), patch_item(title={"from": "과제 제출", "to": "과제 1"}))
+
+    [result] = await apply(db, device, patch_item(title={"from": "과제 제출", "to": "과제 2"}, fields__progress={"from": "planned", "to": "completed"}))
+
+    assert outcome(result) == {"result": "conflict", "applied_fields": ["fields.progress"], "conflicted_fields": ["title"]}
+    data = (await item_row(db))["data"]
+    assert (data["title"], data["fields"]["progress"]) == ("과제 1", "completed")
+
+
+async def test_a_stale_patch_to_the_value_already_there_is_applied_and_writes_nothing(db, device):
+    await apply(db, device, task(), patch_item(fields__progress={"from": "planned", "to": "completed"}))
+    before = await feed(db)
+
+    [result] = await apply(db, device, patch_item(fields__progress={"from": "planned", "to": "completed"}))
+
+    assert outcome(result) == {"result": "applied", "applied_fields": ["fields.progress"]}
+    assert await feed(db) == before
+
+
+async def test_a_number_compares_by_value_not_by_how_it_is_written(db, device):
+    course = mutation("create_course", id=ITEM)
+    await apply(db, device, course)
+
+    [result] = await apply(db, device, patch_item(fields__credits={"from": 3.0, "to": 2}))
+
+    assert outcome(result) == {"result": "applied", "applied_fields": ["fields.credits"]}
+    assert (await item_row(db))["data"]["fields"]["credits"] == 2
+
+
+async def test_a_body_compares_by_the_text_hash_of_what_is_stored(db, device):
+    await apply(db, device, task())
+
+    results = await apply(
+        db,
+        device,
+        patch_item(body={"from_hash": None, "to": ""}),
+        patch_item(body={"from_hash": text_hash(""), "to": "첫 줄"}),
+        patch_item(body={"from_hash": text_hash("첫 줄"), "to": "첫 줄\n둘째 줄"}),
+        patch_item(body={"from_hash": text_hash("첫 줄"), "to": "다른 줄"}),
+    )
+
+    assert [result["result"] for result in results] == ["applied", "applied", "applied", "conflict"]
+    assert (await item_row(db))["data"]["body"] == "첫 줄\n둘째 줄"
+
+
+async def test_a_body_patched_to_text_with_a_carriage_return_is_not_canonical(db, device):
+    await apply(db, device, task())
+    before = await feed(db)
+
+    [result] = await apply(db, device, patch_item(body={"from_hash": None, "to": "첫 줄\r\n"}))
+
+    assert outcome(result) == {"result": "rejected", "reason": "not_canonical"}
+    assert await feed(db) == before
+
+
+async def test_to_null_removes_an_optional_column_and_from_null_names_an_absent_one(db, device):
+    await apply(db, device, task(due_at="2026-03-09T14:59:00.000Z"))
+
+    results = await apply(
+        db,
+        device,
+        patch_item(due_at={"from": "2026-03-09T14:59:00.000Z", "to": None}, fields__reminders={"from": None, "to": []}),
+        patch_item(fields__reminders={"from": [], "to": None}),
+    )
+
+    assert [result["result"] for result in results] == ["applied", "applied"]
+    data = (await item_row(db))["data"]
+    assert "due_at" not in data
+    assert data["fields"] == {"progress": "planned"}
+
+
+async def test_a_field_the_items_kind_does_not_define_is_rejected_as_schema(db, device):
+    await apply(db, device, task())
+    before = await feed(db)
+
+    [result] = await apply(db, device, patch_item(fields__course_id={"from": None, "to": OTHER_ITEM}))
+
+    assert outcome(result) == {"result": "rejected", "reason": "schema"}
+    assert await feed(db) == before
+
+
+async def test_a_patch_leaving_dates_that_do_not_follow_all_day_is_rejected_as_schema(db, device):
+    await apply(db, device, task(starts_at="2026-03-02T00:30:00.000Z", due_at="2026-03-09T14:59:00.000Z"))
+    before = await feed(db)
+
+    [result] = await apply(db, device, mutation("patch_all_day_dates"))
+
+    assert outcome(result) == {"result": "rejected", "reason": "schema"}
+    assert await feed(db) == before
+
+
+async def test_a_patch_turning_all_day_on_with_its_dates_is_applied(db, device):
+    await apply(db, device, task(starts_at="2026-03-02T00:30:00.000Z"))
+
+    [result] = await apply(db, device, mutation("patch_all_day_dates"))
+
+    assert outcome(result) == {"result": "applied", "applied_fields": ["all_day", "starts_at"]}
+    data = (await item_row(db))["data"]
+    assert (data["all_day"], data["starts_at"]) == (True, {"date": "2026-03-02", "tz": "Asia/Seoul"})
+
+
+MORNING = "2026-03-02T00:30:00.000Z"
+DUE = "2026-03-09T14:59:00.000Z"
+DUE_DATE = {"date": "2026-03-09", "tz": "Asia/Seoul"}
+
+
+async def test_a_date_patch_from_before_the_item_went_all_day_is_a_conflict_not_a_schema_rejection(db, device):
+    await apply(db, device, task(starts_at=MORNING), mutation("patch_all_day_dates"))
+    before = await feed(db)
+
+    [result] = await apply(db, device, patch_item(starts_at={"from": MORNING, "to": "2026-03-03T00:30:00.000Z"}))
+
+    assert outcome(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["starts_at"]}
+    assert await feed(db) == before
+
+
+async def test_a_patch_from_before_the_item_went_all_day_conflicts_on_its_date_and_applies_its_body(db, device):
+    await apply(db, device, task(due_at=DUE, body="a"), patch_item(all_day={"from": None, "to": True}, due_at={"from": DUE, "to": DUE_DATE}))
+    before = await item_row(db)
+
+    [result] = await apply(db, device, patch_item(body={"from_hash": text_hash("a"), "to": "b"}, due_at={"from": DUE, "to": "2026-03-10T14:59:00.000Z"}))
+
+    assert outcome(result) == {"result": "conflict", "applied_fields": ["body"], "conflicted_fields": ["due_at"]}
+    after = await item_row(db)
+    assert after["data"] == {**before["data"], "body": "b", "rev": after["rev"]}
+
+
+async def p13(db, device):
+    """Another device moved starts_at; this patch, from the old state, turns all_day on and edits title and body."""
+    await apply(db, device, task(starts_at=MORNING, body="a"), patch_item(starts_at={"from": MORNING, "to": "2026-03-02T01:00:00.000Z"}))
+    return patch_item(
+        all_day={"from": None, "to": True},
+        starts_at={"from": MORNING, "to": {"date": "2026-03-02", "tz": "Asia/Seoul"}},
+        title={"from": "과제 제출", "to": "과제 1"},
+        body={"from_hash": text_hash("a"), "to": "b"},
+    )
+
+
+async def test_a_conflict_in_the_dates_holds_back_the_other_dates_and_nothing_else(db, device):
+    late = await p13(db, device)
+    before = await item_row(db)
+
+    [result] = await apply(db, device, late)
+
+    assert outcome(result) == {"result": "conflict", "applied_fields": ["title", "body"], "conflicted_fields": ["all_day", "starts_at"]}
+    after = await item_row(db)
+    assert after["data"] == {**before["data"], "title": "과제 1", "body": "b", "rev": after["rev"]}
+
+
+@pytest.mark.parametrize(("moved", "to"), [("starts_at", "2026-03-02T02:00:00.000Z"), ("due_at", "2026-03-09T12:00:00.000Z")])
+async def test_a_date_that_won_is_held_back_when_the_other_date_lost(db, device, moved, to):
+    dates = {"starts_at": MORNING, "due_at": DUE}
+    await apply(db, device, task(**dates), patch_item(**{moved: {"from": dates[moved], "to": to}}))
+    before = await feed(db)
+
+    [result] = await apply(db, device, patch_item(starts_at={"from": MORNING, "to": "2026-03-02T03:00:00.000Z"}, due_at={"from": DUE, "to": "2026-03-10T14:59:00.000Z"}))
+
+    assert outcome(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["starts_at", "due_at"]}
+    assert await feed(db) == before
+
+
+async def test_all_day_that_won_is_held_back_when_its_date_lost(db, device):
+    await apply(db, device, task(starts_at=MORNING), patch_item(starts_at={"from": MORNING, "to": None}))
+    before = await feed(db)
+
+    [result] = await apply(db, device, mutation("patch_all_day_dates"))
+
+    assert outcome(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["all_day", "starts_at"]}
+    assert await feed(db) == before
+
+
+async def test_a_field_the_kind_lacks_conflicts_instead_of_being_written_when_another_key_lost(db, device):
+    await apply(db, device, task(), patch_item(title={"from": "과제 제출", "to": "과제 1"}))
+    before = await feed(db)
+
+    [result] = await apply(db, device, patch_item(title={"from": "과제 제출", "to": "과제 2"}, fields__course_id={"from": None, "to": OTHER_ITEM}))
+
+    assert outcome(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["title", "fields.course_id"]}
+    assert await feed(db) == before
+
+
+@pytest.mark.parametrize("deleted", ["soft-deleted", "absent"])
+async def test_a_patch_of_an_item_that_is_not_live_is_rejected_as_deleted(db, device, deleted):
+    if deleted == "soft-deleted":
+        await apply(db, device, task(), op("delete", "item", ITEM))
+    before = await feed(db)
+
+    [result] = await apply(db, device, patch_item(title={"from": "과제 제출", "to": "과제 1"}))
+
+    assert outcome(result) == {"result": "rejected", "reason": "deleted"}
+    assert await feed(db) == before
+
+
+async def test_the_first_create_resent_after_a_patch_is_still_applied(db, device):
+    create = task()
+    await apply(db, device, create, patch_item(title={"from": "과제 제출", "to": "과제 1"}))
+
+    assert (await apply(db, device, {**create, "mutation_id": new_id()}))[0]["result"] == "applied"
+    assert (await item_row(db))["data"]["title"] == "과제 1"
+
+
+async def test_an_attachments_cloud_policy_is_patched_by_compare_and_set(db, device, blob_store, tmp_path):
+    capture = await text_capture(blob_store, tmp_path)
+    attachment = capture["attachments"][0]["id"]
+    await apply(db, device, commit(capture))
+
+    results = await apply(
+        db,
+        device,
+        patch("attachment", attachment, cloud_policy={"from": "local_only", "to": "cloud_allowed"}),
+        patch("attachment", attachment, cloud_policy={"from": "local_only", "to": "blocked"}),
+    )
+
+    assert [result["result"] for result in results] == ["applied", "conflict"]
+    assert rows(await feed(db), "attachment")[attachment]["data"]["cloud_policy"] == "cloud_allowed"
+
+
+async def test_a_tag_is_patched_by_compare_and_set_and_a_deleted_one_is_rejected(db, device):
+    await apply(db, device, mutation("create_tag"))
+
+    assert (await apply(db, device, mutation("patch_tag_color")))[0]["result"] == "applied"
+    assert rows(await feed(db), "tag")[TAG]["data"]["color"] == "#0088ff"
+    await apply(db, device, mutation("delete_tag"))
+    assert (await apply(db, device, patch("tag", TAG, name={"from": "시험", "to": "중간고사"})))[0].get("reason") == "deleted"
+
+
+async def test_a_batch_applies_in_order_so_a_patch_sees_the_create_before_it(db, device):
+    create = task()
+    edit = patch_item(title={"from": "과제 제출", "to": "과제 1"})
+
+    results = await apply(db, device, create, edit, edit)
+
+    assert [outcome(result) for result in results] == [
+        {"result": "applied"},
+        {"result": "applied", "applied_fields": ["title"]},
+        {"result": "duplicate", "original": {"mutation_id": edit["mutation_id"], "result": "applied", "applied_fields": ["title"]}},
+    ]
