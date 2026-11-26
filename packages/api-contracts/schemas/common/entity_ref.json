@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/common/entity_ref.json",
+  "title": "Entity reference",
+  "description": "\"<entity>:<id>\" naming one entity (E14). A blob is named by its SHA-256, every other entity by its UUID.",
+  "type": "string",
+  "pattern": "^((item|attachment|capture|artifact|suggestion|tag):[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|blob:[0-9a-f]{64})$"
+}

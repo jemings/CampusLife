@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/common/box.json",
+  "title": "Box",
+  "description": "[x, y, w, h] in normalized [0, 1] coordinates of the page as displayed, origin top left (D12, E17). For image_region the image is taken after its EXIF rotation. The box stays inside the unit square (rule box_extent).",
+  "type": "array",
+  "prefixItems": [
+    { "$ref": "#/$defs/unit" },
+    { "$ref": "#/$defs/unit" },
+    { "$ref": "#/$defs/unit" },
+    { "$ref": "#/$defs/unit" }
+  ],
+  "minItems": 4,
+  "items": false,
+  "x-box-extent": true,
+  "$defs": {
+    "unit": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}

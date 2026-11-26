@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/common/uuid.json",
+  "title": "UUID",
+  "description": "Lowercase UUIDv4 created by whoever creates the entity; it doubles as the idempotency key (D4).",
+  "type": "string",
+  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+}

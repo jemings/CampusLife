@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/common/sha256.json",
+  "title": "SHA-256",
+  "description": "Lowercase hex SHA-256 of a Blob's bytes; it is the Blob's id (D2, D4).",
+  "type": "string",
+  "pattern": "^[0-9a-f]{64}$"
+}

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/common/cloud_policy.json",
+  "title": "Cloud policy",
+  "description": "Where content may be processed, totally ordered blocked < local_only < cloud_allowed; derived data takes the minimum over its inputs (D8).",
+  "enum": ["blocked", "local_only", "cloud_allowed"]
+}

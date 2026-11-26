@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/common/local_date.json",
+  "title": "Local date",
+  "description": "An all-day date in a time zone, for all-day events and date deadlines (D11, E13).",
+  "type": "object",
+  "required": ["date", "tz"],
+  "properties": {
+    "date": { "$ref": "#/$defs/calendar_date" },
+    "tz": { "$ref": "tz.json" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "calendar_date": {
+      "description": "Calendar date YYYY-MM-DD without a zone; it must exist in the calendar (rule calendar).",
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+      "x-calendar-date": true
+    }
+  }
+}
