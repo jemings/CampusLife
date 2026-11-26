@@ -132,3 +132,7 @@ class Layout:
     @property
     def staging(self) -> Path:
         return self.root / "staging"
+
+    @property
+    def uploads(self) -> Path:
+        return self.root / "uploads"

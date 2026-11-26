@@ -13,7 +13,7 @@ EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
 
 def store_in(tmp_path, db, files=FileOps()):
-    return BlobStore(db, blobs_dir=tmp_path / "blobs", staging_dir=tmp_path / "staging", files=files)
+    return BlobStore(db, blobs_dir=tmp_path / "blobs", staging_dir=tmp_path / "staging", uploads_dir=tmp_path / "uploads", files=files)
 
 
 @pytest.fixture
