@@ -442,9 +442,11 @@ BYTE_RANGE = {"type": "string", "pattern": "^bytes[= ]([0-9]+-[0-9]*|-[0-9]+)(/[
         ("bytes 0-10/10", [Rule.BYTE_RANGE]),
         ("bytes 9-0/10", [Rule.BYTE_RANGE]),
         ("bytes=10-9223372036854775808", [Rule.INT64_TEXT]),
+        ("bytes=9223372036854775808-5", [Rule.INT64_TEXT]),
     ],
     ids=["one-byte", "ordered", "backwards", "open-ended", "suffix", "inside-size", "last-at-size", "backwards-sized",
-         "past-int64-is-one-violation"],
+         "past-int64-is-one-violation",
+         "backwards-past-int64-is-one-violation"],
 )
 def test_byte_range_runs_forward_inside_the_size(make_contract, text, expected):
     assert make_contract({"t/r": BYTE_RANGE}).validate("t/r", text) == [RuleViolation("", rule) for rule in expected]
