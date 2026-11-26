@@ -38,6 +38,21 @@ def conditional(location):
     return any(part in CONDITIONAL_KEYWORDS or part.endswith(("_is", "_is_not")) for part in segments)
 
 
+def other_branch(schema, instance):
+    """A union branch evaluated against an instance of another branch: a const member disagrees.
+
+    oneOf evaluates every branch, so without this a branch's required members would be recorded for
+    instances the discriminator sends elsewhere.
+    """
+    if not isinstance(instance, dict):
+        return False
+    members = schema.get("properties", {})
+    return any(
+        isinstance(member, dict) and "const" in member and name in instance and instance[name] != member["const"]
+        for name, member in members.items()
+    )
+
+
 class TaggedText(str):
     """A string that remembers where it sits in the fixture."""
 
@@ -85,7 +100,7 @@ def probe():
         def check(validator, value, instance, schema):
             location = locations.get(id(schema))
             at = where.get(id(instance)) if isinstance(instance, (dict, list)) else getattr(instance, "at", None)
-            if location is not None and at is not None and not conditional(location):
+            if location is not None and at is not None and not conditional(location) and not other_branch(schema, instance):
                 key = (case.schema_id, case.name, keyword, location, at)
                 if key not in seen:
                     seen.add(key)
