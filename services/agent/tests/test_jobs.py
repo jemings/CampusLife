@@ -283,3 +283,21 @@ async def test_jobs_are_listed_by_subject_in_the_order_they_were_enqueued(db):
     second = await enqueue(db, extraction(job_type="extract.ocr", subject_ref=subject))
 
     assert [queued.id for queued in await db.read(lambda snap: jobs.of_subject(snap, subject))] == [first.id, second.id]
+
+
+async def test_jobs_a_stopped_hub_left_running_wait_again_or_fail_once_out_of_attempts(db):
+    fresh, spent, waiting, done = [await enqueue(db, extraction(params={"n": n})) for n in range(4)]
+    assert (await claim(db)).id == fresh.id
+    for finished, state, attempts in ((spent, "running", jobs.MAX_ATTEMPTS), (done, "succeeded", 1)):
+        await db.write(lambda tx: tx.execute(
+            "UPDATE processing_jobs SET state = ?, attempts = ?, next_attempt_at = NULL WHERE id = ?", (state, attempts, finished.id)
+        ))
+    untouched = [await job(db, each.id) for each in (waiting, done)]
+    restarted = NOW + timedelta(hours=1)
+
+    assert await db.write(lambda tx: jobs.recover_after_restart(tx, now=restarted)) == 2
+
+    again, out = await job(db, fresh.id), await job(db, spent.id)
+    assert (again.state, again.attempts, again.next_attempt_at, again.error) == (JobState.RETRY_WAIT, 1, instant(restarted), jobs.STOPPED_BY_RESTART)
+    assert (out.state, out.attempts, out.next_attempt_at, out.error) == (JobState.FAILED, jobs.MAX_ATTEMPTS, None, jobs.STOPPED_BY_RESTART)
+    assert [await job(db, each.id) for each in (waiting, done)] == untouched
