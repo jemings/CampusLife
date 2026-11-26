@@ -324,6 +324,38 @@ async def test_a_job_whose_handler_is_left_running_is_not_claimed_again_until_th
         await asyncio.wait_for(serving, 5)
 
 
+async def test_at_the_end_handlers_left_running_are_cancelled_again_and_those_that_still_run_are_named(db, blob_store, registry):
+    run, started, released = stubborn()
+    second_cancel_ended = []
+
+    async def ends_on_the_second_cancel(job, context):
+        cancels = 0
+        while True:
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancels += 1
+                if cancels == 2:
+                    second_cancel_ended.append(job.id)
+                    raise
+
+    handles(registry, run, job_type="extract.stuck", timeout=timedelta(seconds=0.1))
+    handles(registry, ends_on_the_second_cancel, timeout=timedelta(seconds=0.1))
+    runner = JobRunner(JobContext(db, blob_store, registry), stop_grace=timedelta(seconds=0.2))
+    stuck, yielding = await enqueue(db, registry, spec(1, "extract.stuck"), spec(2))
+    try:
+        assert await runner.run_due() == 2
+        ending = time.monotonic()
+
+        still_running = await runner.end_left_running()
+
+        assert time.monotonic() - ending < 2
+        assert (still_running, second_cancel_ended) == ([stuck.id], [yielding.id])
+        assert await runner.end_left_running() == [stuck.id]
+    finally:
+        released.set()
+
+
 async def test_cancelling_a_handler_that_ignores_it_still_ends_its_job_cancelled_in_bounded_time(db, blob_store, registry):
     run, started, released = stubborn()
     handles(registry, run)
