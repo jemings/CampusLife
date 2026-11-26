@@ -1,0 +1,316 @@
+"""openapi/sync.yaml: a valid OpenAPI 3.1 document that only points at the contract's JSON Schemas (D17, E18, E19)."""
+
+from pathlib import Path
+
+import pytest
+import yaml
+from openapi_spec_validator import validate
+from openapi_spec_validator.readers import read_from_filename
+
+from campuslife_contracts import bundled_contract, contract_root
+from campuslife_contracts.jsonio import read_strict
+
+ROOT = contract_root()
+DOCUMENT = ROOT / "openapi" / "sync.yaml"
+SPEC = yaml.safe_load(DOCUMENT.read_text(encoding="utf-8"))
+METHODS = {"get", "put", "post", "delete", "patch"}
+
+ENDPOINTS = {
+    ("post", "/v1/pair"),
+    ("post", "/v1/blobs/uploads"),
+    ("put", "/v1/blobs/uploads/{sha}/chunks/{i}"),
+    ("post", "/v1/blobs/uploads/{sha}/finalize"),
+    ("get", "/v1/blobs/{sha}"),
+    ("post", "/v1/mutations"),
+    ("get", "/v1/changes"),
+    ("get", "/v1/hub"),
+    ("post", "/v1/devices/me/status"),
+}
+
+
+def walk(node, at=()):
+    yield at, node
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from walk(value, (*at, key))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from walk(value, (*at, index))
+
+
+def follow_pointer(document, pointer):
+    node = document
+    for part in pointer.lstrip("/").split("/") if pointer else ():
+        part = part.replace("~1", "/").replace("~0", "~")
+        node = node[int(part)] if isinstance(node, list) else node[part]
+    return node
+
+
+def resolve(ref):
+    """The node a $ref of this document names, without the validator's help."""
+    target, _, pointer = ref.partition("#")
+    if not target:
+        return follow_pointer(SPEC, pointer)
+    return follow_pointer(read_strict((DOCUMENT.parent / target).resolve()), pointer)
+
+
+def operations():
+    for path, item in SPEC["paths"].items():
+        for method, operation in item.items():
+            if method in METHODS:
+                yield method, path, operation
+
+
+def deref(node):
+    return resolve(node["$ref"]) if isinstance(node, dict) and "$ref" in node else node
+
+
+def test_the_document_is_valid_openapi_3_1_with_its_references_resolved():
+    spec, base_uri = read_from_filename(str(DOCUMENT))
+    validate(spec, base_uri=base_uri)
+    assert spec["openapi"].startswith("3.1.")
+
+
+REFS = sorted({node["$ref"] for _, node in walk(SPEC) if isinstance(node, dict) and "$ref" in node})
+
+
+@pytest.mark.parametrize("ref", REFS)
+def test_every_reference_resolves(ref):
+    assert isinstance(resolve(ref), dict)
+
+
+def test_external_references_name_contract_schemas():
+    schema_ids = bundled_contract().schema_ids
+    for ref in REFS:
+        target = ref.partition("#")[0]
+        if target:
+            assert target.startswith("../schemas/") and target.endswith(".json"), ref
+            assert target.removeprefix("../schemas/").removesuffix(".json") in schema_ids, ref
+
+
+def test_every_schema_in_the_document_is_a_reference_to_a_contract_schema():
+    """No wire shape is defined here; the JSON Schemas are the only source (D17)."""
+    found = [(at, node) for at, node in walk(SPEC) if at and at[-1] == "schema"]
+    assert found
+    for at, node in found:
+        assert set(node) == {"$ref"} and node["$ref"].startswith("../schemas/"), at
+    assert "schemas" not in SPEC.get("components", {})
+
+
+def test_the_endpoints_are_the_contract_list():
+    assert {(method, path) for method, path, _ in operations()} == ENDPOINTS
+
+
+def test_every_operation_but_pairing_needs_the_device_token():
+    assert SPEC["security"] == [{"device": []}]
+    assert SPEC["components"]["securitySchemes"]["device"] == {
+        **SPEC["components"]["securitySchemes"]["device"], "type": "http", "scheme": "bearer"
+    }
+    unauthenticated = {(method, path) for method, path, operation in operations() if operation.get("security") == []}
+    assert unauthenticated == {("post", "/v1/pair")}
+
+
+@pytest.mark.parametrize(("method", "path"), sorted(ENDPOINTS))
+def test_every_request_sends_the_contract_version(method, path):
+    operation = SPEC["paths"][path][method]
+    names = {deref(parameter)["name"] for parameter in operation.get("parameters", [])}
+    assert "CampusLife-Contract" in names
+    assert deref({"$ref": "#/components/parameters/Contract"})["required"] is True
+
+
+RESPONSES = [
+    (method, path, status)
+    for method, path, operation in operations()
+    for status in operation["responses"]
+]
+
+
+@pytest.mark.parametrize(("method", "path", "status"), RESPONSES)
+def test_every_response_carries_the_hub_id_and_epoch(method, path, status):
+    response = deref(SPEC["paths"][path][method]["responses"][status])
+    headers = {name: deref(header) for name, header in response.get("headers", {}).items()}
+    assert headers["CampusLife-Hub-Id"]["required"] is True
+    assert headers["CampusLife-Epoch"]["required"] is True
+
+
+@pytest.mark.parametrize(("method", "path", "status"), [entry for entry in RESPONSES if entry[2].startswith("4")])
+def test_every_error_response_is_a_common_error(method, path, status):
+    response = deref(SPEC["paths"][path][method]["responses"][status])
+    assert response["content"]["application/json"]["schema"] == {"$ref": "../schemas/common/error.json"}
+
+
+JSON = "application/json"
+OCTETS = "application/octet-stream"
+ERROR = (JSON, "common/error")
+STAMP = {"CampusLife-Hub-Id": "HubId", "CampusLife-Epoch": "Epoch"}
+BLOB = {**STAMP, "ETag": "ETag", "Accept-Ranges": "AcceptRanges"}
+UPLOAD = "/v1/blobs/uploads"
+CHUNK = "/v1/blobs/uploads/{sha}/chunks/{i}"
+FINALIZE = "/v1/blobs/uploads/{sha}/finalize"
+
+# (method, path, status) -> (body as (media type, schema id) or None, {header: component})
+RESPONSE_TABLE = {
+    ("post", "/v1/pair", "200"): ((JSON, "device/pair_response"), STAMP),
+    ("post", "/v1/pair", "400"): (ERROR, STAMP),
+    ("post", "/v1/pair", "401"): (ERROR, {**STAMP, "Retry-After": "RetryAfter"}),
+    ("post", UPLOAD, "200"): ((JSON, "blob/stored"), STAMP),
+    ("post", UPLOAD, "201"): ((JSON, "blob/upload_session"), STAMP),
+    ("post", UPLOAD, "400"): (ERROR, STAMP),
+    ("post", UPLOAD, "401"): (ERROR, STAMP),
+    ("put", CHUNK, "204"): (None, STAMP),
+    ("put", CHUNK, "400"): (ERROR, STAMP),
+    ("put", CHUNK, "401"): (ERROR, STAMP),
+    ("put", CHUNK, "404"): (ERROR, STAMP),
+    ("put", CHUNK, "409"): (ERROR, STAMP),
+    ("post", FINALIZE, "200"): ((JSON, "blob/stored"), STAMP),
+    ("post", FINALIZE, "400"): (ERROR, STAMP),
+    ("post", FINALIZE, "401"): (ERROR, STAMP),
+    ("post", FINALIZE, "404"): (ERROR, STAMP),
+    ("post", FINALIZE, "409"): (ERROR, STAMP),
+    ("get", "/v1/blobs/{sha}", "200"): ((OCTETS, None), BLOB),
+    ("get", "/v1/blobs/{sha}", "206"): ((OCTETS, None), {**BLOB, "Content-Range": "ContentRange"}),
+    ("get", "/v1/blobs/{sha}", "304"): (None, {**STAMP, "ETag": "ETag"}),
+    ("get", "/v1/blobs/{sha}", "400"): (ERROR, STAMP),
+    ("get", "/v1/blobs/{sha}", "401"): (ERROR, STAMP),
+    ("get", "/v1/blobs/{sha}", "404"): (ERROR, STAMP),
+    ("get", "/v1/blobs/{sha}", "416"): (ERROR, {**STAMP, "Content-Range": "UnsatisfiedRange"}),
+    ("post", "/v1/mutations", "200"): ((JSON, "mutation/batch_response"), STAMP),
+    ("post", "/v1/mutations", "400"): (ERROR, STAMP),
+    ("post", "/v1/mutations", "401"): (ERROR, STAMP),
+    ("get", "/v1/changes", "200"): ((JSON, "sync/changes_page"), STAMP),
+    ("get", "/v1/changes", "400"): (ERROR, STAMP),
+    ("get", "/v1/changes", "401"): (ERROR, STAMP),
+    ("get", "/v1/hub", "200"): ((JSON, "sync/hub"), STAMP),
+    ("get", "/v1/hub", "400"): (ERROR, STAMP),
+    ("get", "/v1/hub", "401"): (ERROR, STAMP),
+    ("post", "/v1/devices/me/status", "204"): (None, STAMP),
+    ("post", "/v1/devices/me/status", "400"): (ERROR, STAMP),
+    ("post", "/v1/devices/me/status", "401"): (ERROR, STAMP),
+}
+
+# Header component -> (schema it points at, required)
+HEADER_COMPONENTS = {
+    "HubId": ("sync/response_headers.json#/properties/CampusLife-Hub-Id", True),
+    "Epoch": ("sync/response_headers.json#/properties/CampusLife-Epoch", True),
+    "ETag": ("blob/download_response_headers.json#/properties/ETag", True),
+    "AcceptRanges": ("blob/download_response_headers.json#/properties/Accept-Ranges", True),
+    "ContentRange": ("blob/download_response_headers.json#/properties/Content-Range", True),
+    "UnsatisfiedRange": ("blob/range_not_satisfiable_headers.json#/properties/Content-Range", True),
+    "RetryAfter": ("device/pair_failure_headers.json#/properties/Retry-After", False),
+}
+
+CONTRACT_PARAMETER = {"CampusLife-Contract": ("header", True, "sync/request_headers.json#/properties/CampusLife-Contract")}
+SHA_PARAMETER = {"sha": ("path", True, "common/sha256.json")}
+
+# (method, path) -> {parameter: (in, required, schema)}, path-level parameters included
+PARAMETER_TABLE = {
+    ("post", "/v1/pair"): CONTRACT_PARAMETER,
+    ("post", UPLOAD): CONTRACT_PARAMETER,
+    ("put", CHUNK): {**CONTRACT_PARAMETER, **SHA_PARAMETER, "i": ("path", True, "common/int64.json#/$defs/non_negative")},
+    ("post", FINALIZE): {**CONTRACT_PARAMETER, **SHA_PARAMETER},
+    ("get", "/v1/blobs/{sha}"): {
+        **CONTRACT_PARAMETER, **SHA_PARAMETER,
+        "Range": ("header", False, "blob/download_request_headers.json#/properties/Range"),
+        "If-None-Match": ("header", False, "blob/download_request_headers.json#/properties/If-None-Match"),
+    },
+    ("post", "/v1/mutations"): CONTRACT_PARAMETER,
+    ("get", "/v1/changes"): {
+        **CONTRACT_PARAMETER,
+        "since": ("query", True, "sync/changes_query.json#/properties/since"),
+        "limit": ("query", False, "sync/changes_query.json#/properties/limit"),
+    },
+    ("get", "/v1/hub"): CONTRACT_PARAMETER,
+    ("post", "/v1/devices/me/status"): CONTRACT_PARAMETER,
+}
+
+# (method, path) -> request body as (media type, schema id), or None
+REQUEST_TABLE = {
+    ("post", "/v1/pair"): (JSON, "device/pair_request"),
+    ("post", UPLOAD): (JSON, "blob/upload_request"),
+    ("put", CHUNK): (OCTETS, None),
+    ("post", FINALIZE): None,
+    ("get", "/v1/blobs/{sha}"): None,
+    ("post", "/v1/mutations"): (JSON, "mutation/batch_request"),
+    ("get", "/v1/changes"): None,
+    ("get", "/v1/hub"): None,
+    ("post", "/v1/devices/me/status"): (JSON, "device/status"),
+}
+
+
+def schema_ref(schema):
+    return schema["$ref"].removeprefix("../schemas/")
+
+
+def body(content):
+    if content is None:
+        return None
+    ((media, entry),) = content.items()
+    return media, schema_ref(entry["schema"]).removesuffix(".json") if "schema" in entry else None
+
+
+def component_name(ref):
+    return ref.removeprefix("#/components/headers/")
+
+
+def test_each_response_has_exactly_its_body_and_headers():
+    found = {}
+    for method, path, operation in operations():
+        for status, response in operation["responses"].items():
+            response = deref(response)
+            headers = {name: component_name(header["$ref"]) for name, header in response.get("headers", {}).items()}
+            found[(method, path, status)] = (body(response.get("content")), headers)
+    assert found == RESPONSE_TABLE
+
+
+def test_each_header_component_points_at_its_header_schema():
+    found = {
+        name: (schema_ref(header["schema"]), header.get("required", False))
+        for name, header in SPEC["components"]["headers"].items()
+    }
+    assert found == HEADER_COMPONENTS
+
+
+def test_each_operation_takes_exactly_its_parameters():
+    found = {}
+    for method, path, operation in operations():
+        parameters = [*SPEC["paths"][path].get("parameters", []), *operation.get("parameters", [])]
+        found[(method, path)] = {
+            (parameter := deref(entry))["name"]: (parameter["in"], parameter.get("required", False), schema_ref(parameter["schema"]))
+            for entry in parameters
+        }
+    assert found == PARAMETER_TABLE
+
+
+def test_each_operation_takes_exactly_its_request_body():
+    found = {}
+    for method, path, operation in operations():
+        request = operation.get("requestBody")
+        assert request is None or request["required"] is True
+        found[(method, path)] = body(request["content"]) if request else None
+    assert found == REQUEST_TABLE
+
+
+@pytest.mark.parametrize(("method", "path"), sorted(ENDPOINTS))
+def test_every_operation_answers_400(method, path):
+    expected = "BadRequestAnyContract" if (method, path) == ("get", "/v1/hub") else "BadRequest"
+    assert SPEC["paths"][path][method]["responses"]["400"] == {"$ref": f"#/components/responses/{expected}"}
+
+
+def test_only_get_hub_never_answers_contract_too_old():
+    """A client too old for the Hub still reads min_contract_version from GET /v1/hub and stops by itself."""
+    responses = SPEC["components"]["responses"]
+    assert "contract_too_old" in responses["BadRequest"]["description"]
+    assert "Never contract_too_old" in responses["BadRequestAnyContract"]["description"]
+    assert "GET /v1/hub is the one exception to `contract_too_old`" in " ".join(SPEC["info"]["description"].split())
+
+
+def test_header_names_are_the_header_schemas_property_names():
+    """So contract_headers knows every header name the document uses."""
+    for method, path, operation in operations():
+        for status, response in operation["responses"].items():
+            for name, header in deref(response).get("headers", {}).items():
+                assert HEADER_COMPONENTS[component_name(header["$ref"])][0].endswith("#/properties/" + name)
+        for entry in [*SPEC["paths"][path].get("parameters", []), *operation.get("parameters", [])]:
+            parameter = deref(entry)
+            if parameter["in"] == "header":
+                assert schema_ref(parameter["schema"]).endswith("_headers.json#/properties/" + parameter["name"])

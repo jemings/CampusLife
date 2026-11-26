@@ -28,6 +28,7 @@ def test_wheel_carries_schemas_and_fixtures_as_package_data(wheel):
     assert "campuslife_contracts/contract/schemas/common/uuid.json" in names
     assert any(name.startswith("campuslife_contracts/contract/fixtures/valid/") for name in names)
     assert "campuslife_contracts/vocabulary.json" in names
+    assert "campuslife_contracts/contract/openapi/sync.yaml" in names
 
 
 def test_installed_wheel_validates_from_its_bundled_schemas(wheel, tmp_path):

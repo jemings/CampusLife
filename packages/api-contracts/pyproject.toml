@@ -17,6 +17,8 @@ campuslife-contracts = "campuslife_contracts.cli:main"
 dev = [
     "pytest>=8.4",
     "check-jsonschema>=0.39",
+    "openapi-spec-validator>=0.9",
+    "pyyaml>=6",
 ]
 
 [build-system]
@@ -29,9 +31,10 @@ packages = ["src/campuslife_contracts"]
 [tool.hatch.build.targets.wheel.force-include]
 "schemas" = "campuslife_contracts/contract/schemas"
 "fixtures" = "campuslife_contracts/contract/fixtures"
+"openapi" = "campuslife_contracts/contract/openapi"
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "schemas", "fixtures", "tests", "HARNESS.md"]
+include = ["src", "schemas", "fixtures", "openapi", "tests", "HARNESS.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
