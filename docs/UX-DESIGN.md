@@ -88,3 +88,47 @@ Window size class는 기기의 종류가 아니라 앱이 사용할 수 있는 w
 - [ ] 화면 전환 중 선택 과목·녹음 상태·입력 내용이 유지된다.
 - [ ] Split-screen/가로 방향/높이가 낮은 창에서 과도한 다중 패널을 피한다.
 - [ ] 터치 영역, 글자 크기, 색상 대비가 모바일 사용에 적합하다.
+
+
+## iPad Pro 13 — Study Workspace
+
+iPad Pro 13은 단순한 모바일 대시보드가 아니라 CampusLife의 정식 학습 단말입니다.
+
+기본 가로 레이아웃:
+- 왼쪽 sidebar: 학기, 과목, 강의, Inbox
+- 중앙 document canvas: PDF/PPT/PPT 변환 자료
+- 오른쪽 inspector: AI 강의 노트, 예린이의 메모, 자료 출처
+- 선택 가능한 하단/보조 패널: 녹음 타임라인, 페이지 썸네일, 과제
+- Apple Pencil 사용 시 문서 위에 직접 필기하되 원본 파일을 변경하지 않음
+
+### iPad 주요 동작
+
+- 강의 자료와 AI 요약을 나란히 비교
+- PDF 페이지에서 Apple Pencil로 freehand drawing, highlight, text note
+- 필기 레이어를 문서/페이지별로 분리 저장
+- Files/Share Extension에서 PDF, PPTX, HWPX, 이미지, 링크를 Inbox로 가져오기
+- 키보드와 포인터, drag and drop 지원
+- 오프라인으로 내려받은 강의 자료와 기존 노트 열람/편집
+- 연결 복구 시 변경사항을 공통 Sync API로 전송
+
+### 세부 설계 원칙
+
+- iPad 앱은 SwiftUI 기반 native client로 구현한다.
+- Pencil 입력/편집 데이터는 PencilKit을 사용한다.
+- PDF 열람과 page navigation은 PDFKit을 사용한다.
+- PencilKit 원본 drawing 데이터와 공통 PDF overlay export를 함께 보존한다.
+- 원본 PDF에 필기를 직접 덮어쓰지 않는다.
+- Split View, Stage Manager, 창 크기 변경, portrait/landscape를 지원한다.
+- iPad 13-inch의 특정 해상도나 고정 aspect ratio를 하드코딩하지 않는다.
+- Regular/Compact size class와 실제 window bounds에 따라 navigation, document canvas, inspector를 재배치한다.
+- Fold8 Inner와 iPad가 모두 넓은 화면을 제공하더라도 각 플랫폼의 입력 방식과 navigation 관습에 맞춰 별도 최적화한다.
+
+### 기기별 디자인 미리보기
+
+프로토타입 상단의 기기 보기 전환은 다음을 제공한다.
+1. PC Desktop
+2. Fold8 Cover
+3. Fold8 Inner (4:3 design canvas)
+4. iPad Pro 13 (4:3 study workspace)
+
+iPad 모드는 4:3 디자인 미리보기이며 실제 iPad 화면 크기/Stage Manager 창 크기를 대체하지 않는다.
