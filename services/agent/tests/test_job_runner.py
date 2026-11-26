@@ -470,6 +470,43 @@ async def looks_for_due_jobs(runner, *, act=lambda: None, over_s=0.3):
     return len(calls)
 
 
+@pytest.mark.parametrize("ending", ["stopped", "cancelled"])
+async def test_a_job_an_ended_run_left_running_runs_again_when_the_runner_runs_again(db, registry, runner, ending):
+    calls, started = [], asyncio.Event()
+
+    async def run(job, context):
+        calls.append(job.id)
+        if len(calls) == 1:
+            started.set()
+            await asyncio.sleep(60)
+        return Succeeded()
+
+    handles(registry, run)
+    [queued] = await enqueue(db, registry, spec())
+    stop = asyncio.Event()
+    serving = asyncio.create_task(runner.run_forever(stop, idle_s=30))
+    await asyncio.wait_for(started.wait(), 10)
+    if ending == "stopped":
+        stop.set()
+        await asyncio.wait_for(serving, 5)
+    else:
+        serving.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(serving, 5)
+    assert (await job(db, queued)).state is JobState.RUNNING
+
+    again = asyncio.Event()
+    serving = asyncio.create_task(runner.run_forever(again, idle_s=30))
+
+    async def succeeded():
+        return (await job(db, queued)).state is JobState.SUCCEEDED
+
+    await until(succeeded)
+    again.set()
+    await asyncio.wait_for(serving, 5)
+    assert ((await job(db, queued)).attempts, calls) == (2, [queued.id, queued.id])
+
+
 async def test_a_job_no_handler_here_runs_does_not_keep_the_runner_looking(db, registry, runner):
     other = JobRegistry()
     other.handle("summary", Pipeline("summary-1"), returning(Succeeded()))
