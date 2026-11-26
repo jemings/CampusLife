@@ -18,6 +18,7 @@ CLOSED = {
     "mutation/mutation", "mutation/batch_request",
     "device/pair_request", "device/status",
     "blob/upload_request",
+    "sync/changes_query",
 }
 OPEN = {
     "capture/capture", "capture/attachment", "capture/origin", "capture/timeline",
