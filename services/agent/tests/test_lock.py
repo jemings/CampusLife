@@ -3,6 +3,7 @@ import sys
 
 import pytest
 
+from campuslife_hub import lock as lock_module
 from campuslife_hub.lock import AlreadyRunning, HubLock
 
 
@@ -62,5 +63,21 @@ def test_a_lock_holds_only_its_own_file_and_only_until_released(tmp_path):
         assert not held.holds(tmp_path / "other" / "hub.lock")
         held.release()
         assert not held.holds(tmp_path / "hub.lock")
+    with HubLock.acquire(tmp_path / "hub.lock"):
+        pass
+
+
+def test_a_release_whose_unlock_fails_still_closes_the_file_and_frees_the_lock(tmp_path, monkeypatch):
+    def failing_unlock(fd):
+        raise OSError("unlock failed")
+
+    held = HubLock.acquire(tmp_path / "hub.lock")
+    monkeypatch.setattr(lock_module, "_unlock", failing_unlock)
+
+    with pytest.raises(OSError, match="unlock failed"):
+        held.release()
+
+    assert not held.holds(tmp_path / "hub.lock")
+    monkeypatch.undo()
     with HubLock.acquire(tmp_path / "hub.lock"):
         pass
