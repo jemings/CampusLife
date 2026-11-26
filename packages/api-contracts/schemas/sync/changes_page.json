@@ -22,7 +22,8 @@
           "description": "Known entities are the examples; a client skips rows of entities it does not know.",
           "type": "string",
           "pattern": "^[a-z][a-z_]*$",
-          "examples": ["capture", "attachment", "item", "relation", "tag"]
+          "examples": ["capture", "attachment", "item", "relation", "tag"],
+          "x-open": true
         },
         "id": { "type": "string", "minLength": 1 },
         "rev": { "$ref": "../common/int64.json#/$defs/non_negative" },
