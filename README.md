@@ -116,6 +116,10 @@ CampusLife는 강의 녹음·정리만을 위한 앱이 아닙니다. 수업, �
 | Security | [#12 파일 안전·cloud policy·백업](https://github.com/jemings/CampusLife/issues/12) | 각 Phase와 병행 |
 | Quality | [#14 E2E 테스트·운영 가이드](https://github.com/jemings/CampusLife/issues/14) | 각 Phase와 병행 |
 
+## 개발
+
+커밋 전에 비밀·개인 자료가 추적되지 않는지 확인합니다: `python3 tools/repo_guard.py` (CI의 `guard` 워크플로가 같은 검사를 돌립니다.)
+
 ## 디자인 프로토타입
 
 [인터랙티브 웹 프로토타입](apps/prototype/index.html) — 브라우저에서 열어 PC / Fold8 접은 화면 / Fold8 펼친 4:3 화면 / iPad Pro 13을 전환해 볼 수 있습니다. 디자인 검토용이며 실제 녹음·동기화·AI와 연결되어 있지 않습니다.
