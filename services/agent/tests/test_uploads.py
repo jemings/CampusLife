@@ -3,6 +3,7 @@ import errno
 import hashlib
 import os
 import stat
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -202,6 +203,44 @@ async def test_other_bytes_for_a_received_chunk_are_a_chunk_mismatch_and_the_fir
     assert staging_files(tmp_path) == []
     assert await store.finalize(phone, sha(DATA)) == StoredBlob(sha(DATA), len(DATA))
 
+
+
+def stage_both_before_either_places(monkeypatch):
+    """Hold each chunk send after its staging file is written until a second send has written one too."""
+    both_staged = threading.Barrier(2, timeout=5)
+    real = BlobStore._write_staging
+
+    def stage_then_wait(self, data):
+        staging = real(self, data)
+        both_staged.wait()
+        return staging
+
+    monkeypatch.setattr(BlobStore, "_write_staging", stage_then_wait)
+
+
+async def test_two_sends_of_one_chunk_with_other_bytes_at_once_keep_the_first_placed_and_refuse_the_other(tmp_path, store, phone, monkeypatch):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    stage_both_before_either_places(monkeypatch)
+    sent = [b"0123", b"XXXX"]
+
+    results = await asyncio.gather(*(store.put_chunk(phone, sha(DATA), 0, data) for data in sent), return_exceptions=True)
+
+    [kept] = [data for data, result in zip(sent, results, strict=True) if result is None]
+    [refused] = [result for result in results if result is not None]
+    assert isinstance(refused, ChunkMismatch)
+    [directory] = (tmp_path / "uploads").iterdir()
+    assert (directory / "0").read_bytes() == kept
+    assert staging_files(tmp_path) == []
+
+
+async def test_two_sends_of_one_chunk_with_the_same_bytes_at_once_both_succeed(tmp_path, store, phone, monkeypatch):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    stage_both_before_either_places(monkeypatch)
+
+    assert await asyncio.gather(*(store.put_chunk(phone, sha(DATA), 0, b"0123") for _ in range(2))) == [None, None]
+
+    assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == (0,)
+    assert staging_files(tmp_path) == []
 
 @pytest.mark.parametrize(
     ("index", "data"),
