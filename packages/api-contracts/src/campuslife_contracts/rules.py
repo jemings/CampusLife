@@ -116,6 +116,16 @@ def _relation_id(validator, enabled, instance, schema):
         yield ValidationError(f"id must be {'|'.join(parts)!r}", path=["id"])
 
 
+def _relation_not_self(validator, enabled, instance, schema):
+    if not isinstance(instance, dict):
+        return
+    ends = [instance.get("from"), instance.get("to")]
+    if not all(isinstance(end, str) for end in ends) or ends[0] != ends[1]:
+        return
+    if _members_fit(validator, schema, instance, ["from", "to"]):
+        yield ValidationError("a relation cannot link an entity to itself", path=["to"])
+
+
 def _box_extent(validator, enabled, instance, schema):
     if not (isinstance(instance, list) and len(instance) == 4 and all(map(_is_number, instance))):
         return
@@ -136,4 +146,5 @@ RULE_KEYWORDS = {
     "x-box-extent": RuleKeyword(Rule.BOX_EXTENT, _box_extent),
     "x-raw-form": RuleKeyword(Rule.RAW_FORM, _raw_form),
     "x-relation-id": RuleKeyword(Rule.RELATION_ID, _relation_id),
+    "x-relation-not-self": RuleKeyword(Rule.RELATION_SELF, _relation_not_self),
 }

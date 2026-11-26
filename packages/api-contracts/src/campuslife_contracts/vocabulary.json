@@ -56,6 +56,10 @@
       "description": "Rule relation_id: id equals from|type|to (D18, E14).",
       "const": true
     },
+    "x-relation-not-self": {
+      "description": "Rule relation_self: from and to are different entities.",
+      "const": true
+    },
     "discriminator": {
       "description": "OpenAPI discriminator. mapping names, for every value of the discriminator's enum, the one oneOf branch ($ref) it selects.",
       "type": "object",
@@ -73,7 +77,7 @@
   },
   "propertyNames": {
     "if": { "pattern": "^x-" },
-    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id"] }
+    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self"] }
   },
   "x-discriminated-union": true
 }
