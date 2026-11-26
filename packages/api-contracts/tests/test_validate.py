@@ -135,12 +135,14 @@ def test_instance_must_use_json_loads_types(make_contract, instance):
 
 
 def test_error_code_catalogue_is_exactly_the_contract_list():
+    """code is open (x-open); the catalogue is its examples."""
     catalogue = [
         "invalid_request", "not_canonical", "id_reuse", "hash_mismatch", "chunk_mismatch", "incomplete",
         "unauthorized", "device_revoked", "device_dormant", "not_found", "contract_too_old",
     ]
     schema = json.loads((contract_root() / "schemas/common/error.json").read_text(encoding="utf-8"))
-    assert schema["properties"]["code"]["enum"] == catalogue
+    assert schema["properties"]["code"]["examples"] == catalogue
+    assert schema["properties"]["code"]["x-open"] is True
     for code in catalogue:
         details = {"details": {"missing_chunks": [0]}} if code == "incomplete" else {}
         assert validate("common/error", {"code": code, "message": "m", **details}) == []
