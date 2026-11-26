@@ -1,0 +1,496 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: CampusLife Hub sync port
+  version: "1"
+  description: |
+    The HTTP surface clients reach through `tailscale serve` (D5). Every body,
+    parameter and header schema is a JSON Schema under `../schemas`; this
+    document adds only paths, status codes and media types (D17).
+
+    Every request sends `CampusLife-Contract`, and every response, errors
+    included, carries `CampusLife-Hub-Id` and `CampusLife-Epoch` (E18). Header
+    names are case-insensitive; `campuslife_contracts.contract_headers` respells
+    them before they are checked against the header schemas.
+
+    Every operation except pairing needs the Device's bearer token (D6, E19).
+    401 carries `unauthorized` for a missing or unknown token, `device_revoked`
+    after a revoke, and `device_dormant` after the dormant period. Every
+    operation can answer 400: `contract_too_old` when CampusLife-Contract is
+    below the Hub's min_contract_version, `not_canonical` for a string that is
+    not NFC, and `invalid_request` for anything else malformed. GET /v1/hub is
+    the one exception to `contract_too_old`: it answers a client of any
+    version, so that client can read min_contract_version and stop by itself.
+    Error bodies are `common/error`, whose code is open: a client treats a code
+    it does not know as a plain failure.
+servers:
+  - url: https://{hub}
+    variables:
+      hub:
+        default: hub.example.invalid
+        description: The Hub's tailnet name, from the pairing QR code.
+security:
+  - device: []
+paths:
+  /v1/pair:
+    post:
+      operationId: pair
+      summary: Register this Device with a one-time pairing secret.
+      description: >-
+        The token is returned once; the Hub keeps only its SHA-256 (D6). A
+        secret that is wrong, expired or already used gets 401 unauthorized,
+        and reusing a secret also revokes the Device it paired. Failed attempts
+        are rate limited: the Hub then answers 401 with Retry-After.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Contract"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/device/pair_request.json"
+      responses:
+        "200":
+          description: Paired.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/device/pair_response.json"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The secret is wrong, expired or used, or too many attempts failed.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/common/error.json"
+  /v1/blobs/uploads:
+    post:
+      operationId: openUpload
+      summary: Open or resume the upload of one Blob.
+      description: >-
+        Keyed by (this Device, sha256) (E19), so asking again resumes the same
+        session and returns the chunks already received (D7). Asking again with
+        another size while the session is open gets 400 invalid_request.
+        Revoking the Device discards its open sessions (D6).
+      parameters:
+        - $ref: "#/components/parameters/Contract"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/blob/upload_request.json"
+      responses:
+        "200":
+          description: The Hub already stores this Blob; nothing to upload.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/blob/stored.json"
+        "201":
+          description: Upload session open.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/blob/upload_session.json"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/blobs/uploads/{sha}/chunks/{i}:
+    parameters:
+      - $ref: "#/components/parameters/Sha"
+      - name: i
+        in: path
+        required: true
+        description: Chunk index, from 0 (E19).
+        schema:
+          $ref: "../schemas/common/int64.json#/$defs/non_negative"
+    put:
+      operationId: putChunk
+      summary: Store one chunk, in any order.
+      description: >-
+        The body is exactly the bytes of chunk i: chunk_size bytes, or the rest
+        of the Blob for the last chunk. Sending the same bytes again is a no-op;
+        different bytes for a stored index get 409 chunk_mismatch (E19). An
+        index past the last chunk or a wrong length gets 400 invalid_request.
+      parameters:
+        - $ref: "#/components/parameters/Contract"
+      requestBody:
+        required: true
+        content:
+          application/octet-stream: {}
+      responses:
+        "204":
+          description: Stored, or already stored with the same bytes.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: chunk_mismatch, other bytes are already stored at this index.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/common/error.json"
+  /v1/blobs/uploads/{sha}/finalize:
+    parameters:
+      - $ref: "#/components/parameters/Sha"
+    post:
+      operationId: finalizeUpload
+      summary: Combine the chunks and store the Blob.
+      description: >-
+        The Hub checks the whole Blob's sha256 and size before storing it (D7).
+        Finalizing a Blob the Hub already stores answers 200 whether or not a
+        session is open, so a retried finalize is harmless (D7).
+      parameters:
+        - $ref: "#/components/parameters/Contract"
+      responses:
+        "200":
+          description: Stored.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/blob/stored.json"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            incomplete, with details.missing_chunks (E19); or hash_mismatch,
+            the combined bytes are not this sha256 and size, and the chunks
+            are discarded.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/common/error.json"
+  /v1/blobs/{sha}:
+    parameters:
+      - $ref: "#/components/parameters/Sha"
+    get:
+      operationId: getBlob
+      summary: Download a Blob, whole or one byte range.
+      parameters:
+        - $ref: "#/components/parameters/Contract"
+        - name: Range
+          in: header
+          schema:
+            $ref: "../schemas/blob/download_request_headers.json#/properties/Range"
+        - name: If-None-Match
+          in: header
+          schema:
+            $ref: "../schemas/blob/download_request_headers.json#/properties/If-None-Match"
+      responses:
+        "200":
+          description: The whole Blob.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Accept-Ranges:
+              $ref: "#/components/headers/AcceptRanges"
+          content:
+            application/octet-stream: {}
+        "206":
+          description: The requested range.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Accept-Ranges:
+              $ref: "#/components/headers/AcceptRanges"
+            Content-Range:
+              $ref: "#/components/headers/ContentRange"
+          content:
+            application/octet-stream: {}
+        "304":
+          description: If-None-Match named this Blob's ETag.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+            ETag:
+              $ref: "#/components/headers/ETag"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "416":
+          description: The range starts past the end of the Blob; invalid_request.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+            Content-Range:
+              $ref: "#/components/headers/UnsatisfiedRange"
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/common/error.json"
+  /v1/mutations:
+    post:
+      operationId: postMutations
+      summary: Apply a batch of Mutations in order.
+      description: >-
+        The batch is handled in order and stops at the first retry; every
+        Mutation gets a result (E12). A Mutation that breaks its schema is
+        rejected{schema} inside a 200. 400 is only for a body that is not a
+        batch at all.
+      parameters:
+        - $ref: "#/components/parameters/Contract"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/mutation/batch_request.json"
+      responses:
+        "200":
+          description: One result per Mutation, in request order.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/mutation/batch_response.json"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/changes:
+    get:
+      operationId: getChanges
+      summary: Rows changed since a cursor (D3).
+      parameters:
+        - $ref: "#/components/parameters/Contract"
+        - name: since
+          in: query
+          required: true
+          schema:
+            $ref: "../schemas/sync/changes_query.json#/properties/since"
+        - name: limit
+          in: query
+          schema:
+            $ref: "../schemas/sync/changes_query.json#/properties/limit"
+      responses:
+        "200":
+          description: One page.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/sync/changes_page.json"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/hub:
+    get:
+      operationId: getHub
+      summary: The Hub's identity and the contract versions it accepts.
+      parameters:
+        - $ref: "#/components/parameters/Contract"
+      responses:
+        "200":
+          description: Hub information.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/sync/hub.json"
+        "400":
+          $ref: "#/components/responses/BadRequestAnyContract"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/devices/me/status:
+    post:
+      operationId: postDeviceStatus
+      summary: Report this Device's diagnostic heartbeat.
+      parameters:
+        - $ref: "#/components/parameters/Contract"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/device/status.json"
+      responses:
+        "204":
+          description: Recorded.
+          headers:
+            CampusLife-Hub-Id:
+              $ref: "#/components/headers/HubId"
+            CampusLife-Epoch:
+              $ref: "#/components/headers/Epoch"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+components:
+  securitySchemes:
+    device:
+      type: http
+      scheme: bearer
+      description: The opaque token from POST /v1/pair (device/pair_response token). It does not expire; revoke ends it (D6).
+  parameters:
+    Contract:
+      name: CampusLife-Contract
+      in: header
+      required: true
+      schema:
+        $ref: "../schemas/sync/request_headers.json#/properties/CampusLife-Contract"
+    Sha:
+      name: sha
+      in: path
+      required: true
+      description: The Blob's sha256.
+      schema:
+        $ref: "../schemas/common/sha256.json"
+  headers:
+    HubId:
+      required: true
+      schema:
+        $ref: "../schemas/sync/response_headers.json#/properties/CampusLife-Hub-Id"
+    Epoch:
+      required: true
+      schema:
+        $ref: "../schemas/sync/response_headers.json#/properties/CampusLife-Epoch"
+    ETag:
+      required: true
+      schema:
+        $ref: "../schemas/blob/download_response_headers.json#/properties/ETag"
+    AcceptRanges:
+      required: true
+      schema:
+        $ref: "../schemas/blob/download_response_headers.json#/properties/Accept-Ranges"
+    ContentRange:
+      required: true
+      schema:
+        $ref: "../schemas/blob/download_response_headers.json#/properties/Content-Range"
+    UnsatisfiedRange:
+      required: true
+      description: The Blob's size, as bytes */size.
+      schema:
+        $ref: "../schemas/blob/range_not_satisfiable_headers.json#/properties/Content-Range"
+    RetryAfter:
+      description: Seconds to wait, sent once failed pairing attempts are rate limited.
+      schema:
+        $ref: "../schemas/device/pair_failure_headers.json#/properties/Retry-After"
+  responses:
+    BadRequest:
+      description: invalid_request, not_canonical or contract_too_old.
+      headers:
+        CampusLife-Hub-Id:
+          $ref: "#/components/headers/HubId"
+        CampusLife-Epoch:
+          $ref: "#/components/headers/Epoch"
+      content:
+        application/json:
+          schema:
+            $ref: "../schemas/common/error.json"
+    BadRequestAnyContract:
+      description: >-
+        invalid_request or not_canonical. Never contract_too_old: GET /v1/hub
+        answers every contract version so a client can read
+        min_contract_version.
+      headers:
+        CampusLife-Hub-Id:
+          $ref: "#/components/headers/HubId"
+        CampusLife-Epoch:
+          $ref: "#/components/headers/Epoch"
+      content:
+        application/json:
+          schema:
+            $ref: "../schemas/common/error.json"
+    Unauthorized:
+      description: unauthorized, device_revoked or device_dormant.
+      headers:
+        CampusLife-Hub-Id:
+          $ref: "#/components/headers/HubId"
+        CampusLife-Epoch:
+          $ref: "#/components/headers/Epoch"
+      content:
+        application/json:
+          schema:
+            $ref: "../schemas/common/error.json"
+    NotFound:
+      description: not_found, no such Blob, or no upload session and the Blob is not stored.
+      headers:
+        CampusLife-Hub-Id:
+          $ref: "#/components/headers/HubId"
+        CampusLife-Epoch:
+          $ref: "#/components/headers/Epoch"
+      content:
+        application/json:
+          schema:
+            $ref: "../schemas/common/error.json"
