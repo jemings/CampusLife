@@ -451,18 +451,22 @@ async def test_a_runner_that_cannot_record_a_failure_stops_with_the_error_rather
 
 
 async def looks_for_due_jobs(runner, *, act=lambda: None, over_s=0.3):
-    """How often run_forever looks for due jobs over over_s, given nothing to run, after act."""
-    calls = []
+    """How often run_forever looks for due jobs over over_s, given nothing to run, after act, which comes once the
+    first look is over."""
+    calls, first_look_over = [], asyncio.Event()
     run_due = runner.run_due
 
     async def counted():
         calls.append(time.monotonic())
-        return await run_due()
+        try:
+            return await run_due()
+        finally:
+            first_look_over.set()
 
     runner.run_due = counted
     stop = asyncio.Event()
     serving = asyncio.create_task(runner.run_forever(stop, idle_s=30))
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(first_look_over.wait(), 10)
     act()
     await asyncio.sleep(over_s)
     stop.set()
