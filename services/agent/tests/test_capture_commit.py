@@ -30,7 +30,7 @@ def course(item_id):
 
 @pytest.fixture
 def blob_store(tmp_path, db):
-    return BlobStore(db, blobs_dir=tmp_path / "blobs", staging_dir=tmp_path / "staging")
+    return BlobStore(db, blobs_dir=tmp_path / "blobs", staging_dir=tmp_path / "staging", uploads_dir=tmp_path / "uploads")
 
 
 @pytest.fixture

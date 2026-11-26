@@ -82,7 +82,7 @@ async def open_core(root: Path, *, create: bool, sync_roots: Iterable[Path] | No
         db = await Database.open(layout, lock=lock, create=create)
         try:
             identity, hub_device = await db.write(_issue_identity_and_hub_device)
-            blobs = BlobStore(db, blobs_dir=layout.blobs, staging_dir=layout.staging)
+            blobs = BlobStore(db, blobs_dir=layout.blobs, staging_dir=layout.staging, uploads_dir=layout.uploads)
             for kept in blobs.discard_staging_leftovers():
                 log.warning("kept the staging leftover %s: %s", kept.path, kept.reason)
             yield Core(layout, db, blobs, identity, hub_device)
