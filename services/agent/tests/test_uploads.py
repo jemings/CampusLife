@@ -299,8 +299,8 @@ async def session_count(db):
     return await db.read(lambda snap: snap.execute("SELECT count(*) FROM upload_sessions").fetchone()[0])
 
 
-async def test_an_upload_larger_than_the_free_space_is_invalid_and_opens_nothing(tmp_path, db, phone):
-    store = uploads_in(tmp_path, db, free_space=lambda path: len(DATA) - 1)
+async def test_an_upload_needing_more_than_the_free_space_for_its_chunks_and_their_combination_is_invalid(tmp_path, db, phone):
+    store = uploads_in(tmp_path, db, free_space=lambda path: 2 * len(DATA) - 1)
 
     with pytest.raises(InvalidUpload) as refused:
         await store.open_upload(phone, sha(DATA), len(DATA))
@@ -309,16 +309,16 @@ async def test_an_upload_larger_than_the_free_space_is_invalid_and_opens_nothing
     assert await session_count(db) == 0
 
 
-async def test_an_upload_as_large_as_the_free_space_on_the_data_roots_volume_opens(tmp_path, db, phone):
+async def test_an_upload_whose_chunks_and_combination_just_fit_the_free_space_on_the_data_roots_volume_opens(tmp_path, db, phone):
     measured = []
-    store = uploads_in(tmp_path, db, free_space=lambda path: measured.append(path) or len(DATA))
+    store = uploads_in(tmp_path, db, free_space=lambda path: measured.append(path) or 2 * len(DATA))
 
     assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == ()
     assert measured == [tmp_path / "uploads"]
 
 
 async def test_resuming_is_not_measured_against_the_free_space_again(tmp_path, db, phone):
-    free = [len(DATA)]
+    free = [2 * len(DATA)]
     store = uploads_in(tmp_path, db, free_space=lambda path: free[0])
     await store.open_upload(phone, sha(DATA), len(DATA))
     await store.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])

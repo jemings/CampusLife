@@ -398,8 +398,9 @@ class BlobStore:
     async def open_upload(self, device: DeviceId, sha256: str, size: int) -> StoredBlob | UploadSession:
         """Open or resume the device's upload of one Blob (D7, E19); a Blob already stored needs none.
 
-        A new upload must fit in the space free on the data root's volume when it opens. Answering that
-        the Blob is stored restarts its collection clock, so it outlives the commit the device sends next.
+        A new upload must fit twice in the space free on the data root's volume when it opens: finalize writes
+        the combined file while the chunks are still there. Answering that the Blob is stored restarts its
+        collection clock, so it outlives the commit the device sends next.
         """
         _refuse_outside_contract("blob/upload_request", {"sha256": sha256, "size": size})
 
@@ -413,8 +414,8 @@ class BlobStore:
             session = _open_session(tx, device, sha256)
             if session is None:
                 free = self._free_space(self._uploads_dir)
-                if size > free:
-                    raise InvalidUpload(f"{size} bytes do not fit in the {free} bytes free on the data root's volume")
+                if 2 * size > free:
+                    raise InvalidUpload(f"{size} bytes and their combined copy do not fit in the {free} bytes free on the data root's volume")
                 session = _Session(str(uuid.uuid4()), size, self._chunk_size)
                 tx.execute(
                     "INSERT INTO upload_sessions (id, device_id, sha256, size, chunk_size, touched_at) VALUES (?, ?, ?, ?, ?, ?)",
