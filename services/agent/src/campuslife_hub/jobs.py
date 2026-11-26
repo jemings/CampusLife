@@ -147,14 +147,44 @@ def job_key(spec: JobSpec, pipeline: Pipeline) -> str:
     return hashlib.sha256(canonical_json(parts)).hexdigest()
 
 
-def check(spec: JobSpec, pipeline: Pipeline) -> str:
-    """spec's job_key under pipeline; TypeError or ValueError when spec cannot be stored as a job."""
-    if not isinstance(spec.subject_ref, str) or not spec.subject_ref:
-        raise TypeError(f"a job's subject_ref is a reference, not {spec.subject_ref!r}")
+@dataclass(frozen=True)
+class _Stored:
+    """The columns a spec fills in its job's row."""
+
+    job_key: str
+    job_type: str
+    subject_ref: str
+    inputs: str
+    params: str
+
+
+def _bound(text: str) -> str:
+    """sqlite3 binds a str as UTF-8, so a str holding a lone surrogate cannot be stored."""
+    text.encode("utf-8")
+    return text
+
+
+def _stored(spec: JobSpec, pipeline: Pipeline) -> _Stored:
+    """spec as enqueue stores it; TypeError or ValueError when it cannot be stored."""
+    for name in ("job_type", "subject_ref"):
+        value = getattr(spec, name)
+        if not isinstance(value, str) or not value:
+            raise TypeError(f"a job's {name} is a non-empty str, not {value!r}")
     for sha256 in spec.inputs:
         if not isinstance(sha256, str) or not SHA256.fullmatch(sha256):
             raise ValueError(f"a job's inputs are SHA-256 hex digests, not {sha256!r}")
-    return job_key(spec, pipeline)
+    return _Stored(
+        job_key(spec, pipeline),
+        _bound(spec.job_type),
+        _bound(spec.subject_ref),
+        json.dumps(list(spec.inputs)),
+        _bound(json.dumps(dict(spec.params), ensure_ascii=False)),
+    )
+
+
+def check(spec: JobSpec, pipeline: Pipeline) -> str:
+    """spec's job_key under pipeline; TypeError or ValueError when spec cannot be stored as a job."""
+    return _stored(spec, pipeline).job_key
 
 
 COLUMNS = (
@@ -191,17 +221,17 @@ def of_subject(runner: Tx | Snapshot, subject_ref: str) -> list[Job]:
 
 def enqueue(tx: Tx, spec: JobSpec, pipeline: Pipeline, *, now: datetime | None = None) -> Job:
     """The job for spec under pipeline: a new pending one, or the one with its job_key as it stands."""
-    key = check(spec, pipeline)
+    stored = _stored(spec, pipeline)
     at = _now(now)
     tx.execute(
         f"INSERT INTO processing_jobs ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, NULL, ?, ?)"
         " ON CONFLICT (job_key) DO NOTHING",
         (
-            str(uuid.uuid4()), key, spec.job_type, spec.subject_ref, json.dumps(list(spec.inputs)), json.dumps(dict(spec.params), ensure_ascii=False),
+            str(uuid.uuid4()), stored.job_key, stored.job_type, stored.subject_ref, stored.inputs, stored.params,
             pipeline.version, pipeline.provider, pipeline.model, pipeline.prompt_version, JobState.PENDING.value, at, at, at,
         ),
     )
-    (identifier,) = tx.execute("SELECT id FROM processing_jobs WHERE job_key = ?", (key,)).fetchone()
+    (identifier,) = tx.execute("SELECT id FROM processing_jobs WHERE job_key = ?", (stored.job_key,)).fetchone()
     return get(tx, identifier)
 
 
