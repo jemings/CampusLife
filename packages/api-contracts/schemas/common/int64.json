@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/common/int64.json",
+  "title": "int64",
+  "description": "Every integer in the contract goes through this or $defs/non_negative, so Kotlin Long and Swift Int64 can hold whatever the Hub accepts. Narrower bounds sit next to the $ref.",
+  "type": "integer",
+  "minimum": -9223372036854775808,
+  "maximum": 9223372036854775807,
+  "$defs": {
+    "non_negative": { "$ref": "#", "minimum": 0 }
+  }
+}
