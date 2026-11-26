@@ -1,21 +1,24 @@
-"""The job runner (D16, E12): runs due ProcessingJobs one at a time on the Hub's event loop.
+"""The job runner (D16, E12, E14): runs due ProcessingJobs one at a time on the Hub's event loop.
 
 A handler is registered per job type with the Pipeline that goes into its job_key and the
 time it may take. It returns how the job finished. An exception, a result that cannot be
 recorded, or running past its time means "try again later", up to MAX_ATTEMPTS.
+Planners are registered by name; the capture.ingest handler, registered in every
+JobRegistry, asks them what to run for each committed Capture.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from . import jobs
 from .blobs import BlobStore
 from .db import Database, Tx
+from .ingest import INGEST, INGEST_PIPELINE, CaptureView, run_ingest
 from .jobs import MAX_ATTEMPTS, Failed, Finished, Job, JobSpec, JobState, Pipeline
 
 log = logging.getLogger(__name__)
@@ -32,6 +35,7 @@ STOP_GRACE = timedelta(seconds=5)
 ERROR_MAX_CHARS = 2000
 
 type Handler = Callable[[Job, JobContext], Awaitable[Finished]]
+type Planner = Callable[[CaptureView, JobContext], Awaitable[Iterable[JobSpec]]]
 
 
 class UnknownJobType(LookupError):
@@ -42,6 +46,8 @@ class JobRegistry:
     def __init__(self) -> None:
         self._timeouts: dict[str, timedelta] = {}
         self._handlers: dict[str, tuple[Pipeline, Handler]] = {}
+        self._planners: dict[str, Planner] = {}
+        self.handle(INGEST, INGEST_PIPELINE, run_ingest)
 
     def handle(self, job_type: str, pipeline: Pipeline, handler: Handler, *, timeout: timedelta = HANDLER_TIMEOUT) -> None:
         if job_type in self._handlers:
@@ -57,7 +63,10 @@ class JobRegistry:
         try:
             return self._handlers[job_type]
         except KeyError:
-            raise UnknownJobType(job_type) from None
+            raise UnknownJobType(f"no handler for job type {job_type}") from None
+
+    def pipeline(self, job_type: str) -> Pipeline:
+        return self._entry(job_type)[0]
 
     def handler(self, job_type: str) -> Handler:
         return self._entry(job_type)[1]
@@ -66,9 +75,19 @@ class JobRegistry:
         self._entry(job_type)
         return self._timeouts[job_type]
 
+    def plan(self, name: str, planner: Planner) -> None:
+        if name in self._planners:
+            raise ValueError(f"a planner named {name} is already registered")
+        self._planners[name] = planner
+
+    @property
+    def planners(self) -> tuple[tuple[str, Planner], ...]:
+        """In the order they were registered."""
+        return tuple(self._planners.items())
+
     def enqueue(self, tx: Tx, spec: JobSpec, *, now: datetime | None = None) -> Job:
         """jobs.enqueue under the Pipeline registered for spec's job type."""
-        return jobs.enqueue(tx, spec, self._entry(spec.job_type)[0], now=now)
+        return jobs.enqueue(tx, spec, self.pipeline(spec.job_type), now=now)
 
 
 @dataclass(frozen=True)
