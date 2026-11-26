@@ -142,3 +142,34 @@ Privacy, backup, observability, tests는 모든 단계에서 함께 구현하고
 - 강의 시각과 사진을 구간 단위로 연결
 - 원본·산출물·처리 상태를 로컬에서 조회
 - 실패 후 재시도해도 중복 산출물이 만들어지지 않음
+
+## Phase 3.5 — 교수자/조교 배포 파일 수집 및 분석
+
+Phase 3 강의 AI pipeline과 통합 Inbox 사이에 다중 파일 ingest를 완성합니다.
+
+- Android Share Intent 및 Storage Access Framework로 여러 파일 수집
+- Windows drag-and-drop/import 경로
+- CourseMaterialSet으로 다수 파일을 하나의 강의/공지 자료 묶음으로 구성
+- 확장자 + MIME + magic bytes 기반 파일 형식 탐지
+- 원본 불변 보존, 해시/메타데이터/버전 기록
+- PDF 텍스트 및 스캔 PDF OCR
+- PPT/PPTX 슬라이드 구조/노트/표 추출
+- DOCX 문단/제목/표 추출
+- XLSX/CSV 시트/표/셀 범위 추출
+- 국내 대학에서 자주 쓰는 HWP/HWPX 지원 adapter와 미지원 fallback 정의
+- 이미지, 오디오, 동영상, SRT/VTT 처리
+- ZIP 안전 검사 및 선택적 내부 파일 추출
+- 코드/텍스트/JSON/XML/YAML/Jupyter 등 개발 자료 추출
+- ContentBlock 및 source locator 표준화
+- 여러 파일 간 통합 요약 및 충돌 탐지
+- extractor 상태, 경고, 재처리 기능
+- 악성/손상/암호화 파일 정책과 리소스 제한
+
+완료 기준:
+- 하나의 강의에 녹음, 사진, PDF, PPTX, DOCX, XLSX, HWPX 등 복수 파일을 연결할 수 있습니다.
+- 원본 파일이 변경되지 않고 checksum으로 검증됩니다.
+- 가능한 경우 페이지/슬라이드/시트/셀/시간 구간으로 AI 요약의 근거를 추적할 수 있습니다.
+- 지원하지 않는 파일도 원본을 보존하고 실패 사유를 사용자에게 설명합니다.
+- 매크로나 스크립트가 실행되지 않으며 ZIP 추출 제한이 테스트됩니다.
+- 강의 자료 묶음 전체를 대상으로 교차 문서 요약과 질의가 가능합니다.
+
