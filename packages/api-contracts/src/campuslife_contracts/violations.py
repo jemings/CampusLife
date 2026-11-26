@@ -13,6 +13,7 @@ class Rule(enum.StrEnum):
     RANGE_ORDER = "range_order"
     RAW_FORM = "raw_form"
     RELATION_ID = "relation_id"
+    RELATION_SELF = "relation_self"
     TZ_EXISTS = "tz_exists"
 
 

@@ -226,3 +226,19 @@ def test_relation_id_rule_skips_members_that_break_their_own_schema(make_contrac
     contract = make_contract({"t/rel": RELATION})
     bad_type = {"id": "item:a|about|item:b", "from": "item:a", "type": "abuot", "to": "item:b"}
     assert contract.validate("t/rel", bad_type) == [SchemaViolation(path="/type", keyword="enum")]
+
+
+SELF = {"type": "object", "properties": {"to": {"type": "string", "minLength": 1}}, "x-relation-not-self": True}
+
+
+def test_relation_from_an_entity_to_itself_breaks_relation_self(make_contract):
+    contract = make_contract({"t/rel": SELF})
+    assert contract.validate("t/rel", {"from": "item:a", "to": "item:b"}) == []
+    assert contract.validate("t/rel", {"from": "item:a", "to": "item:a"}) == [
+        RuleViolation(path="/to", rule=Rule.RELATION_SELF)
+    ]
+
+
+def test_relation_self_skips_ends_that_break_their_own_schema(make_contract):
+    contract = make_contract({"t/rel": SELF})
+    assert contract.validate("t/rel", {"from": "", "to": ""}) == [SchemaViolation(path="/to", keyword="minLength")]
