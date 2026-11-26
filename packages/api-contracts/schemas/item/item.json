@@ -16,27 +16,28 @@
     "schema_version": { "description": "Version of this kind's fields schema the row was written with.", "$ref": "../common/int64.json#/$defs/non_negative", "minimum": 1, "x-owner": "hub" },
     "title": { "type": "string", "minLength": 1, "x-owner": "user" },
     "body": { "type": "string", "x-owner": "user", "x-text": true },
-    "starts_at": { "description": "local_date when all_day is true, otherwise instant (E13).", "x-owner": "user" },
-    "due_at": { "description": "local_date when all_day is true, otherwise instant (E13).", "x-owner": "user" },
+    "starts_at": { "description": "local_date when all_day is true, otherwise instant (E13).", "$ref": "#/$defs/date_value", "x-owner": "user" },
+    "due_at": { "description": "local_date when all_day is true, otherwise instant (E13).", "$ref": "#/$defs/date_value", "x-owner": "user" },
     "all_day": { "type": "boolean", "x-owner": "user" },
     "fields": { "description": "Kind-specific members, checked against item/fields/<kind> for the MVP kinds.", "type": "object", "x-owner": "user" },
     "rev": { "description": "change_seq of the row's last write (D3).", "$ref": "../common/int64.json#/$defs/non_negative", "x-owner": "hub" },
     "deleted_at": { "$ref": "../common/instant.json", "x-owner": "hub" },
     "status": { "description": "Removed from the common columns (U4); refused even in this open shape so it does not come back by accident.", "not": {} }
   },
-  "allOf": [
-    {
-      "if": { "properties": { "all_day": { "const": true } }, "required": ["all_day"] },
-      "then": {
-        "properties": { "starts_at": { "$ref": "../common/local_date.json" }, "due_at": { "$ref": "../common/local_date.json" } }
-      },
-      "else": {
-        "properties": { "starts_at": { "$ref": "../common/instant.json" }, "due_at": { "$ref": "../common/instant.json" } }
-      }
-    },
-    { "$ref": "#/$defs/fields_of_kind" }
-  ],
+  "allOf": [{ "$ref": "#/$defs/dates_follow_all_day" }, { "$ref": "#/$defs/fields_of_kind" }],
   "$defs": {
+    "date_value": {
+      "description": "An instant (a string) or a local_date (an object).",
+      "if": { "type": "string" },
+      "then": { "$ref": "../common/instant.json" },
+      "else": { "$ref": "../common/local_date.json" }
+    },
+    "dates_follow_all_day": {
+      "description": "Which of the two date shapes all_day selects; date_value has already checked the shape itself.",
+      "if": { "properties": { "all_day": { "const": true } }, "required": ["all_day"] },
+      "then": { "properties": { "starts_at": { "type": "object" }, "due_at": { "type": "object" } } },
+      "else": { "properties": { "starts_at": { "type": "string" }, "due_at": { "type": "string" } } }
+    },
     "fields_of_kind": {
       "description": "Dispatches fields to the schema of a known kind; an unknown kind keeps fields as any object (E21 forward rule).",
       "allOf": [
