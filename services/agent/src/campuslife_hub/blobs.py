@@ -25,17 +25,19 @@ import time
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
 
 from campuslife_contracts import validate
 
-from .clock import now_instant
+from .clock import instant, now_instant
 from .db import Database, Snapshot, Tx
 from .devices import DeviceId
 
 COPY_CHUNK = 1024 * 1024
 DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024
+SESSION_LIFETIME = timedelta(days=7)
 STAGING_SUFFIX = ".part"
 CHUNK_NAME = re.compile(r"0|[1-9][0-9]*")
 READ_ONLY = stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH
@@ -455,3 +457,22 @@ class BlobStore:
         """Discard the device's open uploads, as revoking it does (D6)."""
         ended = await self._db.write(lambda tx: _end_sessions(tx, "device_id = ?", (device,)))
         return await self._discard_sessions(ended)
+
+    async def _sweep_orphan_sessions(self) -> list[KeptLeftover]:
+        # List before reading the rows: a directory made after the listing belongs to a row made before it.
+        directories = await asyncio.to_thread(lambda: sorted(self._uploads_dir.iterdir()) if self._uploads_dir.is_dir() else [])
+        owned = await self._db.read(lambda snap: {session_id for (session_id,) in snap.execute("SELECT id FROM upload_sessions")})
+        kept = []
+        for directory in directories:
+            if directory.name not in owned:
+                kept += await asyncio.to_thread(self._remove_session_dir, directory)
+        return kept
+
+    async def expire_sessions(self, now: datetime) -> list[KeptLeftover]:
+        """End the uploads untouched for SESSION_LIFETIME before `now` (E10) and remove the directories no session owns.
+
+        A crash between ending a session and removing its chunks leaves such a directory.
+        """
+        cutoff = instant(now - SESSION_LIFETIME)
+        await self._db.write(lambda tx: _end_sessions(tx, "touched_at < ?", (cutoff,)))
+        return await self._sweep_orphan_sessions()

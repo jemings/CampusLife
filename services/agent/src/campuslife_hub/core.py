@@ -14,6 +14,7 @@ import logging
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path, PurePath
 
 from .blobs import BlobStore
@@ -83,8 +84,9 @@ async def open_core(root: Path, *, create: bool, sync_roots: Iterable[Path] | No
         try:
             identity, hub_device = await db.write(_issue_identity_and_hub_device)
             blobs = BlobStore(db, blobs_dir=layout.blobs, staging_dir=layout.staging, uploads_dir=layout.uploads)
-            for kept in blobs.discard_staging_leftovers():
-                log.warning("kept the staging leftover %s: %s", kept.path, kept.reason)
+            kept = blobs.discard_staging_leftovers() + await blobs.expire_sessions(datetime.now(UTC))
+            for leftover in kept:
+                log.warning("left %s for a later clean-up: %s", leftover.path, leftover.reason)
             yield Core(layout, db, blobs, identity, hub_device)
         finally:
             await db.close()
