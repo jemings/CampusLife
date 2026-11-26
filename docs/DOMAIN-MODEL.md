@@ -43,7 +43,7 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 
 - Item에는 `status` 열이 없습니다. task의 상태는 `fields.progress` 하나입니다(U4).
 - Relation `type`은 `about, supersedes, rendition_of, evidence, tagged, conflicts_with`이며 Hub가 보내는 쪽에서 열린 값입니다. Tag 부여는 `item:<id>` → `tag:<id>`인 `tagged` Relation입니다.
-- Relation `locators`는 사용자가 Suggestion을 수락할 때 Hub가 그 evidence에서 복사하는 근거 위치들입니다(D10). evidence Relation에만 있고, 각 Locator의 anchor(blob 또는 capture)는 `to`와 같습니다. 한 원본의 여러 곳(예: p.2와 p.5)은 Relation 하나의 locators에 함께 담깁니다. 클라이언트는 쓰지 않습니다.
+- Relation `locators`는 사용자가 Suggestion을 수락할 때 Hub가 그 evidence에서 복사하는 근거 위치들입니다(D10). evidence Relation에만 있고, 각 Locator의 anchor(blob 또는 capture)는 `to`와 같습니다. 모르는 Relation type의 locators는 막지 않습니다(알려진 type은 Relation `type`의 `examples`, 곧 알려진 값 목록으로 판정합니다). 한 원본의 여러 곳(예: p.2와 p.5)은 Relation 하나의 locators에 함께 담깁니다. 클라이언트는 쓰지 않습니다.
 - AnnotationLayer(#17)와 ConflictRecord(#18)의 스키마는 각 이슈가 추가합니다(E20).
 
 ### Hub 파생 (읽기 전용으로 동기화)
@@ -56,7 +56,7 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 | ContentBlock | id = hash(blob, extractor_id, extractor_version, ordinal), blob_sha256, block_type, text 또는 payload, locator (동기화하지 않음) |
 
 - Artifact의 provider·model·prompt_version은 모델을 쓴 job에만 있습니다(렌디션에는 없음). 본문 구조(`blocks`, `refs`)와 `processing_summary`의 모양은 #8이 정합니다(E20). 유효 `cloud_policy`는 저장하지 않고 호출 때 계산합니다(D8).
-- Suggestion `proposed`의 모양은 action을 따릅니다. create_item은 Item create의 data, patch_item은 `{entity: item, id, set}`, add_relation은 Relation이며, Hub가 보내는 모양이라 안쪽도 열려 있습니다. 모르는 action은 표시만 하고 수락할 수 없습니다.
+- Suggestion `proposed`의 모양은 action을 따릅니다. create_item은 Item create의 data, patch_item은 `{entity: item, id, set}`, add_relation은 Relation이며, Hub가 보내는 모양이라 안쪽도 열려 있습니다. 다만 patch_item의 `set` 키는 같은 계약의 열 이름이라 열려 있지 않습니다(새 열을 제안하는 patch는 계약 버전이 같은 Hub만 보냅니다). 모르는 action은 표시만 하고 수락할 수 없습니다.
 - `suggestion.accept`의 `edits`는 patch의 set처럼 키를 쓰고, 값은 제안 대신 쓸 값입니다. 공통 열 키는 계약 검증기가 owner·set_type으로 검사하고, `fields.<key>`와 제안에 있는 키인지는 Hub 적용기(#2)가 판정합니다.
 - 수락하면 Hub가 evidence의 anchor마다 evidence Relation을 하나씩 만들고 locators를 합집합으로 모읍니다. add_relation은 만든 Relation의 locators에 evidence를 둡니다.
 
@@ -131,7 +131,7 @@ Capture와 Attachment에는 처리 상태 필드가 없습니다. `unsafe_input`
 ## 7. 출처 (D13)
 
 - 모든 Artifact 본문은 `blocks[{text, refs}]` 구조이고, ref는 공통 Locator를 가리킵니다. 본문 스키마는 #8이 정합니다(E20).
-- Locator(`locator/locator`)의 kind는 `pdf_page, slide, doc_path, sheet_range, media_time, image_region, web_snapshot, document`입니다. kind는 Hub가 보내는 쪽에서 열린 값이고, 모르는 kind는 `blob`이 있으면 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. 이 계약의 `v`는 1이고, page·slide·shape는 1부터, `block_index`는 0부터 셉니다. `box`는 표시 방향 기준 `[x, y, w, h]`입니다(E17). `annotation` kind는 #17이 추가합니다.
+- Locator(`locator/locator`)의 kind는 `pdf_page, slide, doc_path, sheet_range, media_time, image_region, web_snapshot, document`입니다. kind는 Hub가 보내는 쪽에서 열린 값이고, 모르는 kind는 `blob`이 있으면 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. 이 계약의 `v`는 1이고, page·slide·shape는 1부터, `block_index`는 0부터 셉니다. `box`는 표시 방향 기준 `[x, y, w, h]`입니다(E17). `annotation` kind는 #17이 추가합니다. 모르는 kind도 `blob`(sha256), `capture`(UUID), `box`(정규화 `[x, y, w, h]`(D12·E17), `box_extent` 규칙도 적용)는 타입을 지킵니다. 시트 이름의 31자 한도는 코드 포인트 기준이고, 스프레드시트의 한도는 UTF-16 31단위입니다.
 - 앵커는 Blob 해시입니다(녹음은 Capture 타임라인, 필기는 레이어 revision).
 - LLM은 입력 ContentBlock id로만 인용하고, Hub가 그 id를 검증해 Locator로 치환합니다.
 - 정확한 위치가 없으면 `document`를 쓰고 추정하지 않습니다.

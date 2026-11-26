@@ -89,7 +89,7 @@
       "const": true
     },
     "x-locator-anchor": {
-      "description": "Rule locator_anchor: in an evidence Relation each Locator's blob or capture is the Relation's to, and a Relation of another known type has no locators.",
+      "description": "Rule locator_anchor: in an evidence Relation each Locator's blob or capture is the Relation's to, and a Relation of another known type has no locators. A type the schema does not list may be a newer Hub's and is left alone; the known types are the examples of the Relation type. The examples of an x-open field are not documentation only: they are the known values (normative), rules locator_anchor and set_type read them, and the fixtures and mutation tests pin them.",
       "const": true
     },
     "x-a1-order": {
