@@ -96,7 +96,7 @@ iPad Pro 13은 단순한 모바일 대시보드가 아니라 CampusLife의 정�
 
 기본 가로 레이아웃:
 - 왼쪽 sidebar: 학기, 과목, 강의, Inbox
-- 중앙 document canvas: PDF/PPT/PPT 변환 자료
+- 중앙 document canvas: PDF 및 Hub가 만든 PDF 변환본(PPT/DOCX/HWP 등)
 - 오른쪽 inspector: AI 강의 노트, 예린이의 메모, 자료 출처
 - 선택 가능한 하단/보조 패널: 녹음 타임라인, 페이지 썸네일, 과제
 - Apple Pencil 사용 시 문서 위에 직접 필기하되 원본 파일을 변경하지 않음

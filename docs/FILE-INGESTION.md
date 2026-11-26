@@ -6,14 +6,20 @@
 
 CampusLife는 이를 별도 기능으로 분리하지 않고 **하나의 강의 자료 묶음(CourseMaterialSet)** 으로 수집합니다. 녹음·사진·배포 파일을 같은 강의 세션에 연결하고 형식별 추출기로 내용을 분석합니다.
 
+엔터티 정의는 [DOMAIN-MODEL.md](DOMAIN-MODEL.md), 구조 결정(D2 Blob 저장, D7 manifest 불변, D8 cloud policy, D12 Locator)은 [DECISIONS.md](DECISIONS.md)가 기준입니다.
+
 ## 2. 사용자 경험
 
 ### Android
 1. LMS/학교 웹/메일/메신저/파일 앱에서 여러 파일을 선택해 Android 공유 메뉴로 CampusLife에 전달합니다.
 2. CampusLife는 원본을 앱 전용 Outbox에 복사하고 메타데이터와 해시를 생성합니다.
 3. 사용자가 학기, 과목, 강의일, 자료 제목, 배포자(교수/조교/학교)를 선택하거나 시간표에서 제안값을 받습니다.
-4. 기존 자료 묶음에 추가하거나 새 자료 묶음을 만듭니다.
+4. 기존 자료 묶음에 추가하거나 새 자료 묶음을 만듭니다. 기존 묶음에 추가할 때도 이번에 공유한 파일들은 **새 Capture**가 되고, 묶음과는 Relation으로 연결됩니다(D7).
 5. 노트북이 오프라인이면 Outbox에 보관하고 연결되면 업로드합니다.
+
+### iPadOS
+1. Files 앱·Safari·다른 앱에서 Share Extension 또는 앱 내 fileImporter로 파일/URL을 가져옵니다.
+2. Android와 같은 manifest·Outbox·업로드 계약을 사용합니다.
 
 ### Windows
 1. Downloads, 브라우저 다운로드, USB 등에서 파일/폴더를 Companion Inbox에 드래그앤드롭합니다.
@@ -53,29 +59,26 @@ CampusLife는 이를 별도 기능으로 분리하지 않고 **하나의 강의 
 예: 자료구조 4주차 - 트리에 PDF 1개, PPTX 1개, 실습 ZIP 1개, 강의 녹음 1개, 판서 사진 4개를 묶습니다.
 
 ### Attachment
-- UUID, 원래 파일명 및 안전한 저장 파일명
-- MIME type(감지값과 신고값), extension, size_bytes, SHA-256
-- captured_at / modified_at, source, cloud_processing_policy
-- extraction_state, course_material_set_id
+- UUIDv7, 원래 파일명 (저장 경로는 Blob의 sha256으로 결정되므로 별도 안전 파일명이 필요 없음)
+- MIME type(감지값과 신고값), extension, size_bytes, blob_sha256
+- captured_at / modified_at, source, cloud_policy(선택 override)
+- ingest_state, extraction_state, backed_up_at
+- CourseMaterialSet·LectureSession 연결은 Relation으로 표현
 
-원본 파일은 보존하고 추출/변환 결과를 원본 경로에 덮어쓰지 않습니다.
+원본 Blob은 읽기 전용이며 추출/변환 결과는 Artifact로 따로 저장합니다.
 
 ### ExtractedDocument / ContentBlock
-Extractor는 여러 포맷을 공통 구조로 정규화합니다. ContentBlock은 id, document_id, block_type, ordinal, text 또는 structured payload, locator, metadata를 가집니다.
+Extractor는 여러 포맷을 공통 구조로 정규화합니다. ContentBlock은 id, document_revision_id, block_type, ordinal, text 또는 structured payload, locator, metadata를 가집니다.
 
-Locator 예:
-- PDF: page, optional bounding box
-- PPTX: slide index, shape index
-- DOCX/HWPX: heading path, paragraph/table index
-- XLSX: sheet, cell/range
-- Audio: start_ms/end_ms
-- Video: start_ms/end_ms/frame timestamp
-- Image: region
-- URL: canonical URL, page section/anchor
+locator는 공통 Locator 스키마(D12)를 사용합니다: `pdf_page`(page, 선택 rect), `slide`(slide, shape), `heading_path`(DOCX/HWP/HWPX), `sheet_range`(XLSX/CSV), `time_range`(오디오/비디오/자막), `image_region`, `url_anchor`, `whole_document`.
 
 ## 5. Extractor 플러그인 인터페이스
 
 FileExtractor 계약을 정의하고 형식별 adapter를 등록합니다. 각 extractor는 읽기 전용 원본 경로를 입력받아 document metadata, ordered ContentBlock 목록, warnings, extraction state, tool/version을 반환합니다.
+
+선택 출력으로 **열람용 PDF 변환본**을 만들 수 있습니다. iPad·Android 뷰어는 PDF 렌더링만 구현하고, PPT/PPTX/DOCX/HWP 등은 Hub가 만든 변환본 Artifact를 보여줍니다. 변환본은 원본이 아니며 SourceReference는 항상 원본 형식의 locator(slide, heading_path 등)를 가리킵니다.
+
+extractor는 형식 판별 결과(magic bytes + MIME)로 선택합니다. 확장자만으로 선택하지 않습니다. extractor 실행은 별도 프로세스에서 timeout·메모리 제한을 두고 수행해, parser 크래시나 무한 루프가 Agent 본체를 멈추지 않게 합니다.
 
 추천 초기 구현 후보(실제 도입 전에 라이선스/유지보수/Windows 호환성 확인):
 - PDF: PyMuPDF 또는 pypdf, 스캔 페이지 OCR은 별도 adapter
@@ -88,6 +91,7 @@ FileExtractor 계약을 정의하고 형식별 adapter를 등록합니다. 각 e
 - 이미지: Pillow + OCR/Vision provider
 - Audio/Video: FFmpeg 기반 metadata/audio extraction, STT/Vision adapter
 - HTML/EPUB: 표준 parser 및 안전한 콘텐츠 추출
+- 열람용 PDF 변환: LibreOffice headless 등 (Windows 설치·라이선스 확인)
 
 ## 6. 파일별 처리 정책
 
@@ -151,11 +155,13 @@ locator를 추출할 수 없으면 파일명/문서 단위 근거로 표시하�
 
 ## 9. 파일 처리 상태
 
-- queued, validating, extracting, extracted, partial
-- needs_ocr, password_required, unsupported, corrupt, blocked_by_policy
-- analyzing, completed, failed_retryable, failed_terminal
+상태는 소유자별로 나뉩니다(D1).
 
-한 자료 세트 안에 일부 실패한 파일이 있어도 성공한 파일의 분석은 진행할 수 있어야 합니다. 자료 세트의 상태는 각 attachment의 상태를 요약해 보여줍니다.
+- `Attachment.ingest_state` (수신·검증): `receiving, verified, rejected` — rejected는 해시 불일치, 크기 초과, 차단 형식 등 사유를 함께 기록
+- `Attachment.extraction_state` (추출): `pending, extracting, extracted, partial, needs_ocr, password_required, unsupported, corrupt, failed_retryable, failed_terminal`
+- AI 분석 진행: 해당 ProcessingJob의 `state` (`pending, running, retry_wait, succeeded, failed, cancelled`). cloud policy로 막힌 작업은 `failed` + 사유 `blocked_by_policy`
+
+한 자료 세트 안에 일부 실패한 파일이 있어도 성공한 파일의 분석은 진행할 수 있어야 합니다. 자료 세트의 상태는 각 attachment의 상태를 계산해 요약해 보여주며 별도로 저장하지 않습니다.
 
 ## 10. 보안 및 리소스 보호
 
@@ -165,14 +171,14 @@ locator를 추출할 수 없으면 파일명/문서 단위 근거로 표시하�
 - ZIP 추출은 파일 수/압축 해제 크기/중첩 깊이/경로를 제한합니다.
 - parser는 timeout, 메모리 및 페이지 수 제한을 가집니다.
 - 손상/암호화/DRM 자료는 우회하지 않습니다.
-- 외부 AI 전송 전에 사용자/attachment별 cloud policy를 확인합니다.
+- 외부 AI 전송 전에 유효 cloud policy(D8)를 provider 호출 직전 단일 지점에서 확인합니다.
 - AI provider에 보낼 내용과 예상 비용을 확인할 수 있게 합니다.
 - AI 결과는 원본을 대체하지 않으며 source reference와 model/prompt 버전을 보존합니다.
 
 ## 11. 구현 우선순위
 
 1. 파일 다중 첨부 및 CourseMaterialSet metadata
-2. PDF 텍스트 및 OCR
+2. PDF 텍스트 및 OCR, 열람용 PDF 변환
 3. PPTX/DOCX/XLSX
 4. HWPX 및 HWP fallback
 5. 이미지 및 코드/텍스트/ZIP

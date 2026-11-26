@@ -15,14 +15,16 @@
 - PencilKit: Apple Pencil drawing 및 PKDrawing source 보존
 - PDFKit: PDF rendering과 page navigation
 - Share Extension / fileImporter: 자료 수집
-- URLSession background configuration: 파일 transfer
-- Keychain: per-device credential
-- SwiftData/Core Data 또는 SQLite: offline cache와 pending mutation
+- URLSession background configuration: 파일 transfer. 백그라운드 세션은 파일 기반 업로드만 지원하므로 큰 파일은 chunk 임시 파일 단위로 task를 만든다
+- Keychain: 장치 토큰 (만료 없는 불투명 토큰, revoke로 무효화 — DECISIONS D6)
+- SwiftData 또는 SQLite(GRDB 등): offline cache와 pending mutation (#16에서 결정)
+- API client: `packages/api-contracts`의 OpenAPI에서 생성
 
 ## 데이터 원칙
 - 원본 Attachment를 수정하지 않습니다.
-- PencilKit drawing은 AnnotationLayer로 별도 저장합니다.
-- Annotation은 document revision, page index, normalized coordinate 및 source device를 참조합니다.
+- PencilKit drawing은 (DocumentRevision, page) 단위 AnnotationLayer로 별도 저장합니다(DECISIONS D11).
+- 레이어는 PencilKit native payload와 공통 Locator 좌표의 standard payload를 함께 가집니다.
+- PPT/DOCX/HWP 등은 Hub가 만든 열람용 PDF 변환본으로 표시합니다.
 - PDF overlay는 Windows/Android에서 읽을 수 있는 derived artifact로 생성합니다.
 - Hub ACK 전 pending changes와 원본 파일을 자동 삭제하지 않습니다.
 - 충돌이 발생하면 last-write-wins로 덮어쓰지 않고 양쪽 revision을 보존합니다.

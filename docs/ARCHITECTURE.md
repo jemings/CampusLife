@@ -1,44 +1,43 @@
 # CampusLife 시스템 아키텍처
 
+구조 결정의 근거는 [DECISIONS.md](DECISIONS.md), 장치 간 동기화·인증 세부는 [MULTI-DEVICE-ARCHITECTURE.md](MULTI-DEVICE-ARCHITECTURE.md), 파일 형식별 처리는 [FILE-INGESTION.md](FILE-INGESTION.md)가 기준입니다. 이 문서는 전체 구성과 각 실행 단위의 책임을 정리합니다.
+
 ## 1. 목표 배치
 
-    Galaxy Z Fold8 (Android app)
-      - 시간표 / Capture / Recorder / Camera / Share-to-CampusLife
-      - Room DB + immutable Outbox + upload retry
-                         |
-                         | Tailscale private network
-                         v
-    Windows 11 laptop (CampusLife companion)
-      - Local API / SFTP bootstrap / Inbox / file verifier
-      - Python Agent + SQLite job queue + local UI
-      - Local file store + metadata + FTS search
-             |             |                 |
-             v             v                 v
-            STT          Vision          Text generation
-             \             |                 /
-              \------------+----------------/
-                           |
-                           v
-                    External AI provider
-                  (only when item policy allows)
+    Galaxy Z Fold8 (Android)              iPad Pro 13 (iPadOS)
+      - 시간표 / 녹음 / 사진 / 공유          - 자료 열람 / Pencil 필기 / 공유
+      - Room + Outbox + WorkManager          - 로컬 cache + pending mutation
+                 \                              /
+                  \   HTTPS (Tailscale, D5)    /
+                   v                          v
+    Windows 11 laptop — CampusLife Hub
+      - tailscale serve → Agent (127.0.0.1)
+      - Sync API / admin API / ingest verifier
+      - SQLite (메타데이터·작업 큐·변경 피드·FTS)
+      - blobs/ (불변 원본) + derived/ (파생 결과)
+                 |
+                 v
+      AI provider adapters (STT / Vision / Text / Embedding)
+                 |
+                 v   cloud_policy가 허용할 때만 (D8)
+      External AI provider
 
-Tailscale은 장치 간 IP 연결과 암호화된 사설 네트워크를 제공합니다. 파일 저장, 오프라인 전달, 처리 큐는 CampusLife가 구현해야 합니다. 노트북이 종료/절전 상태이면 전송은 보류되고 Android Outbox에 원본이 남습니다.
+Tailscale은 장치 간 사설 연결과 TLS 인증서를 제공합니다. 파일 저장, 오프라인 전달, 처리 큐, 앱 인증은 CampusLife가 구현합니다. 노트북이 종료/절전 상태이면 전송은 보류되고 각 모바일 장치의 Outbox에 원본이 남습니다.
 
 ## 2. 실행 단위
 
 ### Android Capture App
 
-권장 기반 기술: Kotlin, Jetpack Compose, Room, WorkManager, CameraX, MediaRecorder/AudioRecord.
+권장 기반 기술: Kotlin, Jetpack Compose, Room, WorkManager, CameraX, MediaRecorder.
 
 책임:
 - 시간표와 과목 메타데이터의 모바일 캐시
-- 녹음 시작/정지 및 상태 표시
-- 강의 중 사진 촬영과 촬영 시각 저장
-- Android 공유 메뉴에서 URL, 텍스트, PDF, 이미지 수집
-- 원본 파일을 앱 전용 Outbox에 보관
-- manifest, 파일 크기, SHA-256 생성
-- 연결 가능 시 업로드하고 서버 ACK 확인
-- ACK 전 원본 자동 삭제 금지
+- 녹음 시작/정지 및 상태 표시, 세그먼트 파일 기록(D13)
+- 강의 중 사진 촬영과 촬영 시각·녹음 세션 기준 오프셋 저장
+- Android 공유 메뉴·Storage Access Framework에서 URL, 텍스트, 다중 파일 수집
+- 원본 파일을 앱 전용 Outbox에 복사, manifest·크기·SHA-256 생성
+- 연결 가능 시 업로드하고 첨부별 ACK 기록
+- ACK 전 원본 자동 삭제 금지, ACK 후 정리는 D14 정책
 - 동기화/AI 처리 상태 표시
 
 Android 제약:
@@ -54,25 +53,34 @@ Android 제약:
 - https://developer.android.com/develop/background-work/services/fgs/service-types
 - https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start
 
-### Windows Companion
+### iPadOS Study App
+
+[MULTI-DEVICE-ARCHITECTURE.md §7](MULTI-DEVICE-ARCHITECTURE.md)과 [apps/ipados/README.md](../apps/ipados/README.md)를 따릅니다.
+
+### Windows Hub (Agent)
 
 권장 기반 기술:
 - Windows 11
-- Python 3.x, FastAPI 또는 동등한 로컬 API
-- SQLite (job 상태, 메타데이터)
-- 로컬 파일시스템 (원본과 산출물)
-- Windows Task Scheduler (사용자 로그인 시 에이전트 시작)
-- 선택적 로컬 웹 UI
+- Python 3.x, FastAPI
+- SQLite (메타데이터, 작업 큐, 변경 피드, FTS)
+- 로컬 파일시스템 (Blob과 파생 결과)
+- `tailscale serve` (HTTPS 종단, D5)
+- Windows Task Scheduler (사용자 로그인 시 Agent 시작)
+- 로컬 웹 UI (admin 포트, localhost 전용)
 
-책임:
-- 모바일 장치 파일 수신
-- 임시 업로드와 최종 저장 분리
-- 크기/해시/manifest 검증
-- ACK 발행
-- SQLite 기반 멱등 작업 큐
-- AI 처리와 재시도, 비용/사용량 기록
-- 인덱싱과 검색
-- 백업과 데이터 내보내기
+Agent 내부 모듈과 소유 관계:
+
+| 모듈 | 소유하는 것 | 다른 모듈이 쓰는 방법 |
+|---|---|---|
+| `store` | Blob 저장, Attachment/Capture 등록, 변경 피드 기록 | `ingest_capture()`, `finalize_attachment()` 함수 호출만 |
+| `jobs` | ProcessingJob 큐, 재시도, job_key 멱등 | `enqueue(job_key, …)` |
+| `policy` | cloud_policy 유효값 계산과 provider 호출 허용 판단 | provider adapter 호출 직전 `require_cloud_allowed()` |
+| `providers` | STT/Vision/Text/Embedding adapter | `jobs` 워커만 호출 |
+| `extractors` | 형식별 FileExtractor | `jobs` 워커만 호출 |
+| `sync_api` | HTTP 경로, 장치 인증, upload session | `store`·`jobs` 함수 호출 |
+| `admin_api` | pairing 승인, revoke, 상태 UI | localhost 전용 포트 |
+
+로컬 Windows import(드래그앤드롭)도 `sync_api`가 아니라 `store.ingest_capture()`를 직접 호출하는 같은 경로를 사용합니다. 수집 경로가 늘어도 검증·멱등·피드 기록은 `store` 한 곳에만 있습니다.
 
 노트북이 켜져 있어야 처리됩니다. AC 전원 연결 시 절전 방지 설정을 안내할 수 있지만 배터리 사용 중 절전 정책은 존중합니다.
 
@@ -85,7 +93,7 @@ Android 제약:
 - EmbeddingProvider (후속)
 - DocumentExtractionProvider (후속)
 
-첫 구현은 OpenAI API adapter를 제공할 수 있지만 모델 ID는 코드에 흩어 놓지 않고 설정으로 관리합니다. 신규 파일 전사 권장 모델, 파일 크기 제한과 지원 형식은 공식 문서에서 확인합니다:
+첫 구현은 OpenAI API adapter를 제공할 수 있지만 모델 ID는 코드에 흩어 놓지 않고 설정으로 관리합니다. 모델 ID·provider는 job_key의 일부이므로 설정을 바꾸면 새 Artifact가 생깁니다(D4). 신규 파일 전사 권장 모델, 파일 크기 제한과 지원 형식은 공식 문서에서 확인합니다:
 https://developers.openai.com/api/docs/guides/transcription
 
 이미지 분석:
@@ -93,98 +101,70 @@ https://developers.openai.com/api/docs/guides/images-vision
 
 ## 3. Capture 및 Outbox
 
-각 Capture는 UUID 기반입니다. 강의 자료든 공지 스크린샷이든 같은 Outbox 흐름을 사용합니다.
+각 Capture는 클라이언트가 만든 UUIDv7 ID를 가집니다(D4). 강의 자료든 공지 스크린샷이든 같은 Outbox 흐름을 사용합니다.
 
-    capture_<capture-id>/
+클라이언트 로컬 Outbox 예시:
+
+    outbox/<capture-id>/
     ├── manifest.json
-    ├── payload/
-    │   ├── audio.m4a
-    │   ├── images/
-    │   ├── documents/
-    │   └── attachments/
-    └── READY
+    └── payload/
+        ├── rec-0001.m4a      # 녹음 세그먼트 (D13)
+        ├── rec-0002.m4a
+        ├── img-0001.jpg
+        └── lecture-04.pdf
 
-manifest 필수 필드:
-- schema_version
-- capture_id
-- created_at_utc
-- device_id
-- category_hint
-- source_type
-- course_id / event_id (알고 있는 경우)
-- timezone
-- attachments[]: attachment_id, relative_path, mime_type, size_bytes, sha256, captured_at
-- cloud_processing_allowed
-- user_notes
+manifest 필드는 [MULTI-DEVICE-ARCHITECTURE.md §3.2](MULTI-DEVICE-ARCHITECTURE.md)의 Register Capture 계약과 같습니다. 정책 필드는 `cloud_policy` 하나입니다(D8).
 
-READY는 Android 로컬 기록이 완료되었다는 의미입니다. 노트북은 전송 파일의 무결성을 별도로 확인해야 합니다.
+manifest는 로컬에서 확정된 뒤 바뀌지 않습니다(D7). 녹음 중에는 manifest를 확정하지 않고, 녹음 종료 시 세그먼트 목록과 함께 확정합니다. 앱이 녹음 중 종료되면 다음 실행에서 남은 세그먼트로 manifest를 확정하고 "중단된 녹음"으로 표시합니다.
 
 ## 4. Store-and-forward Sync
 
-초기 연결 PoC:
-- Tailscale: Android와 Windows 노트북을 같은 Tailnet에 등록
-- Windows OpenSSH Server: SFTP 수신
-- FolderSync: SFTP 업로드 예약 및 재시도 검증
+제품 동기화는 Windows Hub의 공통 HTTPS Sync API 하나입니다. 업로드 순서(manifest 등록 → 첨부별 chunk 업로드 → 해시 검증 → atomic finalize → 트랜잭션 등록 → ACK)와 멱등 규칙은 [MULTI-DEVICE-ARCHITECTURE.md §3](MULTI-DEVICE-ARCHITECTURE.md)이 기준입니다.
 
-이 조합은 빠른 PoC용입니다. 제품용 Android 앱에서는 다음 프로토콜을 구현합니다.
+상태는 소유자별로 분리합니다(D1). 클라이언트는 첨부별 `transfer_state`(pending → uploading → acked, 오류 시 retry_wait / failed_needs_attention)를, Hub는 `ingest_state`·`extraction_state`·`ProcessingJob.state`를 소유합니다.
 
-1. Android가 capture manifest를 전송하고 서버가 upload session을 만듭니다.
-2. 파일을 임시 경로에 전송합니다. 큰 파일은 청크/재개 가능한 전송을 지원합니다.
-3. Windows agent가 파일 크기와 SHA-256을 검증합니다.
-4. 검증된 파일을 최종 경로로 atomic rename합니다.
-5. DB에 capture와 attachment를 등록하고 ACK를 반환합니다.
-6. Android는 ACK를 기록합니다. 보존 정책이 정해지기 전까지 원본을 자동 삭제하지 않습니다.
-7. 동일 capture_id/attachment_id 재전송은 멱등 처리합니다.
-
-상태 예시:
-LOCAL_READY → UPLOADING → UPLOADED → VERIFIED → INGESTED → PROCESSING → COMPLETED
-
-오류 상태는 RETRY_WAIT 또는 FAILED_NEEDS_ATTENTION으로 분리합니다.
-
-SFTP PoC는 목적지에 노트북이 보일 때만 진행됩니다. 노트북이 오프라인이면 다음 동기화 주기에 재시도합니다. Tailscale 자체가 파일을 큐잉하지 않습니다.
+Phase 0의 FolderSync+SFTP는 Tailscale 경유 연결과 노트북 sleep/복귀 동작을 확인하는 PoC이며, Agent에는 SFTP 수신 경로를 구현하지 않습니다.
 
 ## 5. AI 처리 파이프라인
 
-- Ingest: manifest 및 파일 검증
-- Extract: MIME/type sniffing, EXIF, PDF metadata, OCR
-- Transcribe: 오디오를 API 제한에 맞게 나누고 구간 오프셋 유지
+- Ingest: manifest 및 파일 검증 (`store`)
+- Extract: MIME/magic bytes 판별, EXIF, 문서 구조, OCR (`extractors`)
+- Transcribe: 녹음 세그먼트를 API 제한에 맞게 나누고 세션 기준 오프셋 유지
 - Analyze: 슬라이드/사진/PDF 페이지를 Vision 또는 OCR 처리
-- Correlate: 촬영 시각과 transcript segment 시간 구간 연결
+- Correlate: 사진의 녹음 세션 기준 오프셋과 transcript 구간 연결(D13)
 - Synthesize: 과목/행사/주제별 요약과 상세 노트 생성
-- Extract actions: 과제, 마감일, 일정, 후속 행동 후보 생성
+- Extract actions: 과제, 마감일, 일정, 후속 행동 후보를 `review_state=suggested` Item으로 생성
 - Review: 일정/과제 등 상태 변경은 사용자 확인 후 반영
 - Index: FTS 인덱스 및 추후 embedding 인덱스 갱신
 
-모든 AI 산출물에는 원본과 page/image/time range 등 provenance를 기록합니다. word-level timestamp가 제공되지 않는 전사 결과는 구간 단위로만 연결하고 정밀 타임스탬프를 꾸며내지 않습니다.
+각 단계는 job_key로 멱등한 ProcessingJob입니다. 외부 provider를 부르는 단계는 호출 직전 `policy.require_cloud_allowed()`를 통과해야 하며, 입력이 여러 개면 가장 엄격한 정책을 따릅니다(D8).
 
-## 6. 저장 설계
+모든 AI 산출물에는 공통 Locator(D12)로 provenance를 기록합니다. word-level timestamp가 제공되지 않는 전사 결과는 구간 단위로만 연결하고 정밀 타임스탬프를 꾸며내지 않습니다.
 
-Windows 파일시스템이 binary 원본의 source of truth입니다. SQLite에는 파일 bytes가 아니라 메타데이터, 관계, job 상태, 인덱스를 저장합니다.
+## 6. 저장 설계 (D2)
 
-    D:\CampusLifeData\
-    ├── inbox/
-    ├── originals/YYYY/<capture-id>/
-    ├── derived/
-    │   ├── transcripts/
-    │   ├── notes/
-    │   ├── summaries/
-    │   ├── extracted/
-    │   └── exports/
-    ├── database/campuslife.sqlite3
-    ├── cache/
-    ├── logs/
-    └── backups/
+Windows 파일시스템이 binary 원본의 source of truth입니다. SQLite에는 파일 bytes가 아니라 메타데이터, 관계, 작업 상태, 변경 피드, 인덱스를 저장합니다.
 
-- 원본은 불변 보관을 기본으로 합니다.
-- 파생 결과는 pipeline/model/prompt 버전을 기록하고 재생성 가능하게 합니다.
-- 임시 업로드와 최종 원본 디렉터리를 분리합니다.
-- 삭제는 휴지통/보존 기간/사용자 확인을 거칩니다.
-- SQLite Backup API 또는 DB를 일관성 있게 복사하는 방식으로 백업합니다.
+    D:\CampusLifeData\          (설정 가능한 data root)
+    ├── blobs\sha256\ab\<sha256>    # 불변 원본, 읽기 전용
+    ├── uploads\<session-id>\       # 검증 전 임시 chunk
+    ├── derived\<artifact-id>\      # Artifact 파일 (transcript, notes, overlay PDF, 변환 PDF 등)
+    ├── database\campuslife.sqlite3
+    ├── cache\
+    ├── logs\
+    └── backups\
 
-## 7. 검색 및 배포
+- 원본은 내용 주소로 한 번만 저장하고 덮어쓰지 않습니다.
+- 파생 결과는 Artifact ID 단위 디렉터리에 두며 job_key로 재생성할 수 있습니다.
+- 임시 업로드(`uploads`)와 원본(`blobs`)은 같은 볼륨에 두어 atomic rename이 가능하게 합니다.
+- 삭제는 tombstone → 휴지통/보존 기간 → 참조 없는 Blob 정리 순서입니다.
+- 백업은 SQLite Online Backup API로 DB 스냅샷을 만든 뒤 그 스냅샷이 참조하는 Blob을 같은 세대에 복사합니다. 백업 완료 시 해당 Blob의 Attachment에 `backed_up_at`을 기록합니다(D14).
+- 사람이 읽을 수 있는 `과목/날짜/원래파일명` 트리는 export 기능으로 생성합니다.
+
+## 7. 검색
 
 MVP 검색:
-- SQLite FTS5 전문 검색
+- SQLite FTS5 전문 검색 (한국어 tokenizer는 측정 후 결정 — DECISIONS 미결 결정)
 - 날짜/도메인/과목/태그 필터
 - 상세 보기에서 원본 파일과 AI 근거 연결
 
@@ -197,161 +177,31 @@ MVP 검색:
 - Tailscale 가격/Personal: https://tailscale.com/pricing
 - Android 설치: https://tailscale.com/docs/install/android
 - Windows 설치: https://tailscale.com/docs/install/windows
-- Windows OpenSSH: https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_install_firstuse
-
-인터넷 공유기 포트 포워딩을 열지 않습니다. Windows 방화벽은 필요한 Tailscale 장치로 제한하고 SFTP 전용 계정은 관리자 권한을 갖지 않습니다.
-
-FolderSync+SFTP는 전송 PoC로만 보고, 제품 앱은 명시적인 ACK/체크섬/재개/멱등성을 가진 프로토콜을 사용합니다.
+- Tailscale serve: https://tailscale.com/kb/1312/serve
 
 ## 8. 다중 파일 강의 자료 수집 및 분석
 
-강의 자료 하나를 단일 파일로 가정하지 않습니다. 하나의 Capture 또는 CourseMaterialSet은 강의 녹음, 수업 중 사진, 교수/조교가 배포한 여러 파일(PDF, 슬라이드, 문서, 스프레드시트, HWP/HWPX, 코드, 자막, 동영상, 링크 등)을 함께 묶을 수 있습니다.
+강의 자료 하나를 단일 파일로 가정하지 않습니다. 하나의 CourseMaterialSet은 강의 녹음, 수업 중 사진, 교수/조교가 배포한 여러 파일(PDF, 슬라이드, 문서, 스프레드시트, HWP/HWPX, 코드, 자막, 동영상, 링크 등)을 Relation으로 묶습니다.
 
-상세 포맷 지원표와 extractor 설계는 FILE-INGESTION.md를 기준으로 합니다.
-
-### 8.1 수집 경로
-
+수집 경로:
 - Android 공유 메뉴: LMS/브라우저/메일/메신저에서 파일 또는 링크를 CampusLife로 공유
 - Android 파일 선택기: Downloads 및 사용자가 접근을 허용한 문서 선택
 - 강의 중 앱 카메라/녹음: 사진·오디오를 같은 LectureSession에 연결
-- Windows Inbox: 브라우저 다운로드, USB, 동기화 폴더, 드래그앤드롭으로 가져오기
-- 여러 파일을 하나의 CourseMaterialSet으로 묶고 과목·학기·강의일·배포자·자료 설명을 부여
+- iPad Share Extension / fileImporter
+- Windows Inbox: 브라우저 다운로드, USB, 드래그앤드롭
 
 LMS/메일의 비공식 자동 로그인이나 무단 크롤링을 전제하지 않습니다. 사용자가 공유하거나 다운로드한 파일 및 허용된 공식 API/export를 우선합니다.
 
-### 8.2 파일 처리 파이프라인
-
-1. Preserve: 원본을 변경하지 않고 보존하고 SHA-256, 크기, MIME, 수집 경로, 원래 파일명을 기록
-2. Validate: 확장자와 magic bytes를 교차 확인하고 악성/손상/암호화 파일을 분류
-3. Extract: 형식별 extractor가 텍스트, 구조, 표, 페이지, 슬라이드, 시트, 타임스탬프 등을 추출
-4. Normalize: 공통 ExtractedDocument/ContentBlock 구조로 변환
-5. Analyze: 허용된 provider로 요약, 핵심 개념, 과제/마감 후보, 질문 등을 생성
-6. Link: 같은 강의 자료 세트 안에서 강의 transcript·사진·교수자 배포 파일을 연결
-7. Review: 신뢰도가 낮거나 일정/과제 생성처럼 상태 변경이 필요한 결과는 검토 대기
-8. Index: 전문 검색과 추후 semantic search에 인덱싱하고 원본 위치를 보존
-
-### 8.3 Extractor 설계
-
-FileExtractor 계약을 정의하고 형식별 adapter를 등록합니다. extractor는 원본을 수정하지 않고 ExtractedDocument와 ContentBlock 목록을 반환합니다. 각 block은 page/slide/sheet/row/section/frame/time range 같은 위치 정보를 포함합니다.
-
-우선 지원:
-- PDF: 텍스트 및 페이지 구조 추출, 스캔 페이지 OCR
-- PPT/PPTX: 슬라이드별 제목·본문·표·노트·이미지 참조 추출
-- DOCX: 제목 계층, 문단, 표, 하이퍼링크 추출
-- XLSX/CSV: 시트, 셀 범위, 수식/표시값, 헤더 및 표 구조 추출
-- HWP/HWPX: HWPX XML 추출, HWP 5 계열은 검증된 변환기/전용 도구 adapter. 지원 범위와 실패를 명확히 표시
-- 이미지: EXIF 및 OCR, 표·수식·도식 Vision 분석
-- 오디오/비디오: 전사, 자막 추출, 비디오 keyframe 및 시간 구간 분석
-- TXT/Markdown/HTML/EPUB/RTF: 텍스트 및 구조 추출
-- ZIP: 압축 파일 자체와 포함 파일 manifest 보존, 허용된 파일만 안전하게 내부 추출
-- 소스 코드: 언어 감지 및 텍스트/구조 분석만 수행하며 코드를 실행하지 않음
-- URL: 사용자가 저장한 URL과 페이지 metadata. 로그인 우회/비공개 페이지 크롤링 금지
-
-지원하지 않거나 암호화·손상된 파일도 원본은 저장하고 unsupported, password_required, corrupt, needs_conversion 등의 상태로 노출합니다.
-
-### 8.4 공통 block 및 출처 모델
-
-각 추출 콘텐츠는 원본 attachment와 함께 위치를 보존합니다.
-- PDF: page number, bounding box(가능한 경우)
-- PPT: slide index, shape/text region
-- DOCX/HWP: heading path, paragraph/table index
-- XLSX/CSV: sheet name, cell/range, row/column
-- Audio: chunk start/end offset
-- Video: time range, keyframe timestamp
-- Image: attachment ID, OCR/Vision region
-- Web: URL, title, retrieved_at, section anchor
-
-AI가 "시험 범위는 3~5장"이라고 요약했다면 원본 PDF 페이지나 교수자 공지의 해당 문단으로 되돌아갈 수 있어야 합니다. 여러 파일에서 합성한 결과는 복수 source reference를 갖습니다.
-
-### 8.5 다중 문서 간 통합 분석
-
-CourseMaterialSet 단위로 파일 간 중복/상충/보완 관계를 찾습니다.
-- 강의 transcript와 교수자 슬라이드의 개념 연결
-- 과제 안내문과 강의 노트의 제출 요건/마감 비교
-- PPT와 별도 PDF 참고자료의 같은 주제 비교
-- 교수자 공지와 조교가 배포한 실습 파일의 연계
-- 버전이 다른 배포자료의 변경점 탐지
-
-AI는 출처가 다른 내용을 하나로 섞지 않고 각 주장에 근거를 연결합니다. 충돌하는 일정/지시사항은 임의로 결정하지 않고 사용자가 검토하도록 합니다.
-
-### 8.6 파일 안전성
-
-- 매크로, 스크립트, 실행 파일을 자동 실행하지 않습니다.
-- ZIP 추출은 path traversal, symlink, 압축 폭탄, 중첩 깊이, 파일 개수/크기 제한을 적용합니다.
-- Office 문서의 외부 링크나 embedded object를 자동으로 실행/호출하지 않습니다.
-- HTML 및 PDF의 외부 리소스를 기본 자동 로드하지 않습니다.
-- 암호화/DRM/비밀번호 보호 파일은 우회하지 않고 사용자에게 상태를 알립니다.
-- 파일 이름은 안전하게 정규화하고 저장 경로 탈출을 방지합니다.
-- AI API 전송은 attachment별 cloud_processing_policy가 허용할 때만 수행합니다.
-
+파일 처리 파이프라인(Preserve → Validate → Extract → Normalize → Analyze → Link → Review → Index), extractor 계약, 지원 형식, 파일 안전성 규칙은 [FILE-INGESTION.md](FILE-INGESTION.md)가 기준입니다.
 
 ## 9. Multi-device Client Architecture
-
-기본 데이터 허브는 Windows 노트북 하나로 유지하되 클라이언트는 Android와 iPadOS를 정식 지원합니다.
 
 | Client | 주요 책임 | 로컬 저장 |
 |---|---|---|
 | Android / Fold8 | 시간표, 녹음, 사진, Share Intent, offline Outbox | Room + app-private files |
 | iPadOS / iPad Pro | 자료 열람, PDF 주석, Apple Pencil 필기, AI 노트 검토, Share Extension | SwiftData 또는 SQLite 계열 + app sandbox |
-| Windows | API, 파일 원본, SQLite, AI jobs, 검색 | NTFS + SQLite |
+| Windows | Hub: API, Blob, SQLite, AI jobs, 검색, 로컬 UI | NTFS + SQLite |
 
-클라이언트별 UI와 플랫폼 API는 네이티브로 구현하되 Domain ID, API contract, sync semantics, provenance schema는 공유합니다. 플랫폼 간 코드 강제 공유보다 OpenAPI/JSON Schema 등 버전이 명확한 계약 공유를 우선합니다.
+클라이언트별 UI와 플랫폼 API는 네이티브로 구현하되 Domain ID, API contract, sync semantics, Locator·provenance schema는 `packages/api-contracts` 하나를 공유합니다. 플랫폼 간 코드 강제 공유보다 OpenAPI/JSON Schema 계약과 그로부터 생성한 타입을 우선합니다.
 
-### 9.1 Common HTTPS Sync API
-
-제품용 동기화는 FolderSync/SFTP에 의존하지 않고 Windows Local Agent가 제공하는 공통 HTTPS API로 통합합니다.
-
-- Android와 iPadOS가 같은 API resource 및 sync protocol 사용
-- Tailscale MagicDNS 또는 장치 주소를 통해 노트북 서비스에 접속
-- 노트북은 필요한 인터페이스에서만 API를 제공하고 Windows 방화벽은 tailnet 범위로 제한
-- 각 앱은 device credential로 요청을 인증
-- 원본 파일은 upload session → temporary upload → checksum verification → atomic finalize → ACK 순으로 수신
-- 작은 변경은 versioned mutation/event API로 동기화
-- 대용량 파일은 background/resumable upload와 chunk hash 사용
-- client별 sync cursor로 마지막 반영 이벤트 이후 변경분만 수신
-- 노트북이 오프라인이면 각 client Outbox에 대기하고 재연결 후 재시도
-
-Tailscale은 연결성만 제공하며 HTTP API, 인증, 보관, retry queue는 CampusLife가 구현합니다. 초기 SFTP는 연결 PoC로 유지할 수 있으나 정식 앱의 단일 동기화 계약으로 사용하지 않습니다.
-
-### 9.2 iPadOS Client
-
-권장 기술:
-- SwiftUI: adaptive navigation, multi-column workspace, scene/window support
-- PencilKit: Apple Pencil drawing capture and serialization
-- PDFKit: PDF viewing, page navigation, text selection and annotation presentation
-- Share Extension / fileImporter: Files, Safari 및 다른 앱의 문서 수집
-- URLSession background configuration: 업로드·다운로드 작업의 시스템 위임
-- Local persistence: offline metadata, annotation edits, pending mutations
-
-주요 기능:
-- 강의별 CourseMaterialSet 및 모든 지원 문서 열람
-- PDF 페이지 위 Pencil 필기/하이라이트
-- AI 노트와 원본 PDF/PPT를 나란히 비교
-- 외부 앱에서 파일/URL을 CampusLife Inbox로 공유
-- 오프라인에서도 이미 동기화된 자료 열람 및 주석 작성
-- 백그라운드 전송 상태 및 재인증/재시도 UX
-
-백그라운드 전송은 OS가 실행 시점을 관리하며 보장된 실시간 처리가 아닙니다. 앱 강제 종료, 인증 만료, 네트워크 단절, 노트북 오프라인을 고려해 durable task record와 재시도 흐름을 둡니다. 앱이 다시 실행되면 URLSession task와 로컬 sync job 상태를 재조정합니다.
-
-### 9.3 Annotation Data Flow
-
-PencilKit drawing은 원본 PDF에 직접 덮어쓰지 않습니다.
-
-- 원본 PDF/문서는 immutable attachment
-- PencilKit PKDrawing은 별도 annotation layer로 저장
-- annotation은 document_id, revision_id, page index, normalized coordinate space, author_device_id, updated_at을 참조
-- annotation export 시 PDFKit 기반 overlay PDF를 별도 파생 파일로 생성
-- Windows/Android에서 보이는 공통 결과는 PDF overlay 또는 표준화된 annotation JSON으로 제공
-- iPadOS 원본 drawing 데이터는 편집 재개를 위해 함께 보존
-
-### 9.4 Device Identity and Enrollment
-
-각 설치 인스턴스는 별도의 Device ID 및 credential을 갖습니다. 같은 Apple/Google 계정에 로그인했다는 이유만으로 무제한 접근을 허용하지 않습니다.
-
-- 최초 pairing은 사용자가 Windows Hub에서 생성한 일회성 코드/QR로 승인
-- 등록된 device 목록에서 이름, 플랫폼, 마지막 접속 시각 확인
-- 장치별 토큰 폐기 및 재등록
-- 삭제/분실 장치의 접근 차단
-- 장치 간 공유 데이터 범위는 단일 사용자 기본 profile 내에서 동일하게 유지하되, local-only 자료는 정책으로 제외
-
-세부 프로토콜과 충돌 정책은 MULTI-DEVICE-ARCHITECTURE.md를 따릅니다.
+동기화 프로토콜, 장치 등록, 충돌 정책, Annotation 데이터 흐름은 [MULTI-DEVICE-ARCHITECTURE.md](MULTI-DEVICE-ARCHITECTURE.md)를 따릅니다.
