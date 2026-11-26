@@ -430,7 +430,7 @@ components:
     device:
       type: http
       scheme: bearer
-      description: The opaque token from POST /v1/pair or POST /v1/devices/me/token (device/pair_response token). It does not expire; revoke or a reissued token's first use ends it (D6).
+      description: The opaque token from POST /v1/pair or POST /v1/devices/me/token (device/pair_response token). It does not expire; revoke ends it, and after a reissue the new token's first use ends the old one (D6).
   parameters:
     Contract:
       name: CampusLife-Contract
