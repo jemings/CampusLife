@@ -150,6 +150,10 @@ async def test_put_file_retries_a_replace_refused_by_a_sharing_violation(tmp_pat
     assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
 
 
+def must_not_wait(seconds):
+    raise AssertionError(f"waited {seconds}s")
+
+
 def test_a_leftover_still_locked_after_the_retries_is_kept_and_reported(tmp_path, db):
     staging = tmp_path / "staging"
     staging.mkdir()
@@ -238,18 +242,16 @@ async def test_put_file_goes_through_once_another_handle_on_its_staging_file_clo
 
 
 @windows_only
-def test_a_staging_leftover_held_open_is_discarded_once_the_handle_closes(tmp_path, blob_store):
+def test_a_staging_leftover_held_open_is_kept_and_discarded_by_the_start_after_the_handle_closes(tmp_path, db):
     staging = tmp_path / "staging"
     staging.mkdir()
     leftover = staging / "held.part"
     leftover.write_bytes(b"half")
-    holder = open(leftover, "rb")
-    timer = release_later(holder)
-    try:
-        blob_store.discard_staging_leftovers()
-    finally:
-        timer.cancel()
-        holder.close()
+    blob_store = store_in(tmp_path, db, FileOps(sleep=must_not_wait))
+    with open(leftover, "rb"):
+        [kept] = blob_store.discard_staging_leftovers()
+    assert kept.path == leftover
+    assert blob_store.discard_staging_leftovers() == []
     assert not leftover.exists()
 
 
