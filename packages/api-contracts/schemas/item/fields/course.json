@@ -7,7 +7,7 @@
   "properties": {
     "instructor": { "type": "string", "minLength": 1 },
     "room": { "type": "string", "minLength": 1 },
-    "credits": { "type": "number", "minimum": 0 },
+    "credits": { "type": "number", "minimum": 0, "maximum": 99 },
     "schedule_slots": { "description": "Weekly timetable slots; empty when the course has no fixed time.", "type": "array", "items": { "$ref": "../../common/local_time_rule.json" } },
     "default_cloud_policy": {
       "description": "Policy a new Attachment linked to this course resolves to when it has no explicit one; absent, the global default applies (D8, A6).",
