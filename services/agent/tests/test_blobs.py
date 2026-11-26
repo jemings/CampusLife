@@ -169,6 +169,19 @@ def test_a_leftover_still_locked_after_the_retries_is_kept_and_reported(tmp_path
     assert [path.name for path in staging.iterdir()] == ["stuck.part"]
 
 
+def test_a_leftover_that_cannot_be_removed_for_another_reason_stops_the_discard(tmp_path, db):
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "denied.part").write_bytes(b"half")
+
+    def unlink(path):
+        raise PermissionError(errno.EACCES, "denied", str(path))
+
+    blob_store = store_in(tmp_path, db, FileOps(unlink=unlink, sleep=lambda seconds: None))
+    with pytest.raises(PermissionError):
+        blob_store.discard_staging_leftovers()
+
+
 def test_a_directory_named_like_a_leftover_is_kept_and_reported(tmp_path, blob_store):
     staging = tmp_path / "staging"
     (staging / "odd.part").mkdir(parents=True)

@@ -195,6 +195,22 @@ async def test_the_core_opens_past_a_staging_leftover_it_cannot_remove_and_logs_
     assert "not a regular file" in caplog.text
 
 
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="POSIX mode bits stop only a user other than root")
+async def test_the_core_does_not_open_over_a_staging_directory_it_cannot_write(root):
+    async with open_core(root, create=True, sync_roots=[]):
+        pass
+    staging = root / "staging"
+    staging.mkdir(exist_ok=True)
+    (staging / "0f8fad5b.part").write_bytes(b"half a blob")
+    staging.chmod(0o555)
+    try:
+        with pytest.raises(PermissionError):
+            async with open_core(root, create=False, sync_roots=[]):
+                pass
+    finally:
+        staging.chmod(0o755)
+
+
 async def test_the_core_holds_the_hub_lock_until_it_closes(root):
     async with open_core(root, create=True, sync_roots=[]):
         with pytest.raises(AlreadyRunning):
