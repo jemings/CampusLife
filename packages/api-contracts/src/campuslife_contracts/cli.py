@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .compare import compare_dirs
+from .compare import BrokenGolden, compare_dirs
 
 
 def _directory(value: str) -> Path:
@@ -27,7 +27,8 @@ def _parser() -> argparse.ArgumentParser:
             "ACTUAL_DIR and compare JSON values: numbers by exact decimal value, member order "
             "ignored, absent differs from null, strings by code point. A missing output file is "
             "a mismatch; extra output files are ignored. Exit status: 0 all match, 1 mismatches "
-            "(one per line on stdout), 2 usage error (including an EXPECTED_DIR without *.json)."
+            "(one per line on stdout), 2 usage error (an EXPECTED_DIR without *.json, or a file "
+            "under it that is not strict JSON)."
         ),
     )
     compare.add_argument("expected_dir", type=_directory)
@@ -40,8 +41,12 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     if not any(arguments.expected_dir.rglob("*.json")):
         parser.error(f"no *.json under {arguments.expected_dir}")
-    mismatches = compare_dirs(arguments.expected_dir, arguments.actual_dir)
     sys.stdout.reconfigure(errors="backslashreplace")
+    try:
+        mismatches = compare_dirs(arguments.expected_dir, arguments.actual_dir)
+    except BrokenGolden as error:
+        print(f"campuslife-contracts compare: golden file is not strict JSON: {error}", file=sys.stderr)
+        return 2
     for mismatch in mismatches:
         print(mismatch)
     return 1 if mismatches else 0
