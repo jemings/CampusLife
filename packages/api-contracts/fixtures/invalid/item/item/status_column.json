@@ -1,0 +1,15 @@
+{
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "kind": "task",
+  "schema_version": 1,
+  "title": "자료구조",
+  "fields": {
+    "progress": "planned",
+    "reminders": [
+      "2026-03-08T12:00:00.000Z",
+      "2026-03-09T09:00:00.000Z"
+    ]
+  },
+  "rev": 17,
+  "status": "done"
+}

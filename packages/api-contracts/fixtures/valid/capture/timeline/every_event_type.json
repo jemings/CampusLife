@@ -1,0 +1,46 @@
+{
+  "boot_id": "b-2",
+  "anchors": [
+    {
+      "wall_ms": 1772411400000,
+      "mono_ns": 1000
+    }
+  ],
+  "events": [
+    {
+      "type": "start",
+      "mono_ns": 1000,
+      "media_pos_ms": 0
+    },
+    {
+      "type": "pause",
+      "mono_ns": 1001,
+      "media_pos_ms": 10
+    },
+    {
+      "type": "resume",
+      "mono_ns": 1002,
+      "media_pos_ms": 20
+    },
+    {
+      "type": "interrupted",
+      "mono_ns": 1003,
+      "media_pos_ms": 30
+    },
+    {
+      "type": "resume",
+      "mono_ns": 1004,
+      "media_pos_ms": 40
+    },
+    {
+      "type": "silenced",
+      "mono_ns": 1005,
+      "media_pos_ms": 50
+    },
+    {
+      "type": "stop",
+      "mono_ns": 1006,
+      "media_pos_ms": 60
+    }
+  ]
+}

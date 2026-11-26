@@ -1,0 +1,8 @@
+{
+  "type": "share",
+  "uri": "content://downloads/1",
+  "app": "com.example.lms",
+  "publisher": "학과 LMS",
+  "distributed_by": "담당 교수",
+  "distributed_at": "2026-03-01T15:00:00.000Z"
+}

@@ -1,0 +1,15 @@
+{
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "kind": "lecture_session",
+  "schema_version": 1,
+  "title": "자료구조 1주차",
+  "fields": {
+    "course_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "date": {
+      "date": "2026-03-02",
+      "tz": "Asia/Seoul"
+    }
+  },
+  "rev": 17,
+  "starts_at": "2026-03-02T00:30:00.000Z"
+}

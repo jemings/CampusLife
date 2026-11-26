@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/to",
+    "rule": "relation_self"
+  }
+]

@@ -1,0 +1,27 @@
+{
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "kind": "course",
+  "schema_version": 1,
+  "title": "자료구조",
+  "fields": {
+    "instructor": "김교수",
+    "room": "공학관 301",
+    "credits": 3,
+    "schedule_slots": [
+      {
+        "weekdays": [
+          1,
+          3
+        ],
+        "start": "09:00",
+        "end": "10:15",
+        "tz": "Asia/Seoul",
+        "from_date": "2026-03-02",
+        "until_date": "2026-06-19"
+      }
+    ],
+    "default_cloud_policy": "local_only",
+    "confirm_each_send": true
+  },
+  "rev": 17
+}

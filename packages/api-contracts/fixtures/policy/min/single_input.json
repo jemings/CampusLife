@@ -1,0 +1,6 @@
+{
+  "policies": [
+    "cloud_allowed"
+  ],
+  "expected": "cloud_allowed"
+}

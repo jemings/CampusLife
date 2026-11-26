@@ -1,0 +1,62 @@
+{
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "created_at": "2026-03-02T00:30:00.000Z",
+  "origin": {
+    "type": "record",
+    "app": "campuslife.android"
+  },
+  "category_hint": "lecture",
+  "links": [
+    {
+      "type": "about",
+      "to": "item:7c9e6679-7425-40de-944b-e07fc1f90ae7"
+    },
+    {
+      "type": "about",
+      "to": "item:16fd2706-8baf-433b-82eb-8c7fada847da"
+    }
+  ],
+  "attachments": [
+    {
+      "id": "16fd2706-8baf-433b-82eb-8c7fada847da",
+      "blob_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "role": "photo",
+      "declared_mime": "image/jpeg",
+      "captured_at": "2026-03-02T00:35:12.345Z",
+      "captured_at_precision": "low",
+      "cloud_policy": "cloud_alowed"
+    }
+  ],
+  "timeline": {
+    "boot_id": "b-2026-03-02-1",
+    "anchors": [
+      {
+        "wall_ms": 1772411400000,
+        "mono_ns": 9007199254740993
+      }
+    ],
+    "start_uncertainty_ms": 40,
+    "events": [
+      {
+        "type": "start",
+        "mono_ns": 9007199254740993,
+        "media_pos_ms": 0
+      },
+      {
+        "type": "segment_close",
+        "mono_ns": 9007799254740993,
+        "media_pos_ms": 600000
+      },
+      {
+        "type": "segment_open",
+        "mono_ns": 9007799254740993,
+        "media_pos_ms": 600000
+      },
+      {
+        "type": "stop",
+        "mono_ns": 9008399254740993,
+        "media_pos_ms": 1200000
+      }
+    ]
+  }
+}

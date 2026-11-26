@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/fields/date/date",
+    "rule": "calendar"
+  }
+]

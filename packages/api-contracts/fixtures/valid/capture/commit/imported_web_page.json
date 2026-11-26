@@ -1,0 +1,25 @@
+{
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "created_at": "2026-03-02T00:30:00.000Z",
+  "origin": {
+    "type": "import"
+  },
+  "url": "https://example.edu/notice/42",
+  "links": [],
+  "attachments": [
+    {
+      "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+      "blob_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "role": "web_snapshot",
+      "declared_mime": "text/html",
+      "cloud_policy": "local_only"
+    },
+    {
+      "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "blob_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "text",
+      "declared_mime": "text/plain",
+      "cloud_policy": "blocked"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "anchors": [
+    {
+      "wall_ms": 1772411400000,
+      "mono_ns": 9007199254740993
+    }
+  ],
+  "start_uncertainty_ms": 40,
+  "events": [
+    {
+      "type": "start",
+      "mono_ns": 9007199254740993,
+      "media_pos_ms": 0
+    },
+    {
+      "type": "segment_close",
+      "mono_ns": 9007799254740993,
+      "media_pos_ms": 600000
+    },
+    {
+      "type": "segment_open",
+      "mono_ns": 9007799254740993,
+      "media_pos_ms": 600000
+    },
+    {
+      "type": "stop",
+      "mono_ns": 9008399254740993,
+      "media_pos_ms": 1200000
+    }
+  ]
+}

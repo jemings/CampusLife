@@ -1,0 +1,6 @@
+{
+  "explicit": null,
+  "course_default": null,
+  "global_default": "local_only",
+  "expected": "local_only"
+}

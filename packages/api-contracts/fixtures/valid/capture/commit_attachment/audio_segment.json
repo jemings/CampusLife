@@ -1,0 +1,11 @@
+{
+  "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+  "blob_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "role": "audio_segment",
+  "seq": 0,
+  "declared_mime": "audio/mp4",
+  "captured_at": "2026-03-02T00:30:00.000Z",
+  "captured_at_precision": "exact",
+  "captured_mono_ns": 9007199254740993,
+  "cloud_policy": "local_only"
+}
