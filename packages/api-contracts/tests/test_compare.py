@@ -121,6 +121,22 @@ def test_cli_rejects_an_expected_directory_without_json(tmp_path, capsys):
     assert "no *.json" in capsys.readouterr().err
 
 
+def test_cli_reports_too_deep_output_as_a_mismatch(dirs, capsys):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", "[]")
+    write(actual, "common/x/case.json", "[" * 100_000 + "]" * 100_000)
+    assert main(["compare", str(expected), str(actual)]) == 1
+    assert capsys.readouterr().out.startswith("common/x/case.json: not strict JSON")
+
+
+def test_cli_exits_two_when_a_golden_file_is_not_strict_json(dirs, capsys):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", "[" * 100_000 + "]" * 100_000)
+    write(actual, "common/x/case.json", "[]")
+    assert main(["compare", str(expected), str(actual)]) == 2
+    assert "common/x/case.json" in capsys.readouterr().err
+
+
 def test_cli_rejects_a_missing_expected_directory(tmp_path, capsys):
     with pytest.raises(SystemExit) as exit_info:
         main(["compare", str(tmp_path / "nope"), str(tmp_path)])

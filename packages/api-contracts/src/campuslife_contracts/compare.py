@@ -13,6 +13,10 @@ from pathlib import Path
 from .jsonio import NotStrictJson, canonical_json, pointer, read_strict
 
 
+class BrokenGolden(Exception):
+    """An expected (golden) file is not strict JSON; nothing can be judged against it."""
+
+
 @dataclass(frozen=True)
 class Mismatch:
     file: str
@@ -87,7 +91,7 @@ def compare_file(expected_path: Path, actual_path: Path, name: str) -> list[Mism
     try:
         expected = read_strict(expected_path, exact_numbers=True)
     except NotStrictJson as error:
-        return [Mismatch(name, f"expected file is not strict JSON: {error}")]
+        raise BrokenGolden(f"{name}: {error}") from error
     try:
         actual = read_strict(actual_path, exact_numbers=True)
     except NotStrictJson as error:
