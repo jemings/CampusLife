@@ -1,0 +1,8 @@
+{
+  "mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  "result": "rejected",
+  "reason": "deleted",
+  "conflict_record_ids": [
+    "16fd2706-8baf-433b-82eb-8c7fada847da"
+  ]
+}

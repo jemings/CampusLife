@@ -1,0 +1,19 @@
+{
+  "results": [
+    {
+      "mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      "result": "applied"
+    },
+    {
+      "mutation_id": "9b2d3c4e-5f60-4718-8a9b-0c1d2e3f4a5b",
+      "result": "retry",
+      "missing_blobs": [
+        "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+      ]
+    },
+    {
+      "mutation_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "result": "not_attempted"
+    }
+  ]
+}

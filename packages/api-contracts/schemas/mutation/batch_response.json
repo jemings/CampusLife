@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/mutation/batch_response.json",
+  "title": "Mutation batch results",
+  "description": "Answer to a well-formed batch, sent with HTTP 200 (E12): one result per Mutation, in request order. The Hub stops at the first retry, because later Mutations may depend on that one, and reports the rest as not_attempted. Open.",
+  "type": "object",
+  "required": ["results"],
+  "properties": {
+    "results": { "type": "array", "minItems": 1, "items": { "$ref": "result.json" }, "x-batch-order": true }
+  }
+}

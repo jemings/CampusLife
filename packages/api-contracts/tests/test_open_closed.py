@@ -13,10 +13,14 @@ from campuslife_contracts.jsonio import read_strict
 CONTRACT = bundled_contract()
 CASES = discover(contract_root())
 
-CLOSED = {"capture/commit", "capture/commit_attachment", "common/local_date", "common/local_time_rule"}
+CLOSED = {
+    "capture/commit", "capture/commit_attachment", "common/local_date", "common/local_time_rule",
+    "mutation/mutation", "mutation/batch_request",
+}
 OPEN = {
     "capture/capture", "capture/attachment", "capture/origin", "capture/timeline",
     "item/item", "relation/relation", "tag/tag", "common/error",
+    "mutation/result", "mutation/batch_response",
     *(schema_id for schema_id in CONTRACT.schema_ids if schema_id.startswith("item/fields/")),
 }
 
@@ -109,3 +113,68 @@ def test_the_closure_sample_reaches_every_nested_shape():
     shapes = {tuple(part for part in at if isinstance(part, str)) for at in object_paths(RECORDING)}
     assert shapes == {(), ("origin",), ("links",), ("attachments",), ("timeline",), ("timeline", "anchors"),
                       ("timeline", "events")}
+
+
+MUTATION = schema("mutation/mutation")["$defs"]
+ITEM = schema("item/item")
+KINDS = sorted(ITEM["$defs"]["kind_is"])
+HUB_OWNED = {name for name, member in ITEM["properties"].items() if member.get("x-owner") == "hub"}
+
+
+def test_create_writes_the_item_columns_minus_the_hubs_and_the_id():
+    assert names(MUTATION["item_data"]) == names(ITEM) - HUB_OWNED - {"id", "status"}
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_create_closes_exactly_the_members_of_each_kind(kind):
+    assert names(MUTATION["closed_fields"][kind]) == names(schema(f"item/fields/{kind}"))
+
+
+def test_create_and_patch_know_the_same_kinds_as_the_item():
+    dispatched = {branch["if"]["$ref"].rsplit("/", 1)[1] for branch in MUTATION["closed_fields_of_kind"]["allOf"]}
+    patched = {ref.rsplit("/", 1)[1].removesuffix(".json") for ref in MUTATION["patch"]["x-set-targets"]["item"]["fields"]}
+    assert dispatched == patched == set(KINDS) == set(MUTATION["closed_fields"])
+
+
+def test_create_writes_the_relation_and_tag_columns_minus_the_id():
+    assert names(MUTATION["relation_data"]) == names(schema("relation/relation")) - {"id"}
+    assert names(MUTATION["tag_data"]) == names(schema("tag/tag")) - {"id"}
+
+
+def free_form(at):
+    """Places a client fills with column names or values by design: a patch's set values and accept edits."""
+    strings = [part for part in at if isinstance(part, str)]
+    if "edits" in strings:
+        return True
+    if "set" in strings:
+        return len(at) - at.index("set") > 2 or len(at) - at.index("set") == 1
+    return False
+
+
+def unknown_kind_fields(sample, at):
+    """An unknown kind's fields are the Hub's to judge (mutation.json closed_fields_of_kind)."""
+    data = sample.get("data", {})
+    return at[:2] == ("data", "fields") and isinstance(data, dict) and data.get("kind") not in KINDS
+
+
+MUTATION_SAMPLES = [
+    (c.name, read_strict(c.path)) for c in CASES if c.kind is FixtureKind.VALID and c.schema_id == "mutation/mutation"
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "at"),
+    [
+        (name, at)
+        for name, sample in MUTATION_SAMPLES
+        for at in object_paths(sample)
+        if not free_form(at) and not unknown_kind_fields(sample, at)
+    ],
+    ids=lambda value: value if isinstance(value, str) else "/".join(map(str, value)) or "root",
+)
+def test_every_object_inside_a_mutation_is_closed(name, at):
+    sample = dict(MUTATION_SAMPLES)[name]
+    pointer = "".join(f"/{part}" for part in at)
+    assert CONTRACT.validate("mutation/mutation", with_member_at(sample, at, "zz_unknown")) == [
+        SchemaViolation(f"{pointer}/zz_unknown", "additionalProperties")
+    ]

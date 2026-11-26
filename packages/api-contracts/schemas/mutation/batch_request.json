@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/mutation/batch_request.json",
+  "title": "Mutation batch",
+  "description": "Body of POST /v1/mutations: one device's outbox in FIFO order (E12). Closed.",
+  "type": "object",
+  "required": ["mutations"],
+  "properties": {
+    "mutations": { "type": "array", "minItems": 1, "items": { "$ref": "mutation.json" } }
+  },
+  "additionalProperties": false
+}
