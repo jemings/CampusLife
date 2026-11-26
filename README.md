@@ -25,12 +25,12 @@ CampusLife는 강의 녹음·정리만을 위한 앱이 아닙니다. 수업, �
 | Windows 11 노트북 | 기본 데이터 허브(Hub), 파일 저장, AI 처리, 검색 API | Python Agent / FastAPI / SQLite |
 
 - 네트워크: Tailscale 사설 연결, `tailscale serve`로 Hub API HTTPS 노출
-- 동기화: 세 클라이언트 공통 HTTPS Sync API (FolderSync+SFTP는 Phase 0 연결 확인용)
+- 동기화: 세 클라이언트 공통 HTTPS Sync API (Blob 업로드 + Mutation + 변경 피드, SFTP·FolderSync는 쓰지 않음)
 - 저장: Windows 로컬 파일시스템(내용 주소 Blob) + SQLite
 - AI: OpenAI API를 첫 provider로 지원하되 교체 가능하게 설계
 - NAS 또는 상시 서버: 필수 아님
 
-**운영 한계:** 노트북이 꺼져 있거나 절전 상태이면 파일 전송과 노트북 AI 처리는 불가능합니다. 이때 각 모바일 장치는 원본과 manifest를 로컬 Outbox에 보존하고 노트북이 다시 연결 가능해지면 업로드를 재시도합니다. Tailscale은 네트워크 연결이지 파일 저장소나 오프라인 큐가 아닙니다.
+**운영 한계:** 노트북이 꺼져 있거나 절전 상태이면 파일 전송과 노트북 AI 처리는 불가능합니다. 이때 각 모바일 장치는 원본과 미전송 변경을 로컬 Outbox에 보존하고 노트북이 다시 연결 가능해지면 업로드를 재시도합니다. Tailscale은 네트워크 연결이지 파일 저장소나 오프라인 큐가 아닙니다. 알림은 각 기기가 로컬로 예약하므로 노트북이 꺼져 있어도 울립니다.
 
 ## 기능 영역
 
@@ -53,7 +53,7 @@ CampusLife는 강의 녹음·정리만을 위한 앱이 아닙니다. 수업, �
     │   ├── windows/          # (선택) Windows 로컬 UI — Agent의 localhost admin API만 사용
     │   └── prototype/        # Responsive web design prototype
     ├── packages/
-    │   └── api-contracts/    # 도메인 엔터티·manifest·Locator·Sync API의 JSON Schema/OpenAPI (단일 계약)
+    │   └── api-contracts/    # 도메인 엔터티·Locator·Sync API의 JSON Schema/OpenAPI + golden fixture (단일 계약)
     ├── services/
     │   └── agent/            # Windows Hub: Sync/admin API, 저장, 작업 큐, AI orchestration
     ├── docs/
@@ -102,14 +102,14 @@ CampusLife는 강의 녹음·정리만을 위한 앱이 아닙니다. 수업, �
 | MVP | [#19 Device pairing·장치 토큰·revoke](https://github.com/jemings/CampusLife/issues/19) | #2 |
 | MVP | [#3 Android Capture](https://github.com/jemings/CampusLife/issues/3) | #4, #19 |
 | MVP | [#8 강의 녹음·사진·배포 문서 AI 노트](https://github.com/jemings/CampusLife/issues/8) | #2, #3 (다중 문서 부분은 #5) |
-| Ingestion | [#5 CourseMaterialSet 및 Extractor Framework](https://github.com/jemings/CampusLife/issues/5) | #2 |
+| Ingestion | [#5 다중 파일 강의 자료 연결 및 Extractor Framework](https://github.com/jemings/CampusLife/issues/5) | #2 |
 | Ingestion | [#6 PDF·PPTX·DOCX·XLSX/CSV](https://github.com/jemings/CampusLife/issues/6) | #5 |
 | Ingestion | [#7 HWP·HWPX](https://github.com/jemings/CampusLife/issues/7) | #5 |
 | Ingestion | [#13 ZIP·코드·Jupyter·동영상·자막](https://github.com/jemings/CampusLife/issues/13) | #5 |
-| Campus | [#9 통합 Inbox](https://github.com/jemings/CampusLife/issues/9) | #2, #5 |
+| Campus | [#9 통합 Inbox·Suggestion 검토](https://github.com/jemings/CampusLife/issues/9) | #2, #5 |
 | Planner | [#10 과제·시험·행사·기회 관리](https://github.com/jemings/CampusLife/issues/10) | #9 |
 | Search | [#11 검색·AI 질의·복습](https://github.com/jemings/CampusLife/issues/11) | #2, #5 |
-| Sync | [#18 메타데이터 동기화·충돌 처리](https://github.com/jemings/CampusLife/issues/18) | #4, #19 |
+| Sync | [#18 충돌 보존·해소와 Hub 복원 처리](https://github.com/jemings/CampusLife/issues/18) | #4, #19 |
 | iPadOS | [#16 Native Study Companion](https://github.com/jemings/CampusLife/issues/16) | #18 |
 | iPadOS | [#17 Apple Pencil·PDF Annotation](https://github.com/jemings/CampusLife/issues/17) | #16 |
 | UI | [#15 Fold8/iPad 적응형 UX](https://github.com/jemings/CampusLife/issues/15) | #3, #16과 병행 |
