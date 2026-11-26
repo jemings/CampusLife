@@ -16,6 +16,7 @@ from typing import NamedTuple
 from jsonschema import ValidationError
 
 from .ecma import ecma_search
+from .set_rules import set_owner, set_type
 from .violations import Rule
 
 
@@ -103,14 +104,19 @@ def _raw_form(validator, pairs, instance, schema):
 RELATION_PARTS = ("from", "type", "to")
 
 
-def _relation_id(validator, enabled, instance, schema):
+def _relation_id(validator, parts_member, instance, schema):
+    """parts_member is true when from, type and to sit next to id, else the member holding them."""
     if not isinstance(instance, dict):
         return
-    parts = [instance.get(name) for name in RELATION_PARTS]
+    holder = instance if parts_member is True else instance.get(parts_member)
+    if not isinstance(holder, dict):
+        return
+    parts = [holder.get(name) for name in RELATION_PARTS]
     identifier = instance.get("id")
     if not all(isinstance(value, str) for value in [identifier, *parts]):
         return
-    if not _members_fit(validator, schema, instance, ["id", *RELATION_PARTS]):
+    fitted = ["id", *RELATION_PARTS] if parts_member is True else ["id", parts_member]
+    if not _members_fit(validator, schema, instance, fitted):
         return
     if identifier != "|".join(parts):
         yield ValidationError(f"id must be {'|'.join(parts)!r}", path=["id"])
@@ -124,6 +130,60 @@ def _relation_not_self(validator, enabled, instance, schema):
         return
     if _members_fit(validator, schema, instance, ["from", "to"]):
         yield ValidationError("a relation cannot link an entity to itself", path=["to"])
+
+
+def _batch_order(validator, enabled, instance, schema):
+    if not isinstance(instance, list):
+        return
+    after_retry = False
+    for index, item in enumerate(instance):
+        if not isinstance(item, dict) or next(validator.descend(item, schema.get("items", True)), None) is not None:
+            return
+        result = item.get("result")
+        if after_retry and result != "not_attempted":
+            yield ValidationError("every mutation after the first retry is not_attempted", path=[index, "result"])
+        elif not after_retry and result == "not_attempted":
+            yield ValidationError("not_attempted only follows a retry", path=[index, "result"])
+        after_retry = after_retry or result == "retry"
+
+
+def _fits(validator, value, schema) -> bool:
+    return next(validator.descend(value, schema), None) is None
+
+
+def _original_id(validator, enabled, instance, schema):
+    if not isinstance(instance, dict) or not isinstance(instance.get("original"), dict):
+        return
+    id_schema = schema.get("properties", {}).get("mutation_id", True)
+    outer, inner = instance.get("mutation_id"), instance["original"].get("mutation_id")
+    if not isinstance(outer, str) or not _fits(validator, outer, id_schema):
+        return
+    if inner is None or not _fits(validator, inner, id_schema):
+        return
+    if inner != outer:
+        yield ValidationError("original repeats the result of this same mutation_id", path=["original", "mutation_id"])
+
+
+def _feed_order(validator, enabled, instance, schema):
+    if not isinstance(instance, dict) or not isinstance(instance.get("changes"), list):
+        return
+    properties = schema.get("properties", {})
+    row_schema = properties.get("changes", {}).get("items", True)
+    previous = highest = None
+    for index, row in enumerate(instance["changes"]):
+        if not isinstance(row, dict) or not _fits(validator, row, row_schema):
+            continue
+        data = row.get("data")
+        if isinstance(data, dict) and isinstance(data.get("id"), str) and data["id"] != row["id"]:
+            yield ValidationError("a row's id is its data's id", path=["changes", index, "id"])
+        rev = row["rev"]
+        if previous is not None and rev <= previous:
+            yield ValidationError("revs rise strictly through a page", path=["changes", index, "rev"])
+        previous = rev
+        highest = rev if highest is None else max(highest, rev)
+    next_since = instance.get("next_since")
+    if highest is not None and _fits(validator, next_since, properties.get("next_since", True)) and next_since < highest:
+        yield ValidationError("next_since is at least the highest rev of the page", path=["next_since"])
 
 
 def _box_extent(validator, enabled, instance, schema):
@@ -147,4 +207,9 @@ RULE_KEYWORDS = {
     "x-raw-form": RuleKeyword(Rule.RAW_FORM, _raw_form),
     "x-relation-id": RuleKeyword(Rule.RELATION_ID, _relation_id),
     "x-relation-not-self": RuleKeyword(Rule.RELATION_SELF, _relation_not_self),
+    "x-batch-order": RuleKeyword(Rule.BATCH_ORDER, _batch_order),
+    "x-original-id": RuleKeyword(Rule.ORIGINAL_ID, _original_id),
+    "x-feed-order": RuleKeyword(Rule.FEED_ORDER, _feed_order),
+    "x-set-owner": RuleKeyword(Rule.OWNER, set_owner),
+    "x-set-type": RuleKeyword(Rule.SET_TYPE, set_type),
 }
