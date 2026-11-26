@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import sys
@@ -8,6 +9,7 @@ import pytest
 from campuslife_contracts import validate
 
 from campuslife_hub import changes, store
+from campuslife_hub.blobs import StoredBlob
 from campuslife_hub.core import UnsafeDataRoot, accepted_root, open_core, open_core_readonly, safe_data_root
 from campuslife_hub.data_root import Allowed, DevicePath, InsideSyncFolder, Layout, UncPath
 from campuslife_hub.db import Database, NotInitialized, SchemaMismatch, StartupRefused
@@ -318,3 +320,36 @@ def test_a_symlinked_root_is_judged_where_it_leads(tmp_path):
         pytest.skip(f"cannot make a symlink here: {error}")
     with pytest.raises(UnsafeDataRoot):
         safe_data_root(link, [onedrive])
+
+
+async def test_an_upload_session_and_its_chunks_survive_a_restart(root):
+    data = b"synthetic slide deck"
+    sha256 = hashlib.sha256(data).hexdigest()
+    async with open_core(root, create=True, sync_roots=[]) as core:
+        await core.blobs.open_upload(core.hub_device, sha256, len(data))
+        await core.blobs.put_chunk(core.hub_device, sha256, 0, data)
+
+    async with open_core(root, create=False, sync_roots=[]) as core:
+        assert (await core.blobs.open_upload(core.hub_device, sha256, len(data))).received == (0,)
+        assert await core.blobs.finalize(core.hub_device, sha256) == StoredBlob(sha256, len(data))
+
+
+async def test_opening_the_core_ends_stale_upload_sessions_and_removes_orphan_chunks(root, caplog):
+    data = b"synthetic slide deck"
+    sha256 = hashlib.sha256(data).hexdigest()
+    async with open_core(root, create=True, sync_roots=[]) as core:
+        await core.blobs.open_upload(core.hub_device, sha256, len(data))
+        await core.blobs.put_chunk(core.hub_device, sha256, 0, data)
+        await core.db.write(lambda tx: tx.execute("UPDATE upload_sessions SET touched_at = '2000-01-01T00:00:00.000Z'"))
+    orphan = root / "uploads" / "0f8fad5b-d9cb-469f-a165-70867728950e"
+    orphan.mkdir(parents=True)
+    (orphan / "0").write_bytes(b"orphan chunk")
+    stray = root / "uploads" / "notes.txt"
+    stray.write_bytes(b"not a session")
+
+    with caplog.at_level(logging.WARNING, logger="campuslife_hub"):
+        async with open_core(root, create=False, sync_roots=[]) as core:
+            assert (await core.blobs.open_upload(core.hub_device, sha256, len(data))).received == ()
+
+    assert sorted(path.name for path in (root / "uploads").iterdir()) == ["notes.txt"]
+    assert str(stray) in caplog.text
