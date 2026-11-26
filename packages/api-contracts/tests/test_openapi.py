@@ -13,7 +13,7 @@ from campuslife_contracts.jsonio import read_strict
 ROOT = contract_root()
 DOCUMENT = ROOT / "openapi" / "sync.yaml"
 SPEC = yaml.safe_load(DOCUMENT.read_text(encoding="utf-8"))
-METHODS = {"get", "put", "post", "delete", "patch"}
+METHODS = {"get", "put", "post", "delete", "patch", "head", "options", "trace"}
 
 ENDPOINTS = {
     ("post", "/v1/pair"),
@@ -100,6 +100,33 @@ def test_every_schema_in_the_document_is_a_reference_to_a_contract_schema():
 
 def test_the_endpoints_are_the_contract_list():
     assert {(method, path) for method, path, _ in operations()} == ENDPOINTS
+
+
+TOP_LEVEL_KEYS = {"openapi", "jsonSchemaDialect", "info", "servers", "security", "paths", "components"}
+
+# path -> the keys of its path item; no method or $ref can slip an operation in beside them
+PATH_ITEM_KEYS = {
+    "/v1/pair": {"post"},
+    "/v1/blobs/uploads": {"post"},
+    "/v1/blobs/uploads/{sha}/chunks/{i}": {"parameters", "put"},
+    "/v1/blobs/uploads/{sha}/finalize": {"parameters", "post"},
+    "/v1/blobs/{sha}": {"parameters", "get"},
+    "/v1/mutations": {"post"},
+    "/v1/changes": {"get"},
+    "/v1/hub": {"get"},
+    "/v1/devices/me/status": {"post"},
+    "/v1/devices/me/token": {"post"},
+}
+
+
+def test_the_document_has_exactly_its_top_level_keys():
+    """No webhooks or callbacks: the Hub never calls a client (D19), and admin operations stay off this port (D5)."""
+    assert set(SPEC) == TOP_LEVEL_KEYS
+    assert not [at for at, _ in walk(SPEC) if at and at[-1] in {"webhooks", "callbacks"}]
+
+
+def test_each_path_item_has_exactly_its_keys():
+    assert {path: set(item) for path, item in SPEC["paths"].items()} == PATH_ITEM_KEYS
 
 
 def test_every_operation_but_pairing_needs_the_device_token():
