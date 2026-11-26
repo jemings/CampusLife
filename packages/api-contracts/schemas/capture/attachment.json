@@ -13,6 +13,7 @@
       "description": "Known roles are the examples; a newer Hub may send others, which a client keeps but does not interpret. capture.commit takes only the known ones.",
       "type": "string", "pattern": "^[a-z][a-z_]*$",
       "examples": ["audio_segment", "photo", "file", "web_snapshot", "text"],
+      "x-open": true,
       "x-owner": "client"
     },
     "seq": { "description": "Order of an audio segment within its recording.", "$ref": "../common/int64.json#/$defs/non_negative", "x-owner": "client" },
