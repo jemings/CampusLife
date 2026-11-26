@@ -1,6 +1,7 @@
 import pytest
 from conftest import contract_fixture
 from campuslife_contracts import text_hash, validate
+from campuslife_hub.conflict_stash import kept
 from test_capture_commit import apply, blob_store, commit, device, feed, new_id, store_bytes, text_capture
 
 __all__ = ["blob_store", "device"]
@@ -587,3 +588,84 @@ async def test_a_batch_applies_in_order_so_a_patch_sees_the_create_before_it(db,
         {"result": "applied", "applied_fields": ["title"]},
         {"result": "duplicate", "original": {"mutation_id": edit["mutation_id"], "result": "applied", "applied_fields": ["title"]}},
     ]
+
+
+async def stashed(db):
+    return [
+        {"device_id": value.device_id, "mutation_id": value.mutation_id, "entity": value.entity, "entity_id": value.entity_id,
+         "field": value.field, "change": value.change, "theirs_rev": value.theirs_rev}
+        for value in await db.read(kept)
+    ]
+
+
+async def test_a_body_that_loses_compare_and_set_is_kept_in_the_stash_and_not_synced(db, device):
+    await apply(db, device, task(body="첫 줄"), patch_item(body={"from_hash": text_hash("첫 줄"), "to": "둘째 줄"}))
+    theirs = await item_row(db)
+    before = await feed(db)
+    losing = patch_item(body={"from_hash": text_hash("첫 줄"), "to": "다른 줄"}, title={"from": "과제 제출", "to": "과제 1"})
+
+    [result] = await apply(db, device, losing)
+
+    assert outcome(result) == {"result": "conflict", "applied_fields": ["title"], "conflicted_fields": ["body"]}
+    assert await stashed(db) == [
+        {"device_id": device, "mutation_id": losing["mutation_id"], "entity": "item", "entity_id": ITEM,
+         "field": "body", "change": losing["set"]["body"], "theirs_rev": theirs["rev"]}
+    ]
+    assert [row for row in await feed(db) if row["entity"] != "item"] == [row for row in before if row["entity"] != "item"]
+
+
+async def test_a_scalar_that_loses_and_a_body_that_converges_are_not_stashed(db, device):
+    await apply(db, device, task(body="첫 줄"), patch_item(body={"from_hash": text_hash("첫 줄"), "to": "둘째 줄"}, title={"from": "과제 제출", "to": "과제 1"}))
+
+    results = await apply(db, device, patch_item(body={"from_hash": text_hash("첫 줄"), "to": "둘째 줄"}, title={"from": "과제 제출", "to": "과제 2"}))
+
+    assert outcome(results[0]) == {"result": "conflict", "applied_fields": ["body"], "conflicted_fields": ["title"]}
+    assert await stashed(db) == []
+
+
+async def test_every_value_of_a_patch_of_a_deleted_item_is_kept_in_the_stash(db, device):
+    await apply(db, device, task(), op("delete", "item", ITEM))
+    deleted = await item_row(db)
+    late = patch_item(title={"from": "과제 제출", "to": "과제 1"}, body={"from_hash": None, "to": "메모"})
+
+    [result] = await apply(db, device, late)
+
+    assert outcome(result) == {"result": "rejected", "reason": "deleted"}
+    assert [(value["field"], value["change"], value["theirs_rev"]) for value in await stashed(db)] == [
+        ("title", late["set"]["title"], deleted["rev"]),
+        ("body", late["set"]["body"], deleted["rev"]),
+    ]
+
+
+async def test_a_patch_of_an_entity_the_hub_never_had_is_stashed_without_a_rev(db, device):
+    late = patch("tag", TAG, color={"from": "#ff8800", "to": "#0088ff"})
+
+    await apply(db, device, late)
+
+    assert [(value["entity"], value["field"], value["theirs_rev"]) for value in await stashed(db)] == [("tag", "color", None)]
+
+
+async def test_a_rejected_patch_of_a_live_item_stashes_nothing(db, device):
+    await apply(db, device, task())
+
+    await apply(db, device, patch_item(fields__course_id={"from": None, "to": OTHER_ITEM}), patch_item(body={"from_hash": None, "to": "a\rb"}))
+
+    assert await stashed(db) == []
+
+
+async def test_a_body_that_loses_beside_a_date_from_before_all_day_is_kept_in_the_stash(db, device):
+    went_all_day = {"all_day": {"from": None, "to": True}, "due_at": {"from": DUE, "to": DUE_DATE}}
+    await apply(db, device, task(due_at=DUE, body="a"), patch_item(**went_all_day, body={"from_hash": text_hash("a"), "to": "c"}))
+    late = patch_item(body={"from_hash": text_hash("a"), "to": "b"}, due_at={"from": DUE, "to": "2026-03-10T14:59:00.000Z"})
+
+    [result] = await apply(db, device, late)
+
+    assert outcome(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["body", "due_at"]}
+    assert [(value["field"], value["change"]) for value in await stashed(db)] == [("body", late["set"]["body"])]
+
+
+async def test_keys_held_back_with_the_dates_are_not_stashed_and_the_others_apply(db, device):
+    [result] = await apply(db, device, await p13(db, device))
+
+    assert result["applied_fields"] == ["title", "body"]
+    assert await stashed(db) == []
