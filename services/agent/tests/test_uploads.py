@@ -522,6 +522,26 @@ async def test_a_chunk_placed_after_its_session_ended_is_refused_and_swept_as_an
     assert staging_files(tmp_path) == []
 
 
+@pytest.mark.parametrize("answer", ["open", "finalize without a session", "finalize with a session"])
+async def test_answering_stored_restarts_the_seven_days(db, store, phone, tablet, answer):
+    from campuslife_hub.clock import instant
+
+    await store.open_upload(tablet, sha(DATA), len(DATA))
+    await upload(store, phone, DATA)
+    almost_a_week_ago = datetime.now(UTC) - timedelta(days=7) + timedelta(minutes=1)
+    await db.write(lambda tx: tx.execute("UPDATE blobs SET stored_at = ?", (instant(almost_a_week_ago),)))
+    answers = {
+        "open": lambda: store.open_upload(phone, sha(DATA), len(DATA)),
+        "finalize without a session": lambda: store.finalize(phone, sha(DATA)),
+        "finalize with a session": lambda: store.finalize(tablet, sha(DATA)),
+    }
+
+    assert await answers[answer]() == StoredBlob(sha(DATA), len(DATA))
+    await store.collect_garbage(datetime.now(UTC) + timedelta(minutes=2))
+
+    assert store.path_of(sha(DATA)).read_bytes() == DATA
+
+
 async def test_expiring_removes_directories_no_session_owns_and_reports_what_is_not_one(tmp_path, store, phone):
     await store.open_upload(phone, sha(DATA), len(DATA))
     await put_all(store, phone, DATA, order=[1])

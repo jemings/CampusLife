@@ -1,8 +1,11 @@
+import asyncio
 import errno
 import os
+import sqlite3
 import stat
 import sys
 import threading
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -299,3 +302,186 @@ async def test_a_failed_put_keeps_its_own_error_when_its_staging_file_cannot_be_
     [staging] = (tmp_path / "staging").iterdir()
     assert discarded == [staging]
     assert not await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+
+
+def a_week_and_a_day_on():
+    return datetime.now(UTC) + timedelta(days=8)
+
+
+def is_read_only(path):
+    return path.stat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH) == 0
+
+
+async def age_blobs(db):
+    await db.write(lambda tx: tx.execute("UPDATE blobs SET stored_at = '2000-01-01T00:00:00.000Z'"))
+
+
+async def test_collection_removes_an_unreferenced_blob_stored_more_than_seven_days_ago(tmp_path, db, blob_store):
+    await blob_store.put_file(source(tmp_path, "a.txt", b"abc"))
+
+    assert await blob_store.collect_garbage(a_week_and_a_day_on()) == []
+
+    assert not await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+    assert not blob_store.path_of(ABC_SHA256).exists()
+    assert list((tmp_path / "staging").iterdir()) == []
+
+
+async def test_collection_keeps_an_unreferenced_blob_stored_within_seven_days(tmp_path, db, blob_store):
+    await blob_store.put_file(source(tmp_path, "a.txt", b"abc"))
+
+    assert await blob_store.collect_garbage(datetime.now(UTC) + timedelta(days=6)) == []
+
+    assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+    assert is_read_only(blob_store.path_of(ABC_SHA256))
+
+
+async def test_putting_the_same_bytes_again_restarts_the_seven_days(tmp_path, db, blob_store):
+    await blob_store.put_file(source(tmp_path, "a.txt", b"abc"))
+    await age_blobs(db)
+
+    await blob_store.put_file(source(tmp_path, "again.txt", b"abc"))
+    await blob_store.collect_garbage(datetime.now(UTC))
+
+    assert blob_store.path_of(ABC_SHA256).read_bytes() == b"abc"
+
+
+async def test_collection_drops_the_row_of_a_blob_whose_file_is_already_gone(tmp_path, db, blob_store):
+    await blob_store.put_file(source(tmp_path, "a.txt", b"abc"))
+    final = blob_store.path_of(ABC_SHA256)
+    final.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    final.unlink()
+
+    assert await blob_store.collect_garbage(a_week_and_a_day_on()) == []
+
+    assert not await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+
+
+async def test_a_blob_in_use_is_kept_for_the_next_collection(tmp_path, db):
+    held = {True}
+
+    def replace(src, dst):
+        if held:
+            raise WindowsError_(32)
+        os.replace(src, dst)
+
+    blob_store = store_in(tmp_path, db, FileOps(replace=replace, sleep=must_not_wait))
+    await store_in(tmp_path, db).put_file(source(tmp_path, "a.txt", b"abc"))
+
+    [kept] = await blob_store.collect_garbage(a_week_and_a_day_on())
+
+    assert kept.path == blob_store.path_of(ABC_SHA256)
+    assert "in use" in kept.reason
+    assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+    assert is_read_only(kept.path)
+    held.clear()
+    assert await blob_store.collect_garbage(a_week_and_a_day_on()) == []
+    assert not kept.path.exists()
+
+
+async def test_a_blob_that_fails_to_move_for_another_reason_stops_the_collection_and_stays(tmp_path, db):
+    def replace(src, dst):
+        raise PermissionError(errno.EACCES, "denied", str(src))
+
+    blob_store = store_in(tmp_path, db, FileOps(replace=replace))
+    await store_in(tmp_path, db).put_file(source(tmp_path, "a.txt", b"abc"))
+
+    with pytest.raises(PermissionError):
+        await blob_store.collect_garbage(a_week_and_a_day_on())
+
+    assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+    assert is_read_only(blob_store.path_of(ABC_SHA256))
+
+
+async def test_a_collected_file_still_in_use_stays_writable_in_staging_for_the_next_start(tmp_path, db):
+    def unlink(path):
+        raise WindowsError_(32)
+
+    blob_store = store_in(tmp_path, db, FileOps(unlink=unlink, sleep=must_not_wait))
+    await store_in(tmp_path, db).put_file(source(tmp_path, "a.txt", b"abc"))
+
+    [kept] = await blob_store.collect_garbage(a_week_and_a_day_on())
+
+    assert kept.path.parent == tmp_path / "staging"
+    assert kept.path.read_bytes() == b"abc"
+    assert not is_read_only(kept.path)
+    assert not await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+    assert store_in(tmp_path, db).discard_staging_leftovers() == []
+
+
+class FailsAfterEachWrite:
+    """The database, except that every write rolls back after its work, as a failed COMMIT would."""
+
+    def __init__(self, db):
+        self._db = db
+
+    async def read(self, fn):
+        return await self._db.read(fn)
+
+    async def write(self, fn):
+        def then_fail(tx):
+            fn(tx)
+            raise sqlite3.OperationalError("disk I/O error")
+
+        return await self._db.write(then_fail)
+
+
+async def test_a_collection_whose_transaction_fails_puts_the_file_back(tmp_path, db):
+    await store_in(tmp_path, db).put_file(source(tmp_path, "a.txt", b"abc"))
+    blob_store = store_in(tmp_path, FailsAfterEachWrite(db))
+
+    with pytest.raises(sqlite3.OperationalError):
+        await blob_store.collect_garbage(a_week_and_a_day_on())
+
+    assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+    final = blob_store.path_of(ABC_SHA256)
+    assert final.read_bytes() == b"abc"
+    assert is_read_only(final)
+
+
+async def test_a_put_whose_file_a_collection_took_after_it_was_found_stores_the_bytes_again(tmp_path, db):
+    await store_in(tmp_path, db).put_file(source(tmp_path, "a.txt", b"abc"))
+    loop = asyncio.get_running_loop()
+    collections = []
+
+    def collect_then_unlink(path):
+        if not collections:
+            collections.append("running")
+            collections[0] = asyncio.run_coroutine_threadsafe(blob_store.collect_garbage(a_week_and_a_day_on()), loop).result()
+        path.unlink(missing_ok=True)
+
+    blob_store = store_in(tmp_path, db, FileOps(unlink=collect_then_unlink))
+
+    assert await blob_store.put_file(source(tmp_path, "again.txt", b"abc")) == StoredBlob(ABC_SHA256, 3)
+
+    assert collections == [[]]
+    assert blob_store.path_of(ABC_SHA256).read_bytes() == b"abc"
+    assert is_read_only(blob_store.path_of(ABC_SHA256))
+    assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+
+
+class CollectsBeforeTheFirstWrite:
+    """The database, except that a collection runs just before the first write."""
+
+    def __init__(self, db, collect):
+        self._db = db
+        self._collect = collect
+
+    async def read(self, fn):
+        return await self._db.read(fn)
+
+    async def write(self, fn):
+        if self._collect is not None:
+            collect, self._collect = self._collect, None
+            await collect()
+        return await self._db.write(fn)
+
+
+async def test_a_put_whose_file_a_collection_took_before_its_row_was_written_stores_the_bytes_again(tmp_path, db):
+    collector = store_in(tmp_path, db)
+    await collector.put_file(source(tmp_path, "a.txt", b"abc"))
+    racing = store_in(tmp_path, CollectsBeforeTheFirstWrite(db, lambda: collector.collect_garbage(a_week_and_a_day_on())))
+
+    assert await racing.put_file(source(tmp_path, "again.txt", b"abc")) == StoredBlob(ABC_SHA256, 3)
+
+    assert racing.path_of(ABC_SHA256).read_bytes() == b"abc"
+    assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
