@@ -47,6 +47,8 @@ class OutcomeCode(enum.StrEnum):
 MAX_ATTEMPTS = 5
 """Attempts a job gets before it fails: errors, and Hub restarts while it ran, count alike."""
 
+STOPPED_BY_RESTART = "the Hub stopped while the job ran"
+
 TRANSITIONS: Mapping[JobState, frozenset[JobState]] = {
     JobState.RUNNING: frozenset({JobState.PENDING, JobState.RETRY_WAIT}),
     JobState.RETRY_WAIT: frozenset({JobState.RUNNING}),
@@ -281,3 +283,14 @@ def cancel(tx: Tx, job_id: str, *, now: datetime | None = None) -> Job:
     """
     _change(tx, job_id, JobState.CANCELLED, now, next_attempt_at=None)
     return get(tx, job_id)
+
+
+def recover_after_restart(tx: Tx, *, now: datetime) -> int:
+    """Jobs a stopped Hub left running wait again, due now, or fail once they used MAX_ATTEMPTS (E12); how many."""
+    rows = tx.execute("SELECT id FROM processing_jobs WHERE state = ?", (JobState.RUNNING.value,)).fetchall()
+    for (job_id,) in rows:
+        if get(tx, job_id).attempts >= MAX_ATTEMPTS:
+            finish(tx, job_id, Failed(STOPPED_BY_RESTART), now=now)
+        else:
+            defer(tx, job_id, STOPPED_BY_RESTART, at=now, now=now)
+    return len(rows)
