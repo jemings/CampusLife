@@ -9,7 +9,7 @@ from pathlib import Path, PureWindowsPath
 import pytest
 from campuslife_contracts import validate
 
-from campuslife_hub import changes, store
+from campuslife_hub import changes, mutations, store
 from campuslife_hub.blobs import StoredBlob
 from campuslife_hub.core import UnsafeDataRoot, accepted_root, open_core, open_core_readonly, safe_data_root
 from campuslife_hub.data_root import Allowed, DevicePath, InsideSyncFolder, Layout, UncPath
@@ -374,3 +374,14 @@ async def test_opening_the_core_collects_old_blobs_nothing_refers_to(root, tmp_p
     async with open_core(root, create=False, sync_roots=[]) as core:
         assert await blob_count(core) == 0
         assert not core.blobs.path_of(lonely.sha256).exists()
+
+
+async def test_opening_the_core_forgets_results_older_than_ninety_days(root):
+    create = {"mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301", "op": "create", "entity": "tag",
+              "id": "0f8fad5b-d9cb-469f-a165-70867728950e", "data": {"name": "시험", "color": "#ff8800"}}
+    async with open_core(root, create=True, sync_roots=[]) as core:
+        await mutations.apply(core.db, [create], core.hub_device)
+        await core.db.write(lambda tx: tx.execute("UPDATE applied_mutations SET applied_at = '2000-01-01T00:00:00.000Z'"))
+
+    async with open_core(root, create=False, sync_roots=[]) as core:
+        assert await mutations.apply(core.db, [create], core.hub_device) == [{"mutation_id": create["mutation_id"], "result": "applied"}]

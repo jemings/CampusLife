@@ -1,6 +1,10 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from conftest import contract_fixture
 from campuslife_contracts import text_hash, validate
+from campuslife_hub import mutations
+from campuslife_hub.clock import instant
 from campuslife_hub.conflict_stash import kept
 from test_capture_commit import apply, blob_store, commit, device, feed, new_id, store_bytes, text_capture
 
@@ -669,3 +673,46 @@ async def test_keys_held_back_with_the_dates_are_not_stashed_and_the_others_appl
 
     assert result["applied_fields"] == ["title", "body"]
     assert await stashed(db) == []
+
+
+async def test_a_result_is_answered_as_duplicate_for_ninety_days_and_then_judged_again(db, device):
+    create, edit = task(), patch_item(title={"from": "과제 제출", "to": "과제 1"})
+    await apply(db, device, create, edit)
+
+    await mutations.forget_old_results(db, datetime.now(UTC) + timedelta(days=89))
+    assert [result["result"] for result in await apply(db, device, create, edit)] == ["duplicate", "duplicate"]
+
+    await mutations.forget_old_results(db, datetime.now(UTC) + timedelta(days=91))
+    before = await feed(db)
+    assert [outcome(result) for result in await apply(db, device, create, edit)] == [
+        {"result": "applied"},
+        {"result": "applied", "applied_fields": ["title"]},
+    ]
+    assert await feed(db) == before
+
+
+@pytest.mark.parametrize(
+    ("age", "answer"),
+    [(timedelta(days=90, milliseconds=-1), "duplicate"), (timedelta(days=90), "duplicate"), (timedelta(days=90, milliseconds=1), "applied")],
+    ids=["a millisecond short", "exactly ninety days", "a millisecond past"],
+)
+async def test_a_result_is_kept_for_ninety_days_to_the_millisecond(db, device, monkeypatch, age, answer):
+    recorded = datetime(2026, 3, 2, 0, 30, tzinfo=UTC)
+    monkeypatch.setattr(mutations, "now_instant", lambda: instant(recorded))
+    create = mutation("create_tag")
+    await apply(db, device, create)
+
+    await mutations.forget_old_results(db, recorded + age)
+
+    assert (await apply(db, device, create))[0]["result"] == answer
+
+
+async def test_a_delete_resent_after_ninety_days_deletes_again(db, device):
+    """Accepted (D18): a delete has no from to compare with the row, so a resend older than its result applies again."""
+    delete = op("delete", "item", ITEM)
+    await apply(db, device, create_item(ITEM), delete, op("restore", "item", ITEM))
+
+    await mutations.forget_old_results(db, datetime.now(UTC) + timedelta(days=91))
+
+    assert (await apply(db, device, delete))[0]["result"] == "applied"
+    assert "deleted_at" in (await item_row(db))["data"]
