@@ -12,7 +12,6 @@ from campuslife_hub.data_root import Allowed, InsideSyncFolder, UncPath, check_d
         (r"\\server\share\CampusLife", r"\\server\share"),
         ("//server/share/CampusLife", r"\\server\share"),
         (r"\\?\UNC\server\share\CampusLife", r"\\?\UNC\server\share"),
-        (r"\\?\C:\CampusLife", r"\\?\C:"),
     ],
 )
 def test_a_unc_root_is_refused_and_names_its_drive(root, drive):
@@ -25,15 +24,13 @@ def test_a_unc_root_is_refused_before_the_sync_folders_are_looked_at():
 
 
 def test_a_posix_path_starting_with_two_slashes_is_not_unc():
-    assert check_data_root(PurePosixPath("//server/share/CampusLife"), []) == Allowed()
+    root = PurePosixPath("//server/share/CampusLife")
+    assert check_data_root(root, []) == Allowed(root)
 
 
-def test_a_root_outside_every_sync_folder_is_allowed():
-    verdict = check_data_root(
-        PureWindowsPath(r"C:\Users\u\AppData\Local\CampusLife"),
-        [PureWindowsPath(r"C:\Users\u\OneDrive")],
-    )
-    assert verdict == Allowed()
+def test_a_root_outside_every_sync_folder_is_allowed_as_it_is():
+    root = PureWindowsPath(r"C:\Users\u\AppData\Local\CampusLife")
+    assert check_data_root(root, [PureWindowsPath(r"C:\Users\u\OneDrive")]) == Allowed(root)
 
 
 def test_a_root_under_a_sync_folder_is_refused_and_names_it():
@@ -54,8 +51,8 @@ def test_windows_paths_compare_without_case():
 
 
 def test_a_sibling_whose_name_starts_like_the_sync_folder_is_allowed():
-    verdict = check_data_root(PureWindowsPath(r"C:\Users\u\OneDriveBackup\CampusLife"), [PureWindowsPath(r"C:\Users\u\OneDrive")])
-    assert verdict == Allowed()
+    root = PureWindowsPath(r"C:\Users\u\OneDriveBackup\CampusLife")
+    assert check_data_root(root, [PureWindowsPath(r"C:\Users\u\OneDrive")]) == Allowed(root)
 
 
 def test_every_onedrive_variable_names_a_sync_root():

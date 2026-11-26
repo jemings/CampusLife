@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ APP_DIRECTORY = "CampusLife"
 
 @dataclass(frozen=True)
 class Allowed:
-    pass
+    root: PurePath
 
 
 @dataclass(frozen=True)
@@ -31,21 +32,44 @@ class UncPath:
     drive: str
 
 
-DataRootVerdict = Allowed | InsideSyncFolder | UncPath
+@dataclass(frozen=True)
+class DevicePath:
+    drive: str
+
+
+DataRootVerdict = Allowed | InsideSyncFolder | UncPath | DevicePath
+
+EXTENDED_DRIVE_LETTER = re.compile(r"\\\\\?\\[A-Za-z]:")
+DEVICE_NAMESPACES = ("\\\\?\\", "\\\\.\\")
+
+
+def _without_extended_prefix(path: PurePath) -> PurePath:
+    r"""`\\?\C:\x` names the file `C:\x` names."""
+    if EXTENDED_DRIVE_LETTER.fullmatch(path.drive):
+        return type(path)(str(path)[len("\\\\?\\"):])
+    return path
+
+
+def _names_a_share(drive: str) -> bool:
+    r"""`\\server\share`, `\\?\UNC\server\share` and `\\.\UNC\...` name a share; other device paths do not."""
+    if drive.startswith(DEVICE_NAMESPACES):
+        return drive[len("\\\\?\\"):].split("\\")[0].upper() == "UNC"
+    return True
 
 
 def check_data_root(path: PurePath, sync_roots: Iterable[PurePath]) -> DataRootVerdict:
-    r"""Refuse a data root on a `\\` drive or at or under a sync folder.
+    r"""The root to use, or why not: a `\\` drive, or at or under a sync folder.
 
-    SQLite rejects the authority a `\\server\share` or `\\?\` drive puts in a file: URI,
-    and SQLite and sync clients fight over files.
+    SQLite rejects the authority a `\\server\share` or `\\.\` drive puts in a file: URI,
+    and SQLite and sync clients fight over files. A `\\?\C:` path is judged, and used, as `C:`.
     """
+    path = _without_extended_prefix(path)
     if path.drive.startswith("\\\\"):
-        return UncPath(path.drive)
+        return UncPath(path.drive) if _names_a_share(path.drive) else DevicePath(path.drive)
     for root in sync_roots:
         if path.is_relative_to(root):
             return InsideSyncFolder(root)
-    return Allowed()
+    return Allowed(path)
 
 
 def onedrive_roots(env: Mapping[str, str]) -> list[str]:
