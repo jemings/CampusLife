@@ -150,6 +150,19 @@ async def test_put_file_retries_a_replace_refused_by_a_sharing_violation(tmp_pat
     assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
 
 
+async def test_a_second_put_of_the_same_bytes_retries_discarding_its_staging_file(tmp_path, db):
+    await store_in(tmp_path, db).put_file(source(tmp_path, "a.txt", b"abc"))
+    unlink, calls = refused_at_first(2, lambda path: path.unlink())
+    slept = []
+    blob_store = store_in(tmp_path, db, FileOps(unlink=unlink, sleep=slept.append))
+
+    assert await blob_store.put_file(source(tmp_path, "again.txt", b"abc")) == StoredBlob(ABC_SHA256, 3)
+
+    assert len(calls) == 3
+    assert len(slept) == 2
+    assert list((tmp_path / "staging").iterdir()) == []
+
+
 def must_not_wait(seconds):
     raise AssertionError(f"waited {seconds}s")
 

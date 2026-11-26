@@ -2,14 +2,14 @@ import logging
 import os
 import sys
 import unicodedata
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 from campuslife_contracts import validate
 
 from campuslife_hub import changes, store
-from campuslife_hub.core import UnsafeDataRoot, open_core, open_core_readonly, safe_data_root
-from campuslife_hub.data_root import Layout
+from campuslife_hub.core import UnsafeDataRoot, accepted_root, open_core, open_core_readonly, safe_data_root
+from campuslife_hub.data_root import Allowed, DevicePath, InsideSyncFolder, Layout, UncPath
 from campuslife_hub.db import Database, NotInitialized, SchemaMismatch, StartupRefused
 from campuslife_hub.identity import read_identity
 from campuslife_hub.local_import import UnimportableFile, import_files
@@ -283,6 +283,29 @@ async def test_a_unc_root_is_refused_at_startup_for_writing_and_for_reading():
     with pytest.raises(StartupRefused, match="UNC"):
         async with open_core_readonly(unc_root, sync_roots=[]):
             pass
+
+
+def test_a_unc_verdict_refuses_startup_and_names_the_share():
+    root = PureWindowsPath(r"\\server\share\CampusLife")
+    with pytest.raises(StartupRefused, match=r"UNC share \\\\server\\share"):
+        accepted_root(root, UncPath(r"\\server\share"))
+
+
+def test_a_device_path_verdict_refuses_startup_as_a_drive_starting_with_two_backslashes():
+    root = PureWindowsPath(r"\\.\C:\CampusLife")
+    with pytest.raises(StartupRefused) as refused:
+        accepted_root(root, DevicePath(r"\\.\C:"))
+    assert "drive starting with \\" in str(refused.value)
+    assert "UNC" not in str(refused.value)
+
+
+def test_a_sync_folder_verdict_is_an_unsafe_data_root(tmp_path):
+    with pytest.raises(UnsafeDataRoot, match="OneDrive"):
+        accepted_root(tmp_path / "OneDrive" / "CampusLife", InsideSyncFolder(tmp_path / "OneDrive"))
+
+
+def test_an_allowed_verdict_gives_the_root_it_carries():
+    assert accepted_root(PureWindowsPath(r"\\?\C:\CampusLife"), Allowed(PureWindowsPath(r"C:\CampusLife"))) == PureWindowsPath(r"C:\CampusLife")
 
 
 def test_a_symlinked_root_is_judged_where_it_leads(tmp_path):
