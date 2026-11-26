@@ -4,27 +4,27 @@
 
 강의 자료는 음성 녹음과 사진만으로 구성되지 않습니다. 교수자와 조교는 PDF 강의안, PPT/PPTX 슬라이드, DOCX/HWP 안내문, XLSX 실험 데이터, CSV, ZIP 실습 코드, 동영상, 자막, 웹 링크 등 서로 다른 형식으로 자료를 배포할 수 있습니다.
 
-CampusLife는 이를 별도 기능으로 분리하지 않고 **하나의 강의 자료 묶음(CourseMaterialSet)** 으로 수집합니다. 녹음·사진·배포 파일을 같은 강의 세션에 연결하고 형식별 추출기로 내용을 분석합니다.
+CampusLife는 이를 별도 기능으로 분리하지 않습니다. 녹음·사진·배포 파일은 각자 Capture로 들어오고, Relation으로 같은 LectureSession·Course Item에 연결됩니다. 별도의 자료 묶음 엔터티는 두지 않습니다. 형식별 추출기가 내용을 분석합니다.
 
-엔터티 정의는 [DOMAIN-MODEL.md](DOMAIN-MODEL.md), 구조 결정(D2 Blob 저장, D7 manifest 불변, D8 cloud policy, D12 Locator)은 [DECISIONS.md](DECISIONS.md)가 기준입니다.
+엔터티 정의는 [DOMAIN-MODEL.md](DOMAIN-MODEL.md), 구조 결정(D2 Blob 저장과 엔터티 축소, D7 업로드, D8 cloud policy, D12 Annotation·렌디션, D13 Locator)은 [DECISIONS.md](DECISIONS.md)가 기준입니다.
 
 ## 2. 사용자 경험
 
 ### Android
 1. LMS/학교 웹/메일/메신저/파일 앱에서 여러 파일을 선택해 Android 공유 메뉴로 CampusLife에 전달합니다.
-2. CampusLife는 원본을 앱 전용 Outbox에 복사하고 메타데이터와 해시를 생성합니다.
-3. 사용자가 학기, 과목, 강의일, 자료 제목, 배포자(교수/조교/학교)를 선택하거나 시간표에서 제안값을 받습니다.
-4. 기존 자료 묶음에 추가하거나 새 자료 묶음을 만듭니다. 기존 묶음에 추가할 때도 이번에 공유한 파일들은 **새 Capture**가 되고, 묶음과는 Relation으로 연결됩니다(D7).
-5. 노트북이 오프라인이면 Outbox에 보관하고 연결되면 업로드합니다.
+2. CampusLife는 원본을 앱 전용 Outbox에 복사하면서 sha256을 계산합니다(`content://` 권한은 일시적이므로 즉시 복사).
+3. 사용자가 과목·강의 세션을 고르거나 시간표에서 제안값을 받고, 배포자(교수/조교/학교)와 설명을 적습니다. 배포 정보는 `Capture.origin`에, 고른 과목·강의는 `links[]`로 확정 Relation이 됩니다.
+4. 이미 올린 자료에 파일을 더하는 경우에도 이번 공유는 **새 Capture**이고, 같은 LectureSession에 Relation으로 붙습니다(D7).
+5. 노트북이 오프라인이면 Outbox에 보관하고 연결되면 Blob 업로드 → `capture.commit` 순서로 보냅니다.
 
 ### iPadOS
 1. Files 앱·Safari·다른 앱에서 Share Extension 또는 앱 내 fileImporter로 파일/URL을 가져옵니다.
-2. Android와 같은 manifest·Outbox·업로드 계약을 사용합니다.
+2. Share Extension은 App Group 공유 컨테이너의 outbox에 사본만 기록하고, 업로드는 본 앱이 Android와 같은 계약으로 합니다.
 
 ### Windows
 1. Downloads, 브라우저 다운로드, USB 등에서 파일/폴더를 Companion Inbox에 드래그앤드롭합니다.
-2. 여러 파일을 하나의 CourseMaterialSet으로 묶습니다.
-3. 원본 보존 및 검증 후 추출 작업이 큐잉됩니다.
+2. 과목·강의 세션을 고르면 Blob 저장 + `capture.commit`(device=`hub`)을 모바일과 같은 함수로 호출합니다.
+3. commit 트랜잭션에서 추출 작업이 큐잉됩니다.
 4. 자료별 추출 진행 상태와 실패 이유를 확인합니다.
 
 ## 3. 우선 지원 포맷 및 분석 방법
@@ -51,34 +51,33 @@ CampusLife는 이를 별도 기능으로 분리하지 않고 **하나의 강의 
 
 ## 4. 공통 데이터 구조
 
-### CourseMaterialSet
-- id, title, course_id, lecture_session_id(선택), term_id
-- distributed_by (교수, 조교, 학과, 학교, 기타), distributed_at, captured_at
-- source_uri(선택), description, attachment_ids[]
-
-예: 자료구조 4주차 - 트리에 PDF 1개, PPTX 1개, 실습 ZIP 1개, 강의 녹음 1개, 판서 사진 4개를 묶습니다.
+### 묶음 표현 (D2)
+"자료구조 4주차 — 트리"에 PDF 1개, PPTX 1개, 실습 ZIP 1개, 강의 녹음, 판서 사진 4개가 있다면:
+- 녹음과 사진은 녹음 Capture 하나, 배포 파일은 공유 Capture 하나(또는 여러 개)로 들어옵니다.
+- 각 Attachment는 `Relation(attachment → lecture_session)`으로 같은 LectureSession Item에 연결됩니다.
+- 교차 문서 분석의 범위는 "한 LectureSession에 연결된 모든 Attachment"입니다.
+- 개정판(v2)은 새 Blob이며, `supersedes` Relation은 AI가 Suggestion으로 제안하고 사용자가 확정합니다.
 
 ### Attachment
-- UUIDv7, 원래 파일명 (저장 경로는 Blob의 sha256으로 결정되므로 별도 안전 파일명이 필요 없음)
-- MIME type(감지값과 신고값), extension, size_bytes, blob_sha256
-- captured_at / modified_at, source, cloud_policy(선택 override)
-- ingest_state, extraction_state, backed_up_at
-- CourseMaterialSet·LectureSession 연결은 Relation으로 표현
+- UUIDv4, 원래 파일명(NFC 정규화 + 원문 보존). 저장 경로는 Blob의 sha256으로 결정되므로 별도 안전 파일명이 필요 없습니다.
+- MIME type(감지값과 신고값), size_bytes, blob_sha256, role, captured_at, cloud_policy
+- backed_up_at(Hub 소유)
+- 처리 상태 필드는 없습니다. 상태는 ProcessingJob에 있습니다(§9).
 
-원본 Blob은 읽기 전용이며 추출/변환 결과는 Artifact로 따로 저장합니다.
+원본 Blob은 읽기 전용이며 추출/변환 결과는 Artifact Blob으로 따로 저장합니다.
 
-### ExtractedDocument / ContentBlock
-Extractor는 여러 포맷을 공통 구조로 정규화합니다. ContentBlock은 id, document_revision_id, block_type, ordinal, text 또는 structured payload, locator, metadata를 가집니다.
+### ContentBlock
+Extractor는 여러 포맷을 공통 구조로 정규화합니다. ContentBlock은 `id = hash(blob_sha256, extractor_id, extractor_version, ordinal)`(결정적), blob_sha256, block_type, ordinal, text 또는 structured payload, locator를 가집니다. 같은 Blob은 한 번만 추출합니다.
 
-locator는 공통 Locator 스키마(D12)를 사용합니다: `pdf_page`(page, 선택 rect), `slide`(slide, shape), `heading_path`(DOCX/HWP/HWPX), `sheet_range`(XLSX/CSV), `time_range`(오디오/비디오/자막), `image_region`, `url_anchor`, `whole_document`.
+locator는 공통 Locator 스키마(D13)를 씁니다: `pdf_page`(page, 선택 box), `slide`(slide, shape), `doc_path`(DOCX/HWP/HWPX), `sheet_range`(XLSX/CSV), `media_time`(오디오/비디오/자막), `image_region`, `web_snapshot`, `document`.
 
 ## 5. Extractor 플러그인 인터페이스
 
 FileExtractor 계약을 정의하고 형식별 adapter를 등록합니다. 각 extractor는 읽기 전용 원본 경로를 입력받아 document metadata, ordered ContentBlock 목록, warnings, extraction state, tool/version을 반환합니다.
 
-선택 출력으로 **열람용 PDF 변환본**을 만들 수 있습니다. iPad·Android 뷰어는 PDF 렌더링만 구현하고, PPT/PPTX/DOCX/HWP 등은 Hub가 만든 변환본 Artifact를 보여줍니다. 변환본은 원본이 아니며 SourceReference는 항상 원본 형식의 locator(slide, heading_path 등)를 가리킵니다.
+선택 출력으로 **PDF 렌디션**을 만들 수 있습니다. iPad·Android 뷰어는 PDF 렌더링만 구현하고, PPT/PPTX/DOCX/HWP 등은 Hub가 만든 렌디션 Blob(`Relation(rendition_of)`)을 보여줍니다. 렌디션은 원본이 아니며, AI 근거 Locator는 원본 형식의 위치(slide, doc_path 등)를 가리킵니다. 필기는 렌디션 Blob에 고정되고, 레이어가 생긴 렌디션은 pin되어 재생성·정리 대상에서 빠집니다(D12).
 
-extractor는 형식 판별 결과(magic bytes + MIME)로 선택합니다. 확장자만으로 선택하지 않습니다. extractor 실행은 별도 프로세스에서 timeout·메모리 제한을 두고 수행해, parser 크래시나 무한 루프가 Agent 본체를 멈추지 않게 합니다.
+extractor는 형식 판별 결과(magic bytes + MIME)로 선택합니다. 확장자만으로 선택하지 않습니다. extractor는 subprocess로 실행하고 timeout·Windows Job Object 메모리 상한을 두며, 결과는 stdout JSON으로 받습니다. parser 크래시나 무한 루프가 Hub 본체를 멈추지 않습니다(D16).
 
 추천 초기 구현 후보(실제 도입 전에 라이선스/유지보수/Windows 호환성 확인):
 - PDF: PyMuPDF 또는 pypdf, 스캔 페이지 OCR은 별도 adapter
@@ -130,7 +129,7 @@ extractor는 형식 판별 결과(magic bytes + MIME)로 선택합니다. 확장
 
 ## 7. 강의 전체 자료 통합 분석
 
-CourseMaterialSet 내 모든 파일의 추출이 끝나면:
+한 LectureSession에 연결된 모든 Attachment의 추출이 끝나면:
 1. 강의 녹음 transcript를 시간순으로 정리합니다.
 2. PPT/PDF 페이지 순서 및 슬라이드 구조를 추출합니다.
 3. HWP/DOCX 공지에서 과제 지침, 준비물, 마감일 후보를 추출합니다.
@@ -138,11 +137,11 @@ CourseMaterialSet 내 모든 파일의 추출이 끝나면:
 5. ZIP 코드 과제의 파일 목록과 README/코드 구조를 설명합니다.
 6. 강의 설명과 배포 자료 사이의 관계 및 차이를 분석합니다.
 7. 핵심 주제별 상세 노트를 생성합니다.
-8. 과제/시험/다음 주 준비사항 후보를 만듭니다.
-9. 출처를 page/slide/sheet/file/time range로 연결합니다.
-10. 일정과 할 일은 사용자가 확인한 뒤 Planner에 등록합니다.
+8. 과제/시험/다음 주 준비사항을 Suggestion으로 만듭니다.
+9. 출처는 LLM이 입력 ContentBlock id(`[B:<id>]`)로만 인용하고, Hub가 검증해 Locator로 바꿉니다(D13).
+10. 일정과 할 일은 사용자가 Suggestion을 수락해야 Item이 되어 Planner에 들어갑니다(D10).
 
-자료 간 상충하는 날짜/지시/버전은 AI가 임의로 선택하지 않고 충돌 목록으로 보여줍니다.
+자료 간 상충하는 날짜/지시/버전은 AI가 임의로 고르지 않고, 서로 `conflicts_with`로 묶인 Suggestion 쌍으로 보여줍니다.
 
 ## 8. 출처 표시 예시
 
@@ -157,11 +156,10 @@ locator를 추출할 수 없으면 파일명/문서 단위 근거로 표시하�
 
 상태는 소유자별로 나뉩니다(D1).
 
-- `Attachment.ingest_state` (수신·검증): `receiving, verified, rejected` — rejected는 해시 불일치, 크기 초과, 차단 형식 등 사유를 함께 기록
-- `Attachment.extraction_state` (추출): `pending, extracting, extracted, partial, needs_ocr, password_required, unsupported, corrupt, failed_retryable, failed_terminal`
-- AI 분석 진행: 해당 ProcessingJob의 `state` (`pending, running, retry_wait, succeeded, failed, cancelled`). cloud policy로 막힌 작업은 `failed` + 사유 `blocked_by_policy`
+- 수신·검증: 클라이언트 전송 상태와 Blob finalize 결과입니다. 해시 불일치는 finalize의 `409 hash_mismatch`로 끝나고, Hub에는 검증된 Blob만 등록됩니다. Attachment에는 수신 상태 필드가 없습니다.
+- 추출·AI 분석: 해당 ProcessingJob의 `state`(`pending, running, retry_wait, succeeded, failed, blocked, cancelled`)와 `outcome_code`(`unsupported, password_required, corrupt, needs_conversion, partial, policy_blocked, budget_blocked`)입니다.
 
-한 자료 세트 안에 일부 실패한 파일이 있어도 성공한 파일의 분석은 진행할 수 있어야 합니다. 자료 세트의 상태는 각 attachment의 상태를 계산해 요약해 보여주며 별도로 저장하지 않습니다.
+한 강의 세션의 파일 일부가 실패해도 성공한 파일의 분석은 진행합니다. 화면의 요약 상태는 Hub가 job을 집계한 `processing_summary`이며 따로 저장하지 않습니다.
 
 ## 10. 보안 및 리소스 보호
 
@@ -171,14 +169,14 @@ locator를 추출할 수 없으면 파일명/문서 단위 근거로 표시하�
 - ZIP 추출은 파일 수/압축 해제 크기/중첩 깊이/경로를 제한합니다.
 - parser는 timeout, 메모리 및 페이지 수 제한을 가집니다.
 - 손상/암호화/DRM 자료는 우회하지 않습니다.
-- 외부 AI 전송 전에 유효 cloud policy(D8)를 provider 호출 직전 단일 지점에서 확인합니다.
-- AI provider에 보낼 내용과 예상 비용을 확인할 수 있게 합니다.
+- 외부 AI 전송은 `ProviderGateway` 하나를 거치며, 입력의 가장 엄격한 cloud policy(D8)를 그 자리에서 확인합니다.
+- `confirm_each_send`를 켜면 보낼 내용과 예상 비용을 확인한 뒤 전송하고, 모든 전송은 audit_log에 남습니다.
 - AI 결과는 원본을 대체하지 않으며 source reference와 model/prompt 버전을 보존합니다.
 
 ## 11. 구현 우선순위
 
-1. 파일 다중 첨부 및 CourseMaterialSet metadata
-2. PDF 텍스트 및 OCR, 열람용 PDF 변환
+1. 파일 다중 첨부와 LectureSession 연결(Relation)
+2. PDF 텍스트 및 OCR, PDF 렌디션
 3. PPTX/DOCX/XLSX
 4. HWPX 및 HWP fallback
 5. 이미지 및 코드/텍스트/ZIP

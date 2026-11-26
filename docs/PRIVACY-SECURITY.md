@@ -13,23 +13,21 @@ CampusLife는 강의 녹음, 학생 정보, 성적, 행정 문서, 개인 일정
 
 ## 데이터 분류와 AI 처리 정책 (D8)
 
-필드 이름은 `cloud_policy` 하나입니다. Capture에 기본값을 두고 Attachment는 필요할 때만 override합니다. 유효 정책 = `Attachment.cloud_policy ?? Capture.cloud_policy ?? source_type별 기본값`.
+필드 이름은 `cloud_policy` 하나이고 Attachment에 둡니다. Capture를 만들 때 클라이언트가 `명시값 → 과목(Course)의 default_cloud_policy → 전역 기본 local_only` 순서로 해석해 기록합니다.
 
 | 정책 | 의미 |
 |---|---|
-| local_only | 로컬 인덱싱/처리만 허용 |
-| cloud_allowed | 외부 AI provider 전송 가능 |
-| cloud_redacted | 민감 부분을 제거/마스킹한 뒤 전송 가능 |
-| manual_review | 사용자가 개별 요청할 때만 처리 |
-| blocked | AI 처리 및 외부 전송 금지 |
+| blocked | 보존·해시·형식 검증·텍스트 추출·FTS만. 로컬이든 클라우드든 모델 추론은 하지 않음 |
+| local_only | Hub 안의 로컬 provider만 사용 |
+| cloud_allowed | 설정의 provider allow-list로 전송 가능 |
 
-기본값은 보수적으로 설정합니다. 강의 녹음은 `manual_review`, 그 외는 `local_only`가 기본이며, 사용자가 과목·자료 유형 단위로 바꿀 수 있습니다. 수업 녹음은 교수자/학교 정책을 확인하고 사용자가 허용한 경우에만 cloud processing을 진행합니다.
+순서는 `blocked < local_only < cloud_allowed`입니다. 과목 기본값을 `cloud_allowed`로 바꿀 때는 "이 과목은 녹음 처리 허용을 확인함"을 한 번 받고 기록합니다. 수업 녹음은 교수자/학교 정책을 확인하고 사용자가 허용한 경우에만 cloud 처리를 합니다.
 
-- **파생 데이터 상속:** transcript, 요약, 필기(Annotation), 필기 OCR처럼 다른 자료에서 나온 데이터의 유효 정책은 입력 중 가장 엄격한 값입니다. 엄격도: `blocked > local_only > manual_review > cloud_redacted > cloud_allowed`.
-- **단일 검사 지점:** 정책 검사는 provider adapter 호출 직전 하나의 함수에서만 수행합니다. 이 함수를 거치지 않는 provider 호출 경로를 만들지 않으며, 테스트로 이를 확인합니다.
-- **`cloud_redacted`:** redaction 파이프라인이 구현되기 전까지 `manual_review`와 동일하게 동작합니다.
-
-API 전송 전에 파일/텍스트 종류와 크기, provider/model, 예상 비용, 목적, 취소 방법을 표시합니다.
+- **파생 데이터 상속:** transcript, 요약, Suggestion, 필기(AnnotationLayer), 필기 OCR처럼 다른 자료에서 나온 데이터의 유효 정책은 `min(입력들)`입니다. 같은 Blob을 가리키는 Attachment가 여럿이면 그중 가장 엄격한 값입니다. 계산은 호출 시점에 하므로 정책을 엄격하게 바꾸면 그 뒤 호출부터 막힙니다.
+- **단일 검사 지점:** 모든 provider 호출은 `ProviderGateway.call()`을 거칩니다. adapter를 gateway 밖에서 import할 수 없도록 테스트로 강제합니다.
+- **동의 방식은 정책이 아니라 설정입니다:** `confirm_each_send`(전역 또는 과목)를 켜면 전송 전에 provider, 모델, 입력 종류·크기, 예상 비용, 취소 방법을 보여 줍니다. 월 예산·job당 상한을 넘으면 job이 `budget_blocked`로 사용자 승인을 기다립니다.
+- **전송 기록:** 외부 호출마다 audit_log에 `{시각, provider, model, 입력 id, 바이트, 정책 스냅샷, 확인 여부, 비용}`을 남깁니다. 정책을 엄격하게 바꾸면 "이미 N회 전송됨(회수 불가)"을 표시합니다.
+- **`cloud_redacted`는 v1에 없습니다.** 한국어 PII 탐지 재현율이 검증되면(DECISIONS O5) 추가합니다.
 
 ## 네트워크 및 인증
 
@@ -37,11 +35,12 @@ API 전송 전에 파일/텍스트 종류와 크기, provider/model, 예상 비�
 - Tailscale ACL/grants의 최소 권한 모델을 검토합니다.
 - 인터넷 공유기 포트 포워딩을 하지 않습니다.
 - 제품 API는 Agent가 `127.0.0.1`에만 바인딩하고 `tailscale serve`가 HTTPS를 종단합니다(D5). Windows 방화벽에 CampusLife inbound 규칙을 열지 않습니다.
-- `tailscale serve`를 거친 요청은 localhost 출처로 보이므로 출처로 권한을 판단하지 않습니다. pairing 승인·revoke 등 관리 기능은 serve에 노출하지 않는 별도 localhost 포트에만 둡니다.
+- `tailscale serve`를 거친 요청은 localhost 출처로 보이므로 출처로 권한을 판단하지 않습니다. pairing secret 발급·revoke 등 관리 기능은 serve에 노출하지 않는 별도 localhost 포트에만 둡니다.
+- serve가 붙이는 `Tailscale-User-Login` 신원 헤더는 인증 근거로 쓰지 않고 감사 기록에만 남깁니다(tag가 붙은 장치에서 온 요청에는 채워지지 않음).
 - Tailscale HTTPS 인증서를 켜면 장치·tailnet 이름이 공개 Certificate Transparency 로그에 남으므로 노트북 장치 이름에 실명·학교명을 쓰지 않습니다.
-- Phase 0 SFTP PoC를 하는 동안에만 OpenSSH를 켜고, 관리자 권한이 없는 전용 계정과 Tailscale 장치로 제한한 방화벽 규칙을 씁니다. PoC가 끝나면 끕니다.
+- SFTP·FolderSync·OpenSSH는 쓰지 않습니다. 해시와 ACK를 우회하는 두 번째 수집 경로가 되기 때문입니다(D5).
 - 제품 API는 장치별 토큰으로 모든 요청을 인증합니다(D6).
-- 전송은 체크섬, 멱등 키, 서버 ACK를 사용합니다.
+- 전송은 sha256 검증, 생성자 ID 멱등(D4), `capture.commit` ACK를 사용합니다.
 - API key는 Windows Credential Manager/DPAPI 등 OS 보호 저장소에 보관합니다.
 - 로그에 access token, API key, 전체 강의 텍스트를 기록하지 않습니다.
 
@@ -50,10 +49,10 @@ API 전송 전에 파일/텍스트 종류와 크기, provider/model, 예상 비�
 - 원본 파일은 불변 저장을 기본으로 합니다.
 - 파일마다 SHA-256, 크기, MIME type, 생성/수집 시각을 기록합니다.
 - 임시 파일을 검증한 후에만 최종 위치로 atomic move합니다.
-- 중복 전송은 idempotency key로 처리합니다.
+- 중복 전송은 같은 ID·같은 내용이면 이전 결과를 돌려주고, 다른 내용이면 `409 id_reuse`로 거부합니다.
 - ACK 전 모바일 원본을 자동 삭제하지 않습니다. ACK 후에도 Hub 백업에 포함된 것이 확인되고(`backed_up_at`) 보존 기간이 지난 뒤에만 정리합니다(D14).
-- 사용자 삭제는 휴지통/복원 기회를 제공합니다.
-- AI 산출물은 원본과 구분하고 model/prompt/version을 기록합니다.
+- 사용자 삭제는 휴지통(기본 30일)을 거칩니다. 교수자·참여자 삭제 요청은 휴지통을 건너뛰는 즉시 purge로 Blob·파생물·인덱스를 지우고, 백업 세대에는 남아 있음을 알립니다.
+- AI 산출물은 원본과 구분하고 model/prompt/version을 기록합니다. 재실행 결과가 같다고 보장할 수 없으므로 Artifact는 백업 대상입니다(D9).
 
 ## 백업과 복구
 
@@ -63,7 +62,8 @@ API 전송 전에 파일/텍스트 종류와 크기, provider/model, 예상 비�
 - 정기적인 외장 SSD 또는 별도 암호화 백업
 - SQLite 일관성 백업
 - 원본과 DB를 같은 백업 세대에 포함
-- 최소 분기별 복원 테스트
+- 최소 분기별 복원 테스트. 복원하면 Hub가 새 `epoch`를 발급하고, 클라이언트가 Hub에 없는 Capture를 다시 올립니다(D3)
+- 백업이 한 번도 돌지 않았으면 모바일 원본 자동 정리가 일어나지 않습니다(D14)
 - 학기 종료 시 portable export 생성
 - 백업 드라이브는 백업 후 분리 보관
 
@@ -97,18 +97,18 @@ OpenAI API 공식 정책 안내에 따르면 API 입력과 출력은 명시적�
 | 중복 작업/AI 비용 증가 | idempotency, job state, budget guard |
 | AI 환각 | source provenance, uncertainty, review |
 | 원본 우발 삭제 | ACK 후에도 보존, 휴지통, 별도 백업 |
-| 민감 정보 외부 전송 | per-item cloud policy, 미리보기/확인, redact |
+| 민감 정보 외부 전송 | 자료별 cloud_policy, ProviderGateway 단일 검사, confirm_each_send, audit_log |
 
 
 ## Multi-device Security
 
 - 각 Android/iPadOS 설치는 독립적인 Device ID와 토큰을 갖는다. Windows 로컬 UI는 localhost admin 포트를 쓰며 장치 토큰이 필요 없다.
-- 신규 장치는 Windows Hub에서 생성한 일회성 pairing code/QR로 승인한다. 코드는 짧은 유효기간·1회 사용·시도 횟수 제한을 가진다.
+- 신규 장치는 Windows Hub 화면에 띄운 일회성 QR(유효 5분, 128-bit secret)로 등록한다. 화면에 띄우는 행위가 물리적 승인이므로 별도 승인 단계는 없다. 실패 시도는 rate limit을 걸고, 이미 쓴 secret이 다시 오면 그 secret으로 발급된 장치도 revoke한다.
 - 장치 토큰은 256-bit 무작위 불투명 토큰이며 Hub DB에는 해시만 저장한다. 클라이언트는 Android Keystore 기반 암호화 저장소, iPadOS Keychain에 보관한다(D6).
-- 토큰은 기본 만료 없이 장치별로 회전·폐기할 수 있어야 한다. 짧은 만료를 두지 않는 이유는 오프라인 복귀 후 잠김과 iPadOS 백그라운드 전송 401을 피하기 위해서다.
+- 토큰은 만료 없이 장치별로 재발급·폐기할 수 있다. 짧은 만료를 두지 않는 이유는 오프라인 복귀 후 잠김과 iPadOS 백그라운드 전송 401을 피하기 위해서다. 기본 90일 동안 접속이 없으면 `dormant`가 되어 재승인이 필요하다.
 - 분실한 iPad/Fold8을 device registry에서 revoke하면 이후 요청을 거부한다.
 - 로컬 cache와 offline Outbox에도 민감한 자료가 남을 수 있으므로 OS 잠금/암호화 및 앱 잠금 정책을 사용한다.
 - iPadOS background URLSession task는 인증 만료/작업 복구 상황을 고려하고 로그에 credential이나 문서 내용을 남기지 않는다.
 - Tailscale 연결 여부만으로 앱 사용자를 인증된 것으로 취급하지 않는다. Tailscale network policy와 CampusLife application auth를 함께 적용한다.
-- 각 자료의 cloud processing policy는 장치가 바뀌어도 동일하게 적용한다.
-- 충돌로 생긴 양쪽 revision은 사용자 결정 전 삭제하지 않는다.
+- 각 자료의 `cloud_policy`는 장치가 바뀌어도 동일하게 적용한다.
+- 충돌로 제출이 거부된 값은 ConflictRecord로 보존하고, 사용자 결정 전 삭제하지 않는다(D18).

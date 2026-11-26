@@ -6,7 +6,7 @@
 
     Galaxy Z Fold8 (Android)              iPad Pro 13 (iPadOS)
       - 시간표 / 녹음 / 사진 / 공유          - 자료 열람 / Pencil 필기 / 공유
-      - Room + Outbox + WorkManager          - 로컬 cache + pending mutation
+      - Room + Outbox + WorkManager          - SQLite cache + outbox
                  \                              /
                   \   HTTPS (Tailscale, D5)    /
                    v                          v
@@ -14,7 +14,7 @@
       - tailscale serve → Agent (127.0.0.1)
       - Sync API / admin API / ingest verifier
       - SQLite (메타데이터·작업 큐·변경 피드·FTS)
-      - blobs/ (불변 원본) + derived/ (파생 결과)
+      - blobs/ (원본과 파생 파일 모두 sha256 불변 Blob)
                  |
                  v
       AI provider adapters (STT / Vision / Text / Embedding)
@@ -32,11 +32,12 @@ Tailscale은 장치 간 사설 연결과 TLS 인증서를 제공합니다. 파�
 
 책임:
 - 시간표와 과목 메타데이터의 모바일 캐시
-- 녹음 시작/정지 및 상태 표시, 세그먼트 파일 기록(D13)
+- 녹음 시작/정지 및 상태 표시, 세그먼트 파일 + 단조 시계 타임라인 기록(D15)
 - 강의 중 사진 촬영과 촬영 시각·녹음 세션 기준 오프셋 저장
 - Android 공유 메뉴·Storage Access Framework에서 URL, 텍스트, 다중 파일 수집
-- 원본 파일을 앱 전용 Outbox에 복사, manifest·크기·SHA-256 생성
-- 연결 가능 시 업로드하고 첨부별 ACK 기록
+- 원본 파일을 앱 전용 Outbox에 복사하면서 크기·SHA-256 계산
+- 연결 가능 시 Blob을 올리고 `capture.commit`의 ACK 기록
+- 과목·시간표 Item을 오프라인에서 만들고 Mutation으로 전송
 - ACK 전 원본 자동 삭제 금지, ACK 후 정리는 D14 정책
 - 동기화/AI 처리 상태 표시
 
@@ -66,21 +67,22 @@ Android 제약:
 - 로컬 파일시스템 (Blob과 파생 결과)
 - `tailscale serve` (HTTPS 종단, D5)
 - Windows Task Scheduler (사용자 로그인 시 Agent 시작)
-- 로컬 웹 UI (admin 포트, localhost 전용)
+- 로컬 웹 UI (admin 포트, localhost 전용) — MVP의 노트 열람·Suggestion 검토·검색 화면
 
 Agent 내부 모듈과 소유 관계:
 
 | 모듈 | 소유하는 것 | 다른 모듈이 쓰는 방법 |
 |---|---|---|
-| `store` | Blob 저장, Attachment/Capture 등록, 변경 피드 기록 | `ingest_capture()`, `finalize_attachment()` 함수 호출만 |
-| `jobs` | ProcessingJob 큐, 재시도, job_key 멱등 | `enqueue(job_key, …)` |
-| `policy` | cloud_policy 유효값 계산과 provider 호출 허용 판단 | provider adapter 호출 직전 `require_cloud_allowed()` |
-| `providers` | STT/Vision/Text/Embedding adapter | `jobs` 워커만 호출 |
-| `extractors` | 형식별 FileExtractor | `jobs` 워커만 호출 |
-| `sync_api` | HTTP 경로, 장치 인증, upload session | `store`·`jobs` 함수 호출 |
-| `admin_api` | pairing 승인, revoke, 상태 UI | localhost 전용 포트 |
+| `blobs` | Blob 업로드 세션, 검증, 원자 이동, 정리(GC), purge | `open_upload()`, `finalize()` |
+| `mutations` | 사용자 데이터의 유일한 쓰기 경로: `capture.commit`, Item CAS patch, `suggestion.accept`, ConflictRecord, `change_seq` 증가 | `apply(mutations)` |
+| `jobs` | ProcessingJob 큐, 재시도, job_key 멱등, subprocess 격리 | `enqueue(job_key, …)` |
+| `gateway` | cloud_policy 유효값(min) 계산, budget guard, audit_log, provider 호출 | 모든 provider 호출은 `ProviderGateway.call()`만 |
+| `providers` | STT/Vision/Text/Embedding adapter | `gateway`만 import 가능 |
+| `extractors` | 형식별 FileExtractor, PDF 렌디션 | `jobs` 워커가 subprocess로 실행 |
+| `sync_api` | `/v1` 경로, 장치 토큰 인증, changes 피드 | `blobs`·`mutations` 호출 |
+| `admin_api` | pairing secret 발급, revoke, 로컬 웹 UI | localhost 전용 포트, 쓰기는 `mutations.apply()` |
 
-로컬 Windows import(드래그앤드롭)도 `sync_api`가 아니라 `store.ingest_capture()`를 직접 호출하는 같은 경로를 사용합니다. 수집 경로가 늘어도 검증·멱등·피드 기록은 `store` 한 곳에만 있습니다.
+로컬 Windows import(드래그앤드롭)와 웹 UI의 편집도 `mutations.apply()`를 호출합니다. 수집·편집 경로가 늘어도 검증·멱등·충돌 판정·피드 기록은 한 곳에만 있습니다.
 
 노트북이 켜져 있어야 처리됩니다. AC 전원 연결 시 절전 방지 설정을 안내할 수 있지만 배터리 사용 중 절전 정책은 존중합니다.
 
@@ -93,78 +95,63 @@ Agent 내부 모듈과 소유 관계:
 - EmbeddingProvider (후속)
 - DocumentExtractionProvider (후속)
 
-첫 구현은 OpenAI API adapter를 제공할 수 있지만 모델 ID는 코드에 흩어 놓지 않고 설정으로 관리합니다. 모델 ID·provider는 job_key의 일부이므로 설정을 바꾸면 새 Artifact가 생깁니다(D4). 신규 파일 전사 권장 모델, 파일 크기 제한과 지원 형식은 공식 문서에서 확인합니다:
+첫 구현은 OpenAI API adapter를 제공할 수 있지만 모델 ID는 코드에 흩어 놓지 않고 설정으로 관리합니다. 모델 ID·provider는 job_key의 일부이므로 설정을 바꾸면 새 Artifact가 생깁니다(D4). 모든 호출은 `ProviderGateway`를 거칩니다(D8). 신규 파일 전사 권장 모델, 파일 크기 제한과 지원 형식은 공식 문서에서 확인합니다:
 https://developers.openai.com/api/docs/guides/transcription
 
 이미지 분석:
 https://developers.openai.com/api/docs/guides/images-vision
 
-## 3. Capture 및 Outbox
+## 3. Capture 및 Outbox (D7)
 
-각 Capture는 클라이언트가 만든 UUIDv7 ID를 가집니다(D4). 강의 자료든 공지 스크린샷이든 같은 Outbox 흐름을 사용합니다.
+각 Capture는 생성한 클라이언트가 만든 UUIDv4 ID를 가집니다. 강의 자료든 공지 스크린샷이든 같은 흐름을 씁니다.
 
-클라이언트 로컬 Outbox 예시:
-
-    outbox/<capture-id>/
-    ├── manifest.json
-    └── payload/
-        ├── rec-0001.m4a      # 녹음 세그먼트 (D13)
-        ├── rec-0002.m4a
-        ├── img-0001.jpg
-        └── lecture-04.pdf
-
-manifest 필드는 [MULTI-DEVICE-ARCHITECTURE.md §3.2](MULTI-DEVICE-ARCHITECTURE.md)의 Register Capture 계약과 같습니다. 정책 필드는 `cloud_policy` 하나입니다(D8).
-
-manifest는 로컬에서 확정된 뒤 바뀌지 않습니다(D7). 녹음 중에는 manifest를 확정하지 않고, 녹음 종료 시 세그먼트 목록과 함께 확정합니다. 앱이 녹음 중 종료되면 다음 실행에서 남은 세그먼트로 manifest를 확정하고 "중단된 녹음"으로 표시합니다.
+- 클라이언트 상태는 로컬 DB 하나(Room / SQLite)에 둡니다. manifest 파일과 READY 마커는 쓰지 않습니다.
+- Capture는 `open → sealed`로 바뀝니다. 녹음 중에는 open이고, 정지하면 봉인됩니다. 앱이 녹음 중 종료되면 다음 실행에서 남은 세그먼트로 봉인하고 "복구된 녹음"으로 표시합니다.
+- open 상태에서도 닫힌 세그먼트·사진 Blob은 먼저 올릴 수 있습니다. `capture.commit`은 봉인 후에만 보냅니다.
+- 봉인 후 생긴 자료는 새 Capture로 만들고 Relation으로 같은 LectureSession에 붙입니다.
+- 정책 필드는 Attachment의 `cloud_policy` 하나입니다(D8).
 
 ## 4. Store-and-forward Sync
 
-제품 동기화는 Windows Hub의 공통 HTTPS Sync API 하나입니다. 업로드 순서(manifest 등록 → 첨부별 chunk 업로드 → 해시 검증 → atomic finalize → 트랜잭션 등록 → ACK)와 멱등 규칙은 [MULTI-DEVICE-ARCHITECTURE.md §3](MULTI-DEVICE-ARCHITECTURE.md)이 기준입니다.
+제품 동기화 경로는 Windows Hub의 HTTPS Sync API 하나입니다. Blob 업로드 → `capture.commit`(ACK), 변경 피드, Mutation CAS의 세부는 [MULTI-DEVICE-ARCHITECTURE.md §3](MULTI-DEVICE-ARCHITECTURE.md)이 기준입니다. SFTP·FolderSync는 쓰지 않습니다.
 
-상태는 소유자별로 분리합니다(D1). 클라이언트는 첨부별 `transfer_state`(pending → uploading → acked, 오류 시 retry_wait / failed_needs_attention)를, Hub는 `ingest_state`·`extraction_state`·`ProcessingJob.state`를 소유합니다.
-
-Phase 0의 FolderSync+SFTP는 Tailscale 경유 연결과 노트북 sleep/복귀 동작을 확인하는 PoC이며, Agent에는 SFTP 수신 경로를 구현하지 않습니다.
+상태는 소유자별로 분리합니다(D1). 클라이언트는 봉인·전송 상태를, Hub는 `ProcessingJob.state`와 계산된 `processing_summary`를 소유합니다.
 
 ## 5. AI 처리 파이프라인
 
-- Ingest: manifest 및 파일 검증 (`store`)
-- Extract: MIME/magic bytes 판별, EXIF, 문서 구조, OCR (`extractors`)
-- Transcribe: 녹음 세그먼트를 API 제한에 맞게 나누고 세션 기준 오프셋 유지
+- Ingest: `capture.commit` 트랜잭션에서 초기 job 등록
+- Extract: magic bytes 판별, EXIF, 문서 구조, OCR, PDF 렌디션 (`extractors`, subprocess)
+- Transcribe: 녹음 세그먼트를 타임라인으로 이어 붙이고 API 제한에 맞게 분할. 오프셋은 Capture 타임라인 절대 시각으로 변환(D13)
 - Analyze: 슬라이드/사진/PDF 페이지를 Vision 또는 OCR 처리
-- Correlate: 사진의 녹음 세션 기준 오프셋과 transcript 구간 연결(D13)
-- Synthesize: 과목/행사/주제별 요약과 상세 노트 생성
-- Extract actions: 과제, 마감일, 일정, 후속 행동 후보를 `review_state=suggested` Item으로 생성
-- Review: 일정/과제 등 상태 변경은 사용자 확인 후 반영
-- Index: FTS 인덱스 및 추후 embedding 인덱스 갱신
+- Correlate: 사진의 단조 시계 값과 녹음 타임라인 연결(D15)
+- Synthesize: 입력 ContentBlock에 `[B:<id>]` 태그를 붙여 LLM에 넣고, 출력 인용을 Hub가 검증해 Locator로 치환(D13)
+- Suggest: 과제, 마감, 일정, 공지 분류를 Suggestion으로 생성. Item은 만들지 않음(D10)
+- Index: FTS 인덱스 갱신
 
-각 단계는 job_key로 멱등한 ProcessingJob입니다. 외부 provider를 부르는 단계는 호출 직전 `policy.require_cloud_allowed()`를 통과해야 하며, 입력이 여러 개면 가장 엄격한 정책을 따릅니다(D8).
+각 단계는 job_key로 멱등한 ProcessingJob입니다. 외부 provider를 부르는 단계는 `ProviderGateway`를 통과해야 하고, 입력이 여러 개면 가장 엄격한 정책을 따릅니다(D8). word-level timestamp가 없는 전사 결과는 구간 단위로만 연결하고 정밀 타임스탬프를 꾸며내지 않습니다.
 
-모든 AI 산출물에는 공통 Locator(D12)로 provenance를 기록합니다. word-level timestamp가 제공되지 않는 전사 결과는 구간 단위로만 연결하고 정밀 타임스탬프를 꾸며내지 않습니다.
+## 6. 저장 설계 (D2, D16)
 
-## 6. 저장 설계 (D2)
+Windows 파일시스템이 바이트의 원천이고, SQLite에는 메타데이터, 관계, 작업 상태, 변경 피드, 인덱스를 저장합니다.
 
-Windows 파일시스템이 binary 원본의 source of truth입니다. SQLite에는 파일 bytes가 아니라 메타데이터, 관계, 작업 상태, 변경 피드, 인덱스를 저장합니다.
-
-    D:\CampusLifeData\          (설정 가능한 data root)
-    ├── blobs\sha256\ab\<sha256>    # 불변 원본, 읽기 전용
-    ├── uploads\<session-id>\       # 검증 전 임시 chunk
-    ├── derived\<artifact-id>\      # Artifact 파일 (transcript, notes, overlay PDF, 변환 PDF 등)
-    ├── database\campuslife.sqlite3
-    ├── cache\
+    %LOCALAPPDATA%\CampusLife\     (설치 시 선택, 동기화 폴더 아래면 거부)
+    ├── blobs\ab\cd\<sha256>      # 원본·Artifact·필기 payload, 읽기 전용
+    ├── uploads\<sha256>\          # 검증 전 chunk (blobs와 같은 볼륨)
+    ├── database\campuslife.sqlite3 # WAL
+    ├── cache\                     # FTS 인덱스, 썸네일, overlay 렌더링 — 백업 안 함
     ├── logs\
-    └── backups\
+    └── exports\                   # 사람이 읽는 트리 복사본
 
-- 원본은 내용 주소로 한 번만 저장하고 덮어쓰지 않습니다.
-- 파생 결과는 Artifact ID 단위 디렉터리에 두며 job_key로 재생성할 수 있습니다.
-- 임시 업로드(`uploads`)와 원본(`blobs`)은 같은 볼륨에 두어 atomic rename이 가능하게 합니다.
-- 삭제는 tombstone → 휴지통/보존 기간 → 참조 없는 Blob 정리 순서입니다.
-- 백업은 SQLite Online Backup API로 DB 스냅샷을 만든 뒤 그 스냅샷이 참조하는 Blob을 같은 세대에 복사합니다. 백업 완료 시 해당 Blob의 Attachment에 `backed_up_at`을 기록합니다(D14).
-- 사람이 읽을 수 있는 `과목/날짜/원래파일명` 트리는 export 기능으로 생성합니다.
+- 같은 바이트는 한 번만 저장하고 덮어쓰지 않습니다.
+- 삭제는 tombstone → 휴지통(30일) → 참조 없는 Blob 정리 순서입니다. 교수자·참여자 요청은 즉시 purge합니다.
+- Artifact는 재실행 결과가 다를 수 있으므로 백업 대상입니다. 캐시는 FTS·썸네일·overlay뿐입니다.
+- 백업은 DB 스냅샷 → 참조 Blob 증분 복사 → 세대 manifest → `backed_up_at` 갱신 순서이며, 복원하면 새 `epoch`를 발급합니다.
+- `hub fsck`로 해시와 고아·누락 Blob을 점검합니다.
 
 ## 7. 검색
 
 MVP 검색:
-- SQLite FTS5 전문 검색 (한국어 tokenizer는 측정 후 결정 — DECISIONS 미결 결정)
+- SQLite FTS5 전문 검색, 모든 텍스트 NFC 정규화 (한국어 분석기는 측정 후 결정 — DECISIONS O2)
 - 날짜/도메인/과목/태그 필터
 - 상세 보기에서 원본 파일과 AI 근거 연결
 
@@ -181,7 +168,7 @@ MVP 검색:
 
 ## 8. 다중 파일 강의 자료 수집 및 분석
 
-강의 자료 하나를 단일 파일로 가정하지 않습니다. 하나의 CourseMaterialSet은 강의 녹음, 수업 중 사진, 교수/조교가 배포한 여러 파일(PDF, 슬라이드, 문서, 스프레드시트, HWP/HWPX, 코드, 자막, 동영상, 링크 등)을 Relation으로 묶습니다.
+강의 자료 하나를 단일 파일로 가정하지 않습니다. 강의 녹음, 수업 중 사진, 교수/조교가 배포한 여러 파일(PDF, 슬라이드, 문서, 스프레드시트, HWP/HWPX, 코드, 자막, 동영상, 링크 등)은 여러 Capture로 들어와 Relation으로 같은 LectureSession·Course Item에 묶입니다. 별도의 자료 묶음 엔터티는 두지 않습니다(D2).
 
 수집 경로:
 - Android 공유 메뉴: LMS/브라우저/메일/메신저에서 파일 또는 링크를 CampusLife로 공유
@@ -199,9 +186,9 @@ LMS/메일의 비공식 자동 로그인이나 무단 크롤링을 전제하지 
 | Client | 주요 책임 | 로컬 저장 |
 |---|---|---|
 | Android / Fold8 | 시간표, 녹음, 사진, Share Intent, offline Outbox | Room + app-private files |
-| iPadOS / iPad Pro | 자료 열람, PDF 주석, Apple Pencil 필기, AI 노트 검토, Share Extension | SwiftData 또는 SQLite 계열 + app sandbox |
+| iPadOS / iPad Pro | 자료 열람, PDF 주석, Apple Pencil 필기, AI 노트 검토, Share Extension | SQLite(GRDB 등) + App Group outbox |
 | Windows | Hub: API, Blob, SQLite, AI jobs, 검색, 로컬 UI | NTFS + SQLite |
 
-클라이언트별 UI와 플랫폼 API는 네이티브로 구현하되 Domain ID, API contract, sync semantics, Locator·provenance schema는 `packages/api-contracts` 하나를 공유합니다. 플랫폼 간 코드 강제 공유보다 OpenAPI/JSON Schema 계약과 그로부터 생성한 타입을 우선합니다.
+클라이언트별 UI와 플랫폼 API는 네이티브로 구현하되 Domain ID, API contract, sync semantics, Locator schema, 로컬 sync 테이블 DDL은 `packages/api-contracts` 하나를 공유합니다. 원천은 JSON Schema이고, 세 언어 구현은 golden fixture로 검증합니다. 코드 생성은 선택입니다(D17).
 
 동기화 프로토콜, 장치 등록, 충돌 정책, Annotation 데이터 흐름은 [MULTI-DEVICE-ARCHITECTURE.md](MULTI-DEVICE-ARCHITECTURE.md)를 따릅니다.
