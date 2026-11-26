@@ -449,7 +449,7 @@ async def test_a_put_whose_file_a_collection_took_after_it_was_found_stores_the_
     def collect_then_unlink(path):
         if not collections:
             collections.append("running")
-            collections[0] = asyncio.run_coroutine_threadsafe(blob_store.collect_garbage(a_week_and_a_day_on()), loop).result()
+            collections[0] = asyncio.run_coroutine_threadsafe(blob_store.collect_garbage(a_week_and_a_day_on()), loop).result(timeout=5)
         path.unlink(missing_ok=True)
 
     blob_store = store_in(tmp_path, db, FileOps(unlink=collect_then_unlink))
