@@ -23,7 +23,7 @@ from campuslife_hub.blobs import (
 )
 from campuslife_hub.clock import now_instant
 from campuslife_hub.devices import DeviceId
-from test_blobs import WindowsError_, must_not_wait, refused_at_first
+from test_blobs import WindowsError_, must_not_wait, refused_at_first, windows_only
 
 CHUNK = 4
 DATA = b"0123456789"
@@ -590,3 +590,18 @@ async def test_a_session_directory_that_fails_to_go_for_another_reason_stops_the
 
     with pytest.raises(PermissionError):
         await store.expire_sessions(a_week_and_a_day_on())
+
+
+@windows_only
+async def test_a_chunk_another_handle_holds_open_is_kept_and_swept_once_it_closes(tmp_path, db, store, phone):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await put_all(store, phone, DATA, order=[0])
+    [directory] = (tmp_path / "uploads").iterdir()
+    store = uploads_in(tmp_path, db, FileOps(sleep=must_not_wait))
+
+    with open(directory / "0", "rb"):
+        [kept] = await store.expire_sessions(a_week_and_a_day_on())
+
+    assert kept.path == directory / "0"
+    assert await store.expire_sessions(datetime.now(UTC)) == []
+    assert session_dirs(tmp_path) == []
