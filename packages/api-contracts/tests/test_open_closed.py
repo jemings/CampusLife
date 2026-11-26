@@ -31,7 +31,7 @@ OPEN = {
     "device/pair_response", "device/pair_failure_headers",
     "blob/upload_session", "blob/stored", "blob/download_request_headers", "blob/download_response_headers",
     "blob/range_not_satisfiable_headers",
-    "locator/locator",
+    "locator/locator", "artifact/artifact",
     *(schema_id for schema_id in CONTRACT.schema_ids if schema_id.startswith("item/fields/")),
 }
 

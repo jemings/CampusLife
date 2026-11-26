@@ -1,0 +1,15 @@
+{
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "artifact_type": "ocr",
+  "subject_ref": "attachment:0f8fad5b-d9cb-469f-a165-70867728950e",
+  "job_key": "abababababababababababababababababababababababababababababababab",
+  "provider": "local",
+  "model": "tesseract-5",
+  "prompt_version": "1",
+  "pipeline_version": "stt-0.1.0",
+  "input_hashes": [
+    "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9"
+  ],
+  "content_blob": "baa5a0964d3320fbc0c6a922140453c8513ea24ab8fd0577034804a967248096",
+  "created_at": "2026-03-02T01:10:00.000Z"
+}
