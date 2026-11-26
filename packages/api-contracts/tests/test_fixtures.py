@@ -5,6 +5,7 @@ import pytest
 from campuslife_contracts import bundled_contract, contract_root
 from campuslife_contracts.fixtures import FixtureKind, case_problems, discover, layout_problems
 from campuslife_contracts.policy import OPERATIONS, discover_policy_vectors, policy_vector_problems
+from campuslife_contracts.text_hash import discover_text_hash_vectors, text_hash_vector_problems
 
 ROOT = contract_root()
 CONTRACT = bundled_contract()
@@ -27,6 +28,17 @@ def test_every_schema_has_valid_and_invalid_fixtures(schema_id):
 
 
 VECTORS = discover_policy_vectors(ROOT)
+TEXT_HASH_VECTORS = discover_text_hash_vectors(ROOT)
+
+
+@pytest.mark.parametrize("vector", TEXT_HASH_VECTORS, ids=lambda vector: vector.name)
+def test_text_hash_vector(vector):
+    assert text_hash_vector_problems(vector) == []
+
+
+def test_text_hash_vectors_exist():
+    assert {vector.name for vector in TEXT_HASH_VECTORS} >= {"empty", "lf", "crlf", "cr", "nfd", "nfc", "non_bmp"}
+
 
 
 @pytest.mark.parametrize("vector", VECTORS, ids=[f"policy/{v.operation}/{v.name}" for v in VECTORS])

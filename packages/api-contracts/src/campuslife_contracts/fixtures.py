@@ -2,7 +2,8 @@
 
 fixtures/<kind>/<schema_id>/<case>.json, and for invalid cases a
 <case>.expect.json next to it listing the exact violations. fixtures/policy
-holds the cloud_policy vectors instead (see policy.py).
+holds the cloud_policy vectors and fixtures/text_hash the from_hash vectors
+instead (see policy.py and text_hash.py).
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from .compare import differences
 from .contract import Contract
 from .jsonio import NotStrictJson, loads_strict, read_strict
 from .policy import POLICY_DIR, policy_layout_problems
+from .text_hash import TEXT_HASH_DIR, text_hash_layout_problems
 from .violations import (
     MalformedExpectation,
     Violation,
@@ -62,8 +64,8 @@ def discover(root: Path) -> list[FixtureCase]:
 
 def layout_problems(root: Path, contract: Contract) -> list[str]:
     fixtures_dir = Path(root) / "fixtures"
-    problems = policy_layout_problems(root)
-    top_level = {*FixtureKind, POLICY_DIR}
+    problems = policy_layout_problems(root) | text_hash_layout_problems(root)
+    top_level = {*FixtureKind, POLICY_DIR, TEXT_HASH_DIR}
     for entry in fixtures_dir.iterdir():
         if entry.name not in top_level:
             problems[entry] = f"not one of {', '.join(sorted(top_level))}"
