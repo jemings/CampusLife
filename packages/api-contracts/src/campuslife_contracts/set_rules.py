@@ -1,4 +1,4 @@
-"""Rules owner and set_type for a patch's `set` (E5, E6, A3).
+"""Rules owner and set_type for a patch's `set` and an accept's `edits` (E5, E6, A3).
 
 The patch schema names, per entity, the entity schema whose columns `set`
 writes and, for entities with kind-specific fields, the fields schemas a
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from jsonschema import ValidationError
 
@@ -103,44 +104,69 @@ def _fits(validator, column: Column, value: object) -> bool:
     return any(_fits_as_input(validator, schema, resolver, value) for schema, resolver in column.schemas)
 
 
-def _judged_changes(validator, schema: dict, instance: object) -> Iterator[tuple[str, dict, Column | None]]:
-    """(key, change, column) for each change the schema itself accepts."""
-    if not isinstance(instance, dict) or not isinstance(instance.get("set"), dict):
+class Judged(NamedTuple):
+    """One change a rule judges: its key, the change as {from?, from_hash?, to}, its column, and where it sits."""
+
+    key: str
+    change: dict
+    column: Column | None
+    at: list
+    to_at: list
+
+
+def _judged_changes(validator, schema: dict, instance: object) -> Iterator[Judged]:
+    """Each change the schema itself accepts.
+
+    A patch's set maps keys to changes of the entity its entity member names. With x-set-edits, edits
+    maps keys straight to the value to write, the one entity of x-set-targets is the target, and
+    fields.<key> is left to the Hub, which alone knows the Suggestion it edits.
+    """
+    edits = schema.get("x-set-edits") is True
+    member = "edits" if edits else "set"
+    if not isinstance(instance, dict) or not isinstance(instance.get(member), dict):
         return
     properties = schema.get("properties", {})
-    entity = instance.get("entity")
-    target = schema["x-set-targets"].get(entity) if isinstance(entity, str) else None
-    if target is None or next(validator.descend(entity, properties.get("entity", True)), None) is not None:
-        return
-    set_schema = properties.get("set", {})
-    for key, change in instance["set"].items():
-        fits_key = next(validator.descend(key, set_schema.get("propertyNames", True)), None) is None
-        fits_change = next(validator.descend(change, set_schema.get("additionalProperties", True)), None) is None
-        if fits_key and fits_change:
-            yield key, change, _column(validator, target, key)
+    if edits:
+        (target,) = schema["x-set-targets"].values()
+    else:
+        entity = instance.get("entity")
+        target = schema["x-set-targets"].get(entity) if isinstance(entity, str) else None
+        if target is None or next(validator.descend(entity, properties.get("entity", True)), None) is not None:
+            return
+    member_schema = properties.get(member, {})
+    for key, value in instance[member].items():
+        if edits and key.startswith(FIELDS_PREFIX):
+            continue
+        fits_key = next(validator.descend(key, member_schema.get("propertyNames", True)), None) is None
+        fits_value = next(validator.descend(value, member_schema.get("additionalProperties", True)), None) is None
+        if fits_key and fits_value:
+            change, to_at = ({"to": value}, [member, key]) if edits else (value, [member, key, "to"])
+            yield Judged(key, change, _column(validator, target, key), [member, key], to_at)
 
 
 def set_owner(validator, enabled, instance, schema):
-    for key, _, column in _judged_changes(validator, schema, instance):
+    for judged in _judged_changes(validator, schema, instance):
+        column = judged.column
         if column is not None and column.owner != "user":
-            yield ValidationError(f"{key} is not a column the user writes ({column.owner or 'no owner'})", path=["set", key])
+            yield ValidationError(f"{judged.key} is not a column the user writes ({column.owner or 'no owner'})", path=judged.at)
 
 
 def set_type(validator, enabled, instance, schema):
-    for key, change, column in _judged_changes(validator, schema, instance):
+    for key, change, column, at, to_at in _judged_changes(validator, schema, instance):
         if column is None:
-            yield ValidationError(f"{key} is not a column of this entity", path=["set", key])
+            yield ValidationError(f"{key} is not a column of this entity", path=at)
             continue
         if column.text and "from" in change:
-            yield ValidationError(f"{key} is compared by from_hash", path=["set", key, "from"])
+            yield ValidationError(f"{key} is compared by from_hash", path=[*at, "from"])
         if not column.text and "from_hash" in change:
-            yield ValidationError(f"{key} is compared by value", path=["set", key, "from_hash"])
+            yield ValidationError(f"{key} is compared by value", path=[*at, "from_hash"])
         for member in ("from", "to"):
             if member not in change:
                 continue
             value = change[member]
+            where = to_at if member == "to" else [*at, "from"]
             if value is None:
                 if member == "to" and column.required:
-                    yield ValidationError(f"{key} is required and cannot be removed", path=["set", key, "to"])
+                    yield ValidationError(f"{key} is required and cannot be removed", path=where)
             elif not _fits(validator, column, value):
-                yield ValidationError(f"{member} does not fit {key}", path=["set", key, member])
+                yield ValidationError(f"{member} does not fit {key}", path=where)

@@ -249,13 +249,17 @@
         "op": { "const": "suggestion.accept" },
         "suggestion_id": { "$ref": "../common/uuid.json" },
         "edits": {
-          "description": "Values the user changed before accepting, keyed like a patch's set. The Hub checks them against the Suggestion's proposal; that shape arrives with Suggestion (PR5).",
+          "description": "Values the user changed before accepting, keyed like a patch's set, each the value to write instead of the proposed one; null leaves an optional column out. For create_item a key names a column or fields.<key> of proposed, for patch_item a key of proposed.set, whose to it replaces; add_relation takes no edits. The target is always an Item, so a common column key is checked here like a patch's: only user columns (rule owner), with a value that fits, and null only for an optional column (rule set_type). Whether a key is in the proposal, and what a fields.<key> takes, depend on the Suggestion, so the Hub's applier (#2) judges them and answers rejected{schema}.",
           "type": "object",
           "minProperties": 1,
           "propertyNames": { "$ref": "#/$defs/set_key" }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "x-set-targets": { "item": { "schema": "../item/item.json" } },
+      "x-set-edits": true,
+      "x-set-owner": true,
+      "x-set-type": true
     },
     "suggestion_dismiss": {
       "type": "object",
