@@ -1,5 +1,6 @@
 import re
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -94,8 +95,16 @@ async def test_the_subject_and_the_order_and_repeats_of_inputs_are_not_part_of_t
         extraction(subject_ref=""),
         extraction(inputs=("slides.pdf",)),
         extraction(inputs=(7,)),
+        extraction(subject_ref="attachment:x\ud800"),
+        extraction(params={"n": 10**5000}),
+        extraction(params={"scale": Decimal("1.5")}),
+        extraction(job_type=7),
     ],
-    ids=["date param", "nan param", "tuple param", "no subject", "empty subject", "input not a sha256", "input not a str"],
+    ids=[
+        "date param", "nan param", "tuple param", "no subject", "empty subject", "input not a sha256", "input not a str",
+        "subject not UTF-8", "param past what JSON text holds", "Decimal param",
+        "job type not a str",
+    ],
 )
 async def test_a_spec_that_cannot_be_stored_is_refused_and_nothing_is_queued(db, spec):
     with pytest.raises((TypeError, ValueError)):
