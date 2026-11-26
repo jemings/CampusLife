@@ -628,6 +628,39 @@ async def test_a_scalar_that_loses_and_a_body_that_converges_are_not_stashed(db,
     assert await stashed(db) == []
 
 
+async def entity_with(db, device, blob_store, tmp_path, entity):
+    """A live entity of each patchable kind, and its id."""
+    if entity == "attachment":
+        capture = await text_capture(blob_store, tmp_path)
+        await apply(db, device, commit(capture))
+        return capture["attachments"][0]["id"]
+    if entity == "tag":
+        await apply(db, device, mutation("create_tag"))
+        return TAG
+    await apply(db, device, task(due_at=DUE))
+    return ITEM
+
+
+@pytest.mark.parametrize(
+    ("entity", "key", "was", "theirs", "ours"),
+    [
+        ("item", "title", "과제 제출", "과제 1", "과제 2"),
+        ("item", "due_at", DUE, "2026-03-10T14:59:00.000Z", "2026-03-11T14:59:00.000Z"),
+        ("item", "fields.progress", "planned", "in_progress", "completed"),
+        ("attachment", "cloud_policy", "local_only", "cloud_allowed", "blocked"),
+        ("tag", "name", "시험", "기말", "중간"),
+    ],
+)
+async def test_a_column_that_is_not_x_text_and_loses_is_not_stashed(db, device, blob_store, tmp_path, entity, key, was, theirs, ours):
+    identifier = await entity_with(db, device, blob_store, tmp_path, entity)
+    await apply(db, device, patch(entity, identifier, **{key: {"from": was, "to": theirs}}))
+
+    [result] = await apply(db, device, patch(entity, identifier, **{key: {"from": was, "to": ours}}))
+
+    assert outcome(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": [key]}
+    assert await stashed(db) == []
+
+
 async def test_every_value_of_a_patch_of_a_deleted_item_is_kept_in_the_stash(db, device):
     await apply(db, device, task(), op("delete", "item", ITEM))
     deleted = await item_row(db)
