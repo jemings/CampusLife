@@ -300,6 +300,22 @@ def test_without_a_console_serve_leaves_why_it_refused_in_the_log_once(tmp_path,
     assert len([line for line in said if reason in line]) == 1
 
 
+def test_with_a_console_the_reason_serve_refused_shows_once_and_is_in_the_log(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    with sqlite3.connect(root / "database" / "campuslife.sqlite3") as conn:
+        conn.execute("PRAGMA user_version = 999")
+    conn.close()
+    capsys.readouterr()
+
+    assert hub(root, "serve", "--admin-port", "0") == 1
+
+    shown = [line for line in capsys.readouterr().err.splitlines() if "schema version 999" in line]
+    assert len(shown) == 1
+    assert shown[0].startswith("campuslife-hub: the database is at schema version 999")
+    assert "schema version 999" in (root / "logs" / "hub.log").read_text(encoding="utf-8")
+
+
 def test_without_a_console_an_unexpected_error_that_ends_serve_is_in_the_log_once(tmp_path, capsys):
     root = tmp_path / "CampusLife"
     hub(root, "init")
