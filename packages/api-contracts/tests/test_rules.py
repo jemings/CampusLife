@@ -582,3 +582,25 @@ def test_block_anchor_ties_every_ref_to_the_extracted_blob(make_contract, refs, 
 def test_block_anchor_leaves_refs_alone_when_the_blob_is_malformed(make_contract):
     body = extracted(block(0, {"blob": OTHER_BLOB}, id_="ab" * 32), blob="AB" * 32)
     assert make_contract({"t/x": EXTRACTED}).validate("t/x", body) == [SchemaViolation("/blob", "pattern")]
+
+
+UNTYPED = {
+    "type": "object",
+    "properties": {"blob": {}, "extractor": {}, "blocks": {}},
+    "x-block-id": True,
+    "x-block-anchor": True,
+}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"blob": SOURCE, "extractor": "text", "blocks": [block(0)]},
+        {"blob": 7, "extractor": {"id": "text", "version": "1"}, "blocks": [block(0)]},
+        {"blob": SOURCE, "extractor": {"id": "text", "version": "1"}, "blocks": {"0": block(0)}},
+        {"blob": SOURCE, "extractor": {"id": "text", "version": "1"}, "blocks": ["x", {"id": 1, "refs": "x"}]},
+    ],
+    ids=["extractor-string", "blob-number", "blocks-object", "blocks-of-other-shapes"],
+)
+def test_block_rules_stay_silent_on_shapes_their_schema_lets_through(make_contract, body):
+    assert make_contract({"t/x": UNTYPED}).validate("t/x", body) == []
