@@ -25,7 +25,6 @@ from campuslife_contracts import CONTRACT_VERSION, MIN_CONTRACT_VERSION, Rule, R
 from campuslife_contracts.jsonio import NotStrictJson, loads_strict
 from campuslife_contracts.violations import describe
 from fastapi import Request
-from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.exceptions import HTTPException
@@ -164,28 +163,21 @@ async def _sync_error(request: Request, error: SyncError) -> JSONResponse:
     return error.response()
 
 
-async def _http_error(request: Request, error: HTTPException) -> JSONResponse:
-    match error.status_code:
-        case 404:
-            refused = SyncError(404, ErrorCode.NOT_FOUND, "the sync port has no such path")
-        case 405:
-            refused = SyncError(405, ErrorCode.INVALID_REQUEST, f"this path does not take {request.method}", headers=error.headers)
-        case _:
-            refused = SyncError(400, ErrorCode.INVALID_REQUEST, str(error.detail))
-    return refused.response()
+async def _not_found(request: Request, error: HTTPException) -> JSONResponse:
+    return SyncError(404, ErrorCode.NOT_FOUND, "the sync port has no such path").response()
 
 
-async def _validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
-    return SyncError(400, ErrorCode.INVALID_REQUEST, "the request is malformed").response()
+async def _wrong_method(request: Request, error: HTTPException) -> JSONResponse:
+    return SyncError(405, ErrorCode.INVALID_REQUEST, f"this path does not take {request.method}", headers=error.headers).response()
 
 
 async def _internal_error(request: Request, error: Exception) -> JSONResponse:
     return internal_error().response()
 
 
-ERROR_HANDLERS = {SyncError: _sync_error, HTTPException: _http_error, RequestValidationError: _validation_error, Exception: _internal_error}
-"""The sync app's handlers: every error a route or the router raises becomes a common/error body. Starlette sends the
-Exception one, then raises the exception on to SyncEnvelope, which logs it."""
+ERROR_HANDLERS = {SyncError: _sync_error, 404: _not_found, 405: _wrong_method, Exception: _internal_error}
+"""The sync app's handlers: a route's SyncError, the router's 404 and 405 and an unhandled exception each become a
+common/error body. Starlette sends the Exception one, then raises the exception on to SyncEnvelope, which logs it."""
 
 
 class SyncEnvelope:
@@ -196,12 +188,6 @@ class SyncEnvelope:
         self.versions = versions
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            if scope["type"] == "websocket":
-                await send({"type": "websocket.close", "code": 1008})
-                return
-            await self.app(scope, receive, send)
-            return
         started = False
 
         async def stamped(message: Message) -> None:

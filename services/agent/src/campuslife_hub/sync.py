@@ -2,7 +2,7 @@
 
 `create_sync_app(hosted, authenticate, routers)` makes what the host serves on the sync port: these routes, and those
 routers add (#19's pairing and device routes), all behind one SyncEnvelope. The app is FastAPI with its OpenAPI
-document, /docs and /redoc turned off; bodies are read as they come and judged against the contract schemas, with no
+document, /docs and /redoc turned off and no redirect for a trailing slash (sync.yaml lists no 3xx); bodies are read as they come and judged against the contract schemas, with no
 request model beside them (D17).
 
 - GET /v1/hub: the Hub's identity and the contract versions it speaks and accepts (E18).
@@ -110,7 +110,9 @@ async def refuse_every_bearer(bearer: str | None) -> Refusal:
 def create_sync_app(
     hosted: Hosted, authenticate: Authenticate, routers: Sequence[APIRouter] = (), *, versions: ContractVersions = ContractVersions()
 ) -> ASGIApp:
-    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None, telemetry=NO_TELEMETRY, exception_handlers=ERROR_HANDLERS)
+    app = FastAPI(
+        openapi_url=None, docs_url=None, redoc_url=None, redirect_slashes=False, telemetry=NO_TELEMETRY, exception_handlers=ERROR_HANDLERS
+    )
     for added in (router, *routers):
         app.include_router(added)
     app.state.sync = SyncState(hosted, versions)
