@@ -15,6 +15,7 @@ revoked or approved. Every change is recorded in the audit log. Each operation t
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import hashlib
 import json
@@ -167,6 +168,9 @@ class PairingLimiter:
         self._allowed = allowed
         self._window = window
         self._failures: deque[datetime] = deque()
+        self.turn = asyncio.Lock()
+        """Held by `pair` from the check to counting the failure, so attempts that arrive together cannot all pass the
+        check before any failure is counted."""
 
     def retry_after(self, now: datetime) -> int | None:
         """Whole seconds until a pairing attempt is judged again, or None when it is judged now."""
@@ -243,19 +247,20 @@ async def pair(
     user's. `tailscale_user` is the Tailscale-User-Login the request came with: the audit log keeps it, nothing trusts it.
     """
     ClientPlatform(request.platform)
-    retry_after = limiter.retry_after(now)
-    if retry_after is not None:
-        return Refusal(RefusalCode.UNAUTHORIZED, retry_after)
     token = _new_token()
     seen_as = {} if tailscale_user is None else {"tailscale_user": tailscale_user}
-    pairing = await core.db.write(
-        partial(_pair, secret_sha256=_sha256(request.secret), request=request, token_sha256=_sha256(token), now=now, seen_as=seen_as)
-    )
-    if pairing.revoked is not None:
-        await _end_uploads(core, pairing.revoked)
-    if pairing.device is None:
-        limiter.failed(now)
-        return Refusal(RefusalCode.UNAUTHORIZED)
+    async with limiter.turn:
+        retry_after = limiter.retry_after(now)
+        if retry_after is not None:
+            return Refusal(RefusalCode.UNAUTHORIZED, retry_after)
+        pairing = await core.db.write(
+            partial(_pair, secret_sha256=_sha256(request.secret), request=request, token_sha256=_sha256(token), now=now, seen_as=seen_as)
+        )
+        if pairing.revoked is not None:
+            await _end_uploads(core, pairing.revoked)
+        if pairing.device is None:
+            limiter.failed(now)
+            return Refusal(RefusalCode.UNAUTHORIZED)
     return Paired(pairing.device, redactor.register(token))
 
 
