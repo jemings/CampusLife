@@ -2,8 +2,10 @@
 POST /v1/devices/me/status, and each request's bearer token judged by devices.authenticate. Every response a test
 gets has passed sync_contract.check against openapi/sync.yaml."""
 
+import hashlib
 import json
 import unicodedata
+import uuid
 from datetime import timedelta
 
 import pytest
@@ -11,7 +13,7 @@ from conftest import contract_fixture
 from device_bench import UNKNOWN_SECRET, bench
 from sync_client import CONTRACT, Waking, client_of
 
-from campuslife_hub import audit, devices, sync_devices
+from campuslife_hub import audit, devices, mutations, sync_devices
 from campuslife_hub.audit import AuditEvent
 from campuslife_hub.host import Hosted
 
@@ -25,6 +27,23 @@ def pair_body(offered, **fields):
 
 def bearer(token):
     return {"Authorization": f"Bearer {token}"}
+
+
+def tag(name):
+    return {"mutation_id": str(uuid.uuid4()), "op": "create", "entity": "tag", "id": str(uuid.uuid4()), "data": {"name": name, "color": "#ff8800"}}
+
+
+async def uploaded_commit(client, token, data):
+    """data uploaded in one chunk by the Device token names, and the camera_photo commit that carries it."""
+    digest = hashlib.sha256(data).hexdigest()
+    opened = await client.post("/v1/blobs/uploads", json={"sha256": digest, "size": len(data)}, headers=bearer(token))
+    assert opened.status_code == 201
+    assert (await client.put(f"/v1/blobs/uploads/{digest}/chunks/0", content=data, headers=bearer(token))).status_code == 204
+    assert (await client.post(f"/v1/blobs/uploads/{digest}/finalize", headers=bearer(token))).status_code == 200
+    capture = contract_fixture("valid", "capture/commit", "camera_photo")
+    capture["links"] = []
+    capture["attachments"][0]["blob_sha256"] = digest
+    return {"mutation_id": str(uuid.uuid4()), "op": "capture.commit", "capture": capture}
 
 
 async def pair_failures(b):
@@ -50,6 +69,27 @@ async def test_a_refused_secret_is_401_unauthorized(tmp_path):
     assert (refused.status_code, refused.json()["code"]) == (401, "unauthorized")
     assert refused.headers["WWW-Authenticate"] == "Bearer"
     assert "Retry-After" not in refused.headers
+
+
+async def test_an_expired_secret_is_401_unauthorized(tmp_path):
+    async with bench(tmp_path) as b, b.sync() as client:
+        offer = await b.offer()
+        b.clock.advance(minutes=5, seconds=1)
+
+        refused = await client.post("/v1/pair", json=pair_body(offer.secret))
+
+    assert (refused.status_code, refused.json()["code"]) == (401, "unauthorized")
+
+
+async def test_a_secret_used_twice_is_refused_and_the_device_it_paired_is_revoked(tmp_path):
+    async with bench(tmp_path) as b, b.sync() as client:
+        offer = await b.offer()
+        first = (await client.post("/v1/pair", json=pair_body(offer.secret))).json()
+
+        again = await client.post("/v1/pair", json=pair_body(offer.secret))
+
+        assert (again.status_code, again.json()["code"]) == (401, "unauthorized")
+        assert (await changes_with(client, first["token"])).json()["code"] == "device_revoked"
 
 
 async def test_once_failed_pairings_are_limited_the_refusal_says_when_to_try_again(tmp_path):
@@ -156,16 +196,46 @@ async def test_the_dormant_period_the_hub_was_given_decides_when_a_token_is_dorm
     assert (refused.status_code, refused.json()["code"]) == (401, "device_dormant")
 
 
-async def test_a_dormant_devices_token_is_401_device_dormant_until_it_is_approved(tmp_path):
+async def test_a_dormant_device_once_approved_syncs_on_from_its_cursor(tmp_path):
     async with bench(tmp_path) as b, b.sync() as client:
         paired = await paired_over(client, b)
+        kept = tag("시험")
+        await client.post("/v1/mutations", json={"mutations": [kept]}, headers=bearer(paired["token"]))
+        cursor = (await changes_with(client, paired["token"])).json()["next_since"]
         b.clock.advance(days=91)
 
         refused = await changes_with(client, paired["token"])
         assert (refused.status_code, refused.json()["code"]) == (401, "device_dormant")
+        later = tag("과제")
+        await mutations.apply(b.core.db, [later], b.core.hub_device)
 
         await b.approve(paired["device_id"])
-        assert (await changes_with(client, paired["token"])).status_code == 200
+        resumed = await client.get("/v1/changes", params={"since": str(cursor)}, headers=bearer(paired["token"]))
+        everything = await changes_with(client, paired["token"])
+
+    assert [change["id"] for change in resumed.json()["changes"]] == [later["id"]]
+    assert {kept["id"], later["id"]} <= {change["id"] for change in everything.json()["changes"]}
+
+
+async def test_a_revoked_devices_unsent_capture_comes_again_from_its_new_pairing_without_a_second_capture(tmp_path):
+    """The first device's commit was applied but its answer lost, so the capture stayed in its Outbox; the phone is
+    revoked, paired again under a new device id, and sends the same mutation again."""
+    async with bench(tmp_path) as b, b.sync() as client:
+        first = await paired_over(client, b)
+        data = b"synthetic whiteboard photo"
+        mutation = await uploaded_commit(client, first["token"], data)
+        [applied] = (await client.post("/v1/mutations", json={"mutations": [mutation]}, headers=bearer(first["token"]))).json()["results"]
+        assert applied["result"] == "applied"
+        await b.revoke(first["device_id"])
+        again = await paired_over(client, b)
+
+        resent = await client.post("/v1/mutations", json={"mutations": [mutation]}, headers=bearer(again["token"]))
+        feed = (await changes_with(client, again["token"])).json()["changes"]
+
+    assert again["device_id"] != first["device_id"]
+    assert resent.json()["results"][0] == {"mutation_id": mutation["mutation_id"], "result": "duplicate", "original": applied}
+    assert [change["id"] for change in feed if change["entity"] == "capture"] == [mutation["capture"]["id"]]
+    assert [change["id"] for change in feed if change["entity"] == "attachment"] == [mutation["capture"]["attachments"][0]["id"]]
 
 
 async def reissue(client, token):
@@ -243,10 +313,14 @@ async def test_a_heartbeat_the_contract_refuses_is_400_and_keeps_nothing(tmp_pat
 
 @pytest.mark.parametrize(
     ("method", "path"),
-    [("GET", "/v1/devices"), ("POST", "/v1/devices/pairing-offer"), ("POST", "/v1/devices/{device}/revoke"), ("POST", "/v1/devices/{device}/approve")],
+    [
+        ("GET", "/v1/devices"), ("POST", "/v1/devices/pairing-offer"), ("POST", "/v1/devices/{device}/revoke"),
+        ("POST", "/v1/devices/{device}/approve"), ("GET", "/api/status"), ("POST", "/api/login"), ("GET", "/"),
+    ],
 )
 async def test_the_sync_port_has_no_way_to_manage_devices(tmp_path, method, path):
-    """Offering secrets, revoking and approving live on the admin listener only, never behind tailscale serve."""
+    """Offering secrets, revoking, approving and the rest of the admin API live on the admin listener only, never
+    behind tailscale serve: a paired Device's token reaches none of them."""
     async with bench(tmp_path) as b, b.sync() as client:
         paired = await paired_over(client, b)
         answer = await client.request(method, path.format(device=paired["device_id"]), headers=bearer(paired["token"]))
