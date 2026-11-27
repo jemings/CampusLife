@@ -18,6 +18,8 @@ import java.util.concurrent.Callable
 abstract class CampusLifeDatabase : RoomDatabase() {
     abstract fun syncMeta(): SyncMetaDao
 
+    abstract fun cache(): CacheDao
+
     abstract fun outbox(): OutboxDao
 
     abstract fun blobs(): BlobDao

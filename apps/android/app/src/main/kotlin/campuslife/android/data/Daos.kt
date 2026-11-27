@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -32,6 +33,44 @@ interface OutboxDao {
         """,
     )
     fun heldWithEveryBlobStored(): List<OutboxRow>
+
+    @Query("SELECT * FROM mutation_outbox WHERE state = :state ORDER BY seq")
+    fun inState(state: String): List<OutboxRow>
+
+    @Query(
+        """
+        SELECT * FROM mutation_outbox WHERE entity = :entity AND entity_id = :entityId
+            AND state IN ('held', 'pending', 'acked', 'pulling')
+        ORDER BY seq
+        """,
+    )
+    fun overlayOf(entity: String, entityId: String): List<OutboxRow>
+
+    @Query(
+        """
+        SELECT id, data AS json, 0 AS seq, NULL AS state FROM entity_cache WHERE entity = 'item'
+        UNION ALL
+        SELECT entity_id AS id, body AS json, seq, state FROM mutation_outbox
+            WHERE entity = 'item' AND state IN ('held', 'pending', 'acked', 'pulling')
+        ORDER BY seq, id
+        """,
+    )
+    fun observeItemLayers(): Flow<List<ItemLayer>>
+}
+
+/** A cached item row (state null) or one of the outbox rows laid over it, in the order they apply. */
+data class ItemLayer(val id: String, val json: String, val seq: Long, val state: String?)
+
+@Dao
+interface CacheDao {
+    @Upsert
+    fun put(row: CachedRow)
+
+    @Query("DELETE FROM entity_cache WHERE entity = :entity AND id = :id")
+    fun remove(entity: String, id: String)
+
+    @Query("SELECT * FROM entity_cache WHERE entity = :entity AND id = :id")
+    fun get(entity: String, id: String): CachedRow?
 }
 
 @Dao

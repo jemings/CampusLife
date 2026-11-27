@@ -31,10 +31,22 @@ class SyncStore(
     fun onResults(results: List<MutationResult>) = db.inTransaction { results.forEach(::answer) }
 
     /** Marks the start of a pull: Mutations applied before it leave the overlay when it finishes (decision 5). */
-    fun beginPull(): Unit = TODO()
+    fun beginPull(): Unit = db.inTransaction { moveAll(TransferState.ACKED, OutboxEvent.PULL_BEGUN) }
 
     /** Writes one changes page over entity_cache and moves the cursor; the last page finishes the pull. */
-    fun applyPage(page: ChangesPage): Unit = TODO()
+    fun applyPage(page: ChangesPage): Unit = db.inTransaction {
+        check(db.syncMeta().setCursor(page.nextSince) == 1) { "a changes page arrived before the Hub is known" }
+        for (change in page.changes) {
+            if (change.entity !in CACHED) continue
+            val data = change.data
+            if (change.deleted || data == null) {
+                db.cache().remove(change.entity.value, change.id)
+            } else {
+                db.cache().put(CachedRow(change.entity.value, change.id, change.rev, data.toString()))
+            }
+        }
+        if (!page.hasMore) moveAll(TransferState.PULLING, OutboxEvent.PULL_DONE)
+    }
 
     private fun answer(result: MutationResult) {
         val row = db.outbox().byMutationId(result.mutationId) ?: return
@@ -81,9 +93,24 @@ class SyncStore(
         if (to == TransferState.STORED) db.promoteHeldCommits()
     }
 
+    private fun moveAll(state: TransferState, event: OutboxEvent) {
+        val to = state.after(event)
+        for (row in db.outbox().inState(state.column)) db.outbox().move(row.seq, to.column)
+    }
+
     private fun encode(result: MutationResult): String = wireJson.encodeToString(MutationResult.serializer(), result)
 
     companion object {
         const val MAX_BATCH = 200
+
+        private val CACHED = setOf(
+            EntityName.CAPTURE,
+            EntityName.ATTACHMENT,
+            EntityName.ITEM,
+            EntityName.RELATION,
+            EntityName.TAG,
+            EntityName.ARTIFACT,
+            EntityName.SUGGESTION,
+        )
     }
 }
