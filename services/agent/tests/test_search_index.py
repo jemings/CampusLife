@@ -7,6 +7,7 @@ import asyncio
 import json
 import sqlite3
 import time
+import unicodedata
 
 import pytest
 from extract_harness import hub_with
@@ -73,6 +74,16 @@ async def test_an_item_is_found_by_its_title_and_body_once_the_index_catches_up(
     assert await index.catch_up(db, blob_store) == 0
 
 
+async def test_catching_up_ends_before_the_next_batch_once_stop_is_set(db, device, blob_store, index):
+    await apply(db, device, create_item(new_id(), "자료구조"))
+    stop = asyncio.Event()
+    stop.set()
+
+    assert await index.catch_up(db, blob_store, stop=stop) == 0
+
+    assert await index.documents() == []
+
+
 async def test_an_extraction_is_found_block_by_block_with_its_locators_and_an_attachment_by_its_file_name(db, device, blob_store, tmp_path, index):
     hub = hub_with(db, blob_store, device, tmp_path)
     capture = await hub.capture(("자료구조노트.md", NOTES))
@@ -104,6 +115,16 @@ async def test_a_new_extraction_of_a_blob_replaces_the_blocks_of_the_one_before(
     blocks = [document for document in await index.documents() if document.part == "block"]
     assert [document.block_id for document in blocks] == [block["id"] for block in new_body["blocks"]]
     assert (await db.read(lambda snap: artifacts.current(snap, old["subject_ref"], "extraction")))["id"] == new["id"]
+
+
+async def test_the_current_extraction_of_a_subject_is_not_another_type_recorded_after_it(db, blob_store, tmp_path, index):
+    sha, made = await extraction(db, blob_store, tmp_path, [("정렬 알고리즘", [])])
+    job = await db.write(lambda tx: jobs.enqueue(tx, JobSpec("summarize", f"blob:{sha}", (sha,), {}), Pipeline("summary-1")))
+    await db.write(lambda tx: artifacts.record(tx, job, "summary", sha))
+
+    assert (await db.read(lambda snap: artifacts.current(snap, f"blob:{sha}", "extraction")))["id"] == made["id"]
+    await index.catch_up(db, blob_store)
+    assert await sources(index, "정렬") == [f"blob:{sha}"]
 
 
 async def test_a_soft_deleted_item_leaves_the_index_and_comes_back_when_restored(db, device, blob_store, index):
@@ -141,6 +162,8 @@ async def test_a_changed_body_replaces_the_item_s_documents_and_a_touch_writes_n
     await index.catch_up(db, blob_store)
     held = await index.documents()
     assert [(document.part, document.text) for document in held] == [("title", "스택"), ("body", "후입선출 구조")]
+    await apply(db, device, create_item(new_id(), "큐"))
+    await index.catch_up(db, blob_store)
     await db.write(lambda tx: store.touch(tx, EntityRef(Entity.ITEM, note)))
     conn = sqlite3.connect(index._path)
     ids_before = conn.execute("SELECT id FROM docs ORDER BY id").fetchall()
@@ -262,12 +285,13 @@ async def test_a_missing_index_file_is_built_again_from_since_0(db, device, blob
     assert await held_sources(index) == [f"item:{note}"]
 
 
-async def test_text_sqlite_cannot_store_is_indexed_with_spaces_in_its_place(db, blob_store, tmp_path, index):
-    sha, _ = await extraction(db, blob_store, tmp_path, [("짝없는\ud800대리\x00문자", [])])
+async def test_text_sqlite_cannot_store_is_indexed_with_spaces_in_its_place_and_a_block_without_text_is_not(db, blob_store, tmp_path, index):
+    decomposed = unicodedata.normalize("NFD", "정렬")
+    sha, _ = await extraction(db, blob_store, tmp_path, [("짝없는\ud800대리\x00문자", []), ("", []), (decomposed, [])])
 
     await index.catch_up(db, blob_store)
 
-    assert [document.text for document in await index.documents()] == ["짝없는 대리 문자"]
+    assert [document.text for document in await index.documents()] == ["짝없는 대리 문자", "정렬"]
     assert await sources(index, "대리") == [f"blob:{sha}"]
 
 
