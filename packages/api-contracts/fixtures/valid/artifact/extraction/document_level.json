@@ -3,11 +3,12 @@
   "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
   "extractor": {
     "id": "hwpx",
-    "version": "0.2.1"
+    "version": "0.2.1",
+    "params": {}
   },
   "blocks": [
     {
-      "id": "ee99a0378c12352015aa6bd9066c886e0fd1066d1adad2eb6ef95f2563d208dc",
+      "id": "e10de069e5e0db6aec0328cf4dc6a0062a5fda8435f077396555ece12d1b2dca",
       "block_type": "paragraph",
       "text": "본문",
       "refs": [

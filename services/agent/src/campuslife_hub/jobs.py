@@ -50,6 +50,8 @@ MAX_ATTEMPTS = 5
 """Attempts a job gets before it fails: errors, and Hub restarts while it ran, count alike."""
 
 STOPPED_BY_RESTART = "the Hub stopped while the job ran"
+RELEASED = "released:"
+"""The job_key prefix of a finished job whose input Blob went (migration 0010): history that no longer runs."""
 
 TRANSITIONS: Mapping[JobState, frozenset[JobState]] = {
     JobState.RUNNING: frozenset({JobState.PENDING, JobState.RETRY_WAIT}),
@@ -329,9 +331,15 @@ def defer(tx: Tx, job_id: str, error: str, *, at: datetime, now: datetime | None
     return get(tx, job_id)
 
 
+def is_released(job: Job) -> bool:
+    return job.job_key.startswith(RELEASED)
+
+
 def retry(tx: Tx, job_id: str, *, now: datetime) -> Job:
-    """The same row, pending again as if new (E12): only a failed or blocked job."""
+    """The same row, pending again as if new (E12): only a failed or blocked job, and not one whose Blob went."""
     job = get(tx, job_id)
+    if is_released(job):
+        raise NotRetryable(f"job {job_id} read a Blob the Hub no longer holds; the same bytes stored again are processed anew")
     if not _change(tx, job_id, JobState.PENDING, now, attempts=0, outcome_code=None, error=None, next_attempt_at=instant(now)):
         raise NotRetryable(f"job {job_id} is {job.state}; only a failed or blocked job is retried")
     return get(tx, job_id)

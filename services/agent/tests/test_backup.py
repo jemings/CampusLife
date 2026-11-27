@@ -6,6 +6,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import uuid
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
 
@@ -13,7 +14,7 @@ import pytest
 from test_blobs import WindowsError_
 from test_capture_commit import feed
 
-from campuslife_hub import artifacts, backup, changes, fsck, jobs, purge
+from campuslife_hub import artifacts, backup, changes, fsck, jobs, media, purge
 from campuslife_hub.backup import BackupRefused, RestoreRefused
 from campuslife_hub.core import open_core, open_core_readonly
 from campuslife_hub.jobs import JobSpec, Pipeline
@@ -95,6 +96,20 @@ async def test_a_backup_holds_a_snapshot_the_blobs_it_names_and_a_manifest(tmp_p
     assert (generation.blobs, generation.copied, generation.missing) == (2, 2, ())
     assert manifest["generation"] == generation.name
     assert manifest["finished_at"] == generation.finished_at
+
+
+async def test_a_backup_snapshot_keeps_no_row_about_a_blob_it_leaves_out(tmp_path):
+    target = tmp_path / "drive"
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        lonely = (await core.blobs.put_file(synthetic(tmp_path, "lonely", b"never committed"))).sha256
+        await core.db.write(lambda tx: media.put(tx, media.Media(lonely, "text/plain", "identify-1+L00000000", str(uuid.uuid4()))))
+
+        generation = await backup.back_up(core, target, clock=Clock())
+
+    manifest = manifest_of(target, generation.name)
+    with closing(sqlite3.connect(target / "generations" / generation.name / manifest["database"]["file"])) as conn:
+        assert conn.execute("SELECT count(*) FROM blob_media").fetchone() == (0,)
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 async def test_a_backup_writes_backed_up_at_on_the_attachments_whose_blobs_it_holds_and_records_itself(tmp_path):

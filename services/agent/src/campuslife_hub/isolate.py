@@ -19,8 +19,9 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 STDOUT_MAX_BYTES = 16 << 20
 """The stdout a program may print unless its caller allows less. The Hub holds all of it in memory, so it is
@@ -302,9 +303,18 @@ async def _supervise(
 
 
 async def run(
-    argv: Sequence[str], *, stdin: bytes | None, timeout_s: float, mem_bytes: int, stdout_max_bytes: int = STDOUT_MAX_BYTES,
+    argv: Sequence[str],
+    *,
+    stdin: bytes | None,
+    timeout_s: float,
+    mem_bytes: int,
+    stdout_max_bytes: int = STDOUT_MAX_BYTES,
+    cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> RunResult:
-    """Run argv with stdin, keeping up to stdout_max_bytes of its stdout and the last STDERR_TAIL_BYTES of its stderr.
+    """Run argv with stdin in cwd, keeping up to stdout_max_bytes of its stdout and the last STDERR_TAIL_BYTES of its
+    stderr. With env the program sees only those variables (Windows programs need SYSTEMROOT among them); without it,
+    the Hub's.
 
     The program and what it started are killed at timeout_s, once it prints past stdout_max_bytes, when it ends,
     and when this is cancelled. RuntimeError when the killed program does not end within SETTLE_SECONDS.
@@ -319,6 +329,8 @@ async def run(
             stdin=asyncio.subprocess.DEVNULL if stdin is None else asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            env=None if env is None else dict(env),
             **confinement.options,
         )
         try:

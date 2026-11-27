@@ -149,3 +149,9 @@ class Layout:
     @property
     def logs(self) -> Path:
         return self.root / "logs"
+
+    @property
+    def work(self) -> Path:
+        """Each running job's own directory, work/<job id>/, which its handler empties when it ends (S15); what a
+        stopped Hub left goes when the Hub opens."""
+        return self.root / "work"

@@ -3,11 +3,14 @@
   "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
   "extractor": {
     "id": "text",
-    "version": "1"
+    "version": "1",
+    "params": {
+      "syntax": "plain"
+    }
   },
   "blocks": [
     {
-      "id": "cd2d688f3a490f90e828681f99e2343054549febce81e5892cc2e8b265296f20",
+      "id": "f6d3fbba5792cfff0ac347d63c89011a371e48ffea5a9bdb68f8ff77f1c66417",
       "block_type": "paragraph",
       "text": "첫 문단",
       "refs": [
@@ -21,7 +24,7 @@
       ]
     },
     {
-      "id": "a69121f30ad35a7f7115cac6f5a1f5416b344df7440d08a18cc902d940ef88e9",
+      "id": "f31bd09624129961624e8a21bffc4c765e1e5e1c8ad87e02d1bd50ccea376d5b",
       "block_type": "paragraph",
       "text": "둘째 문단 �",
       "refs": [

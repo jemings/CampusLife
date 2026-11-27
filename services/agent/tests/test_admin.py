@@ -339,6 +339,19 @@ async def test_the_jobs_page_lists_jobs_with_retry_and_cancel_and_masks_secrets_
     assert "broken with [redacted]" in page
 
 
+async def test_a_failed_job_whose_blob_went_has_no_retry(tmp_path):
+    async with hub(tmp_path) as (client, admin):
+        failed = await queued(admin, 1, failed=True)
+        await admin.core.db.write(lambda tx: tx.execute("UPDATE processing_jobs SET job_key = ? WHERE id = ?", (f"{jobs.RELEASED}{failed.id}", failed.id)))
+        await log_in(client)
+
+        page = (await client.get("/jobs")).text
+        retried = await client.post(f"/jobs/{failed.id}/retry", headers=ORIGIN)
+
+    assert f'action="/jobs/{failed.id}/retry"' not in page
+    assert retried.status_code == 409
+
+
 async def test_retry_and_cancel_from_the_jobs_page_change_the_job(tmp_path):
     async with hub(tmp_path) as (client, admin):
         failed = await queued(admin, 1, failed=True)
