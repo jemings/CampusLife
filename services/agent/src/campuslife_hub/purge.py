@@ -30,6 +30,7 @@ from . import jobs, store
 from .blobs import BLOB_REFERENCES, BlobStore, KeptLeftover, has_blob
 from .clock import now_instant
 from .db import Database, Snapshot, Tx
+from .ingest import INGEST
 from .jobs import JobState
 from .store import Entity, EntityRef
 
@@ -95,6 +96,8 @@ class Purged(Finish):
     target: PurgeTarget = PurgeTarget()
     marked: tuple[str, ...] = ()
     """The fork Notes kept and marked with evidence_purged_at."""
+    cancelled: tuple[str, ...] = ()
+    """The jobs it cancelled. One that was running goes on until its runner stops it (JobRunner.cancel)."""
 
 
 Hook = Callable[[PurgeTarget], None]
@@ -210,24 +213,39 @@ def plan(runner: Tx | Snapshot, sha256: str) -> PurgePlan:
     return PurgePlan(sha256, target, forks, tuple(filenames))
 
 
-def _cancel_jobs_on(tx: Tx, target: PurgeTarget) -> None:
-    subjects = [*(f"attachment:{i}" for i in target.attachments), *(f"artifact:{i}" for i in target.artifacts)]
-    waiting = tx.execute(
-        f"SELECT id FROM processing_jobs WHERE state IN ({', '.join('?' for _ in UNFINISHED_JOBS)})"
-        " AND (subject_ref IN (SELECT value FROM json_each(?)) OR EXISTS (SELECT 1 FROM json_each(inputs) WHERE value IN (SELECT value FROM json_each(?))))"
-        " ORDER BY rowid",
-        (*UNFINISHED_JOBS, _listed(subjects), _listed(target.blobs)),
-    ).fetchall()
-    for (job_id,) in waiting:
+def _cancel_jobs_on(tx: Tx, target: PurgeTarget) -> tuple[str, ...]:
+    """Cancel the jobs still to run on what the purge removes, before it removes it: those whose subject goes, and
+    those reading a Blob that goes. An ingest reads the Attachments its Capture has when it runs, not its inputs, so
+    it goes only with the Capture's last Attachment."""
+    emptied = _ids(
+        tx,
+        "SELECT capture_id FROM attachments WHERE id IN (SELECT value FROM json_each(:gone)) AND NOT EXISTS"
+        " (SELECT 1 FROM attachments AS kept WHERE kept.capture_id = attachments.capture_id AND kept.id NOT IN (SELECT value FROM json_each(:gone)))",
+        {"gone": _listed(target.attachments)},
+    )
+    subjects = [*(f"attachment:{i}" for i in target.attachments), *(f"artifact:{i}" for i in target.artifacts), *(f"capture:{i}" for i in emptied)]
+    waiting = [
+        job_id
+        for (job_id,) in tx.execute(
+            "SELECT id FROM processing_jobs WHERE state IN (SELECT value FROM json_each(:unfinished))"
+            " AND (subject_ref IN (SELECT value FROM json_each(:subjects))"
+            " OR (job_type != :ingest AND EXISTS (SELECT 1 FROM json_each(inputs) WHERE value IN (SELECT value FROM json_each(:blobs)))))"
+            " ORDER BY rowid",
+            {"unfinished": json.dumps(UNFINISHED_JOBS), "subjects": _listed(subjects), "ingest": INGEST, "blobs": _listed(target.blobs)},
+        )
+    ]
+    for job_id in waiting:
         jobs.cancel(tx, job_id)
+    return tuple(waiting)
 
 
-def _purge(tx: Tx, sha256: str, chosen: tuple[str, ...]) -> tuple[str, PurgeTarget, tuple[str, ...]]:
+def _purge(tx: Tx, sha256: str, chosen: tuple[str, ...]) -> tuple[str, PurgeTarget, tuple[str, ...], tuple[str, ...]]:
     target, notes = _reach(tx, sha256, chosen)
     not_reached = set(chosen) - {note["id"] for note in notes}
     if not_reached:
         raise PurgeRefused(f"purging {sha256} does not reach the Notes {sorted(not_reached)}; only its fork Notes can go with it")
     now = now_instant()
+    cancelled = _cancel_jobs_on(tx, target)
     for entity, ids in (
         (Entity.RELATION, target.relations), (Entity.SUGGESTION, target.suggestions), (Entity.ARTIFACT, target.artifacts),
         (Entity.ATTACHMENT, target.attachments), (Entity.ITEM, target.items),
@@ -239,11 +257,10 @@ def _purge(tx: Tx, sha256: str, chosen: tuple[str, ...]) -> tuple[str, PurgeTarg
     for note in notes:
         if note["id"] in marked:
             store.write(tx, EntityRef(Entity.ITEM, note["id"]), {**note, "evidence_purged_at": now})
-    _cancel_jobs_on(tx, target)
     tx.execute("DELETE FROM blobs WHERE sha256 IN (SELECT value FROM json_each(?))", (_listed(target.blobs),))
     journal_id = str(uuid.uuid4())
     tx.execute("INSERT INTO purge_journal (id, target, registered_at) VALUES (?, ?, ?)", (journal_id, target.to_json(), now))
-    return journal_id, target, marked
+    return journal_id, target, marked, cancelled
 
 
 async def _finish(db: Database, blobs: BlobStore, hooks: PurgeHooks, journal_id: str, target: PurgeTarget) -> Finish:
@@ -275,9 +292,9 @@ async def purge_blob(db: Database, blobs: BlobStore, sha256: str, *, delete_note
     """Purge sha256 and what was made from it, with the fork Notes in delete_notes; PurgeRefused, writing nothing,
     when the Hub holds nothing of it or delete_notes names a Note it does not reach."""
     chosen = tuple(delete_notes)
-    journal_id, target, marked = await db.write(lambda tx: _purge(tx, sha256, chosen))
+    journal_id, target, marked, cancelled = await db.write(lambda tx: _purge(tx, sha256, chosen))
     finish = await _finish(db, blobs, hooks, journal_id, target)
-    return Purged(journal_id, finish.failed_hooks, finish.kept, target, marked)
+    return Purged(journal_id, finish.failed_hooks, finish.kept, target, marked, cancelled)
 
 
 async def finish_unfinished(db: Database, blobs: BlobStore, hooks: PurgeHooks = HOOKS) -> list[Finish]:
