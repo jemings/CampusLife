@@ -186,5 +186,5 @@ uv run campuslife-hub --root D:\CampusLife-restored restore --from E:\CampusLife
 | 로그 `logs\hub.log` | 지금 파일과 이전 파일 5개(`hub.log.1`…`.5`), 각 5 MiB, 최대 30 MiB. 비밀 값과 강의 본문은 가림(E19) |
 | `staging\`의 쓰다 만 파일 | 다음 기동 때 지움 |
 | 판별·추출 결과(identify·extraction Artifact, Blob마다의 판별 형식) | 무기한. 원본을 purge하면 함께 지움. 추출기 버전이나 params가 바뀌어 새로 추출해도 옛 Artifact는 남음 |
-| 끝난 처리 job(`processing_jobs`) | 무기한. 입력 Blob이 purge·정리로 없어지면 job 행은 이력으로 남고 `job_key`만 `released:<id>`로 풀림. 그래서 같은 바이트가 다시 들어오면 판별·추출을 다시 함 |
+| 끝난 처리 job(`processing_jobs`) | 무기한. 입력 Blob이 purge·정리로 없어지면, 그때 끝나 있던 job은 행이 이력으로 남고 `job_key`만 `released:<id>`로 풀림(다시 시도할 수 없음). 그래서 같은 바이트가 다시 들어오면 판별·추출을 다시 함. 그때 아직 대기·실행 중이던 job은 key를 지킴 |
 | `work\<job id>\`(추출 child의 작업 디렉터리) | job이 끝날 때 지움. Hub가 멈춰 남은 것은 다음 기동 때 지움 |
