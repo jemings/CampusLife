@@ -49,4 +49,4 @@ jobs:
         with:
           gradle-version: ${{ steps.toolchain.outputs.gradle }}
           cache-provider: basic
-      - run: gradle --continue --warning-mode all test lint assembleDebug
+      - run: gradle --continue --warning-mode all --no-build-cache test lint assembleDebug
