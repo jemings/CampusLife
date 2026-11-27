@@ -19,6 +19,7 @@ from fastapi.responses import PlainTextResponse
 
 from campuslife_hub import host, jobs, mutations
 from campuslife_hub.core import open_core
+from campuslife_hub.db import Database
 from campuslife_hub.host import HostConfig, PortTaken
 from campuslife_hub.job_runner import JobRegistry, JobRunner
 from campuslife_hub.jobs import JobSpec, JobState, Pipeline, Succeeded
@@ -112,6 +113,24 @@ async def test_a_port_another_program_holds_refuses_to_serve_and_the_port_an_ear
     finally:
         taken.close()
     assert not left.exists()
+
+
+async def test_the_port_an_earlier_hub_left_is_gone_as_soon_as_the_lock_is_taken(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    async with open_core(root, create=True, sync_roots=[]):
+        pass
+    (root / "admin.port").write_text("9\n")
+    opened, left = Database.open, []
+
+    async def opening(layout, **options):
+        left.append(layout.admin_port.exists())
+        return await opened(layout, **options)
+
+    monkeypatch.setattr(Database, "open", staticmethod(opening))
+    async with open_core(root, create=False, sync_roots=[]):
+        pass
+
+    assert left == [False]
 
 
 async def test_a_runner_that_ends_with_an_error_is_logged_counted_and_started_again(tmp_path, monkeypatch, caplog):

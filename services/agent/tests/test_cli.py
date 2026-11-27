@@ -21,6 +21,7 @@ from campuslife_hub import admin_client, admin_token
 from campuslife_hub.admin_auth import hub_proof
 from campuslife_hub.cli import main
 from campuslife_hub.core import open_core
+from campuslife_hub.data_root import Layout
 from campuslife_hub.lock import HubLock
 
 
@@ -540,6 +541,24 @@ def test_a_program_that_relays_to_the_hub_from_the_port_admin_port_names_gets_no
         if process.poll() is None:
             process.kill()
         process.wait()
+
+
+def test_a_hub_that_takes_the_lock_the_moment_the_cli_lets_it_go_keeps_the_port_it_leaves(tmp_path, monkeypatch):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    (root / "admin.port").write_text("9\n")
+    release = HubLock.release
+
+    def and_a_hub_takes_it(lock):
+        release(lock)
+        (root / "admin.port").write_text("8731\n")
+
+    monkeypatch.setattr(HubLock, "release", and_a_hub_takes_it)
+
+    with pytest.raises(admin_client.HubNotServing):
+        admin_client.call(Layout(root), "GET", "/api/status")
+
+    assert (root / "admin.port").read_text() == "8731\n"
 
 
 def test_serve_refuses_an_admin_token_file_that_holds_no_token(tmp_path, capsys):
