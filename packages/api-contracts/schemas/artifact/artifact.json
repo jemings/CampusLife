@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/artifact/artifact.json",
   "title": "Artifact",
-  "description": "An immutable derived result (D9): a transcript, OCR text, summary, rendition or overlay. Rerunning a job makes a new Artifact; the Hub owns which one is current per (subject_ref, artifact_type). It can be rerun from the recorded inputs, but the result may differ, so it is backed up. The body is the content Blob: a text body (extraction; #8's types later) is JSON in the artifact/body envelope, narrowed by its type's body schema, and a rendition's is the rendered PDF itself, with no envelope; artifact_type, subject_ref (blob:<original>) and pipeline_version say what it renders. Its effective cloud_policy is min of its inputs, computed at each provider call and not stored (D8). The Hub writes every column. Open: clients ignore members they do not know.",
+  "description": "An immutable derived result (D9): a transcript, OCR text, summary, rendition, overlay or web snapshot. Rerunning a job makes a new Artifact; the Hub owns which one is current per (subject_ref, artifact_type). It can be rerun from the recorded inputs, but the result may differ, so it is backed up. The body is the content Blob: a text body (extraction; #8's types later) is JSON in the artifact/body envelope, narrowed by its type's body schema, and a rendition's is the rendered PDF itself, with no envelope; artifact_type, subject_ref (blob:<original>) and pipeline_version say what it renders. A web_snapshot is the page the Hub fetched from its subject Capture's url, the response body as received and no envelope either; it is not the Attachment role web_snapshot (a copy a client uploaded) nor the Locator kind (a place in such a Blob). Its effective cloud_policy is min of its inputs, computed at each provider call and not stored (D8). The Hub writes every column. Open: clients ignore members they do not know.",
   "type": "object",
   "required": ["id", "artifact_type", "subject_ref", "job_key", "pipeline_version", "input_hashes", "content_blob", "created_at"],
   "properties": {
@@ -11,7 +11,7 @@
       "description": "Known types are the examples; a newer Hub may send others, which a client keeps but does not interpret.",
       "type": "string",
       "pattern": "^[a-z][a-z_]*$",
-      "examples": ["transcript", "ocr", "summary", "rendition", "overlay", "identify", "extraction"],
+      "examples": ["transcript", "ocr", "summary", "rendition", "overlay", "identify", "extraction", "web_snapshot"],
       "x-open": true,
       "x-owner": "hub"
     },
@@ -22,16 +22,31 @@
     "prompt_version": { "description": "The prompt's version; absent for a job without a prompt.", "$ref": "#/$defs/name", "x-owner": "hub" },
     "pipeline_version": { "$ref": "#/$defs/name", "x-owner": "hub" },
     "input_hashes": {
-      "description": "SHA-256 of every input: Blobs, and other Artifacts by their content Blob.",
+      "description": "SHA-256 of every input: Blobs, and other Artifacts by their content Blob. Empty for a job that reads none, such as a web_snapshot fetch, whose input is its subject Capture's url.",
       "type": "array",
-      "minItems": 1,
       "uniqueItems": true,
       "items": { "$ref": "../common/sha256.json" },
       "x-owner": "hub"
     },
-    "content_blob": { "description": "The Artifact's body: for extraction, JSON in artifact/extraction, its bytes canonical_json(body); for a rendition, the rendered PDF Blob itself, the Blob annotations are pinned to (D12).", "$ref": "../common/sha256.json", "x-owner": "hub" },
-    "created_at": { "$ref": "../common/instant.json", "x-owner": "hub" }
+    "content_blob": { "description": "The Artifact's body: for extraction, JSON in artifact/extraction, its bytes canonical_json(body); for a rendition, the rendered PDF Blob itself, the Blob annotations are pinned to (D12); for a web_snapshot, the response body bytes as received, the Blob a web_snapshot Locator anchors (D13).", "$ref": "../common/sha256.json", "x-owner": "hub" },
+    "created_at": { "description": "When the job recorded it; for a web_snapshot, when the page was fetched.", "$ref": "../common/instant.json", "x-owner": "hub" },
+    "fetched": {
+      "description": "What a web_snapshot fetch ended at: the URL after redirects and the response's media type without parameters. Only a 200 response is kept, so there is no status code. The Capture keeps the url the user gave.",
+      "type": "object",
+      "required": ["final_url", "media_type"],
+      "properties": {
+        "final_url": { "$ref": "../capture/capture.json#/properties/url" },
+        "media_type": { "$ref": "../capture/attachment.json#/$defs/mime" }
+      },
+      "x-owner": "hub"
+    }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "artifact_type": { "const": "web_snapshot" } }, "required": ["artifact_type"] },
+      "then": { "required": ["fetched"] }
+    }
+  ],
   "$defs": {
     "name": { "type": "string", "minLength": 1, "maxLength": 200 }
   }
