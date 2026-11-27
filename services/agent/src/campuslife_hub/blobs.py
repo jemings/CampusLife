@@ -27,7 +27,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import ClassVar
+from typing import BinaryIO, ClassVar
 
 from campuslife_contracts import validate
 
@@ -386,6 +386,22 @@ class BlobStore:
 
     async def put_file(self, src: Path) -> StoredBlob:
         return await self._store_and_register([Path(src)])
+
+    async def open_blob(self, sha256: str) -> tuple[StoredBlob, BinaryIO] | None:
+        """The stored Blob and a handle on its bytes; None when the Hub does not store it or its file is gone.
+
+        The handle reads to the end whatever removes the Blob meanwhile. On Windows it also keeps a collection or
+        purge from moving the file out until it closes, so they leave the file for their next try.
+        """
+        _refuse_outside_contract("common/sha256", sha256)
+        stored = await self._db.read(lambda snap: _stored_blob(snap, sha256))
+        if stored is None:
+            return None
+        try:
+            handle = await asyncio.to_thread(open, self.path_of(sha256), "rb")
+        except FileNotFoundError:
+            return None
+        return stored, handle
 
     def _session_dir(self, session_id: str) -> Path:
         return self._uploads_dir / session_id
