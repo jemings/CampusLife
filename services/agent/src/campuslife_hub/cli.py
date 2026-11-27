@@ -79,7 +79,7 @@ def _parser() -> argparse.ArgumentParser:
     importing.add_argument("--policy", choices=["blocked", "local_only", "cloud_allowed"], help="cloud_policy for every file")
     backing_up = commands.add_parser("backup", help="write a backup generation to a folder on a backup drive")
     backing_up.add_argument("--to", type=Path, required=True, dest="target", metavar="FOLDER", help="the folder on the backup drive")
-    backing_up.add_argument("--keep", type=_at_least_one, help=f"generations to keep (default: the serving Hub's setting, else {DEFAULT_KEEP})")
+    backing_up.add_argument("--keep", type=_at_least_one, help="generations to keep (default: the serving Hub's setting; with no Hub serving, every one)")
     restoring = commands.add_parser("restore", help="restore a backup generation into the empty data root --root names")
     restoring.add_argument("--from", type=Path, required=True, dest="source", metavar="FOLDER", help="the folder on the backup drive")
     restoring.add_argument("--generation", help="the generation to restore (default: the newest finished one)")
@@ -128,19 +128,25 @@ async def _import(root: Path, files: list[Path], links: list[str], policy: str |
 
 
 async def _backup(root: Path, target: Path, keep: int | None) -> None:
+    """With no Hub serving, the generations to keep are known only from --keep: the data root does not hold the
+    serving Hub's setting, so without --keep no generation is removed."""
     try:
         async with open_core(root, create=False) as core:
-            made = await backup.back_up(core, target, keep=keep or DEFAULT_KEEP)
+            made = await backup.back_up(core, target, keep=keep)
         report = {"generation": made.name, "target": str(made.target), "blobs": made.blobs, "copied": made.copied,
                   "missing": list(made.missing), "pruned": list(made.pruned)}
+        skipped_prune = keep is None
     except AlreadyRunning as held:
         body = {"target": os.path.abspath(target), **({"keep": keep} if keep else {})}
         report = _through_the_holder(root, held, "POST", "/api/backup", body)
+        skipped_prune = False
     print(f"generation {report['generation']}")
     print(f"target {report['target']}")
     print(f"blobs {report['blobs']} copied {report['copied']}")
     for name in report["pruned"]:
         print(f"removed generation {name}")
+    if skipped_prune:
+        print("prune skipped: no Hub serves this data root to say how many generations to keep; pass --keep N to keep only the newest N")
     if report["missing"]:
         raise CommandFailed(f"{len(report['missing'])} Blobs were missing from the Hub and are not in the backup; run `campuslife-hub fsck`")
 

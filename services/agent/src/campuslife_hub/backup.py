@@ -304,11 +304,11 @@ def _claim(target: Path, hub_id: str) -> None:
     _write_json(marker, {"format": FORMAT, "hub_id": hub_id})
 
 
-async def back_up(core: Core, target: Path, *, keep: int = DEFAULT_KEEP, clock: Callable[[], datetime] = _now) -> Generation:
-    """Write a new generation of the Hub to `target` and keep the newest `keep`; BackupRefused before writing anything
-    when keep is below one, when `target` and the data root lie one in the other, or when `target` is not this Hub's
-    backup folder and cannot become one (_claim)."""
-    if keep < 1:
+async def back_up(core: Core, target: Path, *, keep: int | None = DEFAULT_KEEP, clock: Callable[[], datetime] = _now) -> Generation:
+    """Write a new generation of the Hub to `target` and keep the newest `keep`, or every generation when keep is
+    None. BackupRefused before writing anything when keep is below one, when `target` and the data root lie one in
+    the other, or when `target` is not this Hub's backup folder and cannot become one (_claim)."""
+    if keep is not None and keep < 1:
         raise BackupRefused("keep at least one generation")
     target, root = Path(target).resolve(), core.layout.root.resolve()
     if target.is_relative_to(root):
@@ -341,7 +341,7 @@ async def back_up(core: Core, target: Path, *, keep: int = DEFAULT_KEEP, clock: 
         }
         await asyncio.to_thread(_write_json, directory / MANIFEST, manifest)
         await core.db.write(lambda tx: _record(tx, name, target, finished_at, [sha256 for sha256, _ in held], copied))
-        pruned = await asyncio.to_thread(_prune, target, keep)
+        pruned = () if keep is None else await asyncio.to_thread(_prune, target, keep)
     return Generation(name, target, instant(started), finished_at, len(held), copied, missing, pruned)
 
 
