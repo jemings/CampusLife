@@ -73,7 +73,10 @@ def _checked(schema_id: str, body: dict, limits: Limits) -> bytes:
     violations = validate(schema_id, body)
     if violations:
         raise Rejected(f"the body breaks {schema_id}: {sorted(map(str, violations))[:5]}")
-    stored = canonical_json(body)
+    try:
+        stored = canonical_json(body)
+    except UnicodeEncodeError as error:
+        raise Rejected(f"the body holds what is not text, a lone surrogate: {error}") from None
     if len(stored) > limits.body_max_bytes:
         raise TooLarge(f"the body takes {len(stored)} bytes, more than {limits.body_max_bytes}")
     return stored
