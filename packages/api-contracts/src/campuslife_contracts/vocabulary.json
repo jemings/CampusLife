@@ -100,6 +100,14 @@
       "description": "Rule conflict_self: a Suggestion's conflicts_with does not hold its own id.",
       "const": true
     },
+    "x-block-id": {
+      "description": "Rule block_id: each block's id is the lowercase hex sha256 of canonical_json([blob, extractor.id, extractor.version, ordinal]), the ordinal being the block's index in blocks (D13).",
+      "const": true
+    },
+    "x-block-anchor": {
+      "description": "Rule block_anchor: every ref of a block lies in the body's blob: a ref with a blob names it, and none has a capture.",
+      "const": true
+    },
     "x-set-targets": {
       "description": "Per entity, the entity schema a patch's set writes and, if it has kind fields, the fields schemas a fields.<key> may belong to. Read by rules owner and set_type.",
       "type": "object",
@@ -142,7 +150,7 @@
   },
   "propertyNames": {
     "if": { "pattern": "^x-" },
-    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self", "x-locator-anchor", "x-a1-order", "x-conflict-not-self", "x-batch-order", "x-original-id", "x-feed-order", "x-chunk-index", "x-int64-text", "x-byte-range", "x-open", "x-set-targets", "x-set-edits", "x-set-owner", "x-set-type"] }
+    "then": { "enum": ["x-owner", "x-text", "x-box-extent", "x-calendar-date", "x-tz-exists", "x-range-order", "x-raw-form", "x-relation-id", "x-relation-not-self", "x-locator-anchor", "x-a1-order", "x-conflict-not-self", "x-batch-order", "x-original-id", "x-feed-order", "x-chunk-index", "x-int64-text", "x-byte-range", "x-open", "x-block-id", "x-block-anchor", "x-set-targets", "x-set-edits", "x-set-owner", "x-set-type"] }
   },
   "x-discriminated-union": true
 }

@@ -26,6 +26,8 @@ class Rule(enum.StrEnum):
     ORIGINAL_ID = "original_id"
     SET_TYPE = "set_type"
     TZ_EXISTS = "tz_exists"
+    BLOCK_ID = "block_id"
+    BLOCK_ANCHOR = "block_anchor"
 
 
 @dataclass(frozen=True)
