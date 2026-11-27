@@ -55,6 +55,13 @@ def exit_silently(path: Path, params: Mapping, limits: Limits) -> Extracted:
     os._exit(0)
 
 
+def lone_surrogate(path: Path, params: Mapping, limits: Limits) -> Extracted:
+    """A result whose text is a lone surrogate, written as JSON escapes the child itself would not print, then exit."""
+    sys.stdout.buffer.write(b'{"status": "ok", "blocks": [{"block_type": "paragraph", "text": "\\ud800", "refs": [{"kind": "document"}]}]}')
+    sys.stdout.buffer.flush()
+    os._exit(0)
+
+
 def refuse(path: Path, params: Mapping, limits: Limits) -> Extracted:
     raise Refused(Status(params["status"]), "the fake extractor refused")
 

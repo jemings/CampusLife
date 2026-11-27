@@ -22,7 +22,7 @@ __all__ = ["blob_store", "device"]
 WINDOWS = sys.platform == "win32"
 NOTES = b"lecture notes\n\nsecond paragraph"
 FAKES = tuple(
-    fake(name, {}) for name in ("echo", "crash", "hang", "hog", "flood", "garbage", "exit_silently", "refuse", "modules", "plant", "zip_walk")
+    fake(name, {}) for name in ("echo", "crash", "hang", "hog", "flood", "garbage", "exit_silently", "lone_surrogate", "refuse", "modules", "plant", "zip_walk")
 )
 DOCUMENT = [{"kind": "document"}]
 
@@ -142,6 +142,16 @@ async def test_a_result_that_breaks_the_contract_is_refused_and_nothing_is_recor
 
     assert (job.state, job.outcome_code) == (JobState.FAILED, None)
     assert "breaks the contract" in job.error and error in job.error
+    assert await hub.artifacts() == []
+
+
+async def test_a_result_holding_a_lone_surrogate_is_refused_once_with_its_reason(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path, *FAKES)
+
+    job = await ran(hub, "lone_surrogate")
+
+    assert (job.state, job.outcome_code, job.attempts) == (JobState.FAILED, None, 1)
+    assert "breaks the contract" in job.error and "lone surrogate" in job.error
     assert await hub.artifacts() == []
 
 
