@@ -158,7 +158,7 @@ data class NoteFields(
 @Serializable
 data class EventFields(
     val category: String? = null,
-    val place: String? = null,
+    @SerialName("place_text") val placeText: String? = null,
     @SerialName("organization_id") val organizationId: String? = null,
     val url: String? = null,
 ) : ItemFields
