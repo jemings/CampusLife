@@ -34,9 +34,7 @@ import webbrowser
 from datetime import timedelta
 from pathlib import Path
 
-from starlette.types import ASGIApp
-
-from . import admin_client, autostart, backup, fsck, host, sync, tailscale_check
+from . import admin_client, autostart, backup, devices, fsck, host, sync_devices, tailscale_check
 from .admin_client import AdminRefused, HubDidNotAnswer, HubNotServing, NotTheHub
 from .admin_token import AdminTokenUnusable
 from .autostart import AutostartFailed, LogonTask
@@ -44,7 +42,8 @@ from .backup import DEFAULT_KEEP, DEFAULT_WARN_AFTER, BackupRefused, BackupSetti
 from .core import UnsafeDataRoot, open_core, open_core_readonly, safe_data_root
 from .data_root import Layout, default_data_root
 from .db import NotInitialized, SchemaMismatch, StartupRefused
-from .host import DEFAULT_ADMIN_PORT, DEFAULT_SYNC_PORT, HostConfig, Hosted, PortTaken
+from .devices import DEFAULT_DORMANT_AFTER, DeviceSettings
+from .host import DEFAULT_ADMIN_PORT, DEFAULT_SYNC_PORT, HostConfig, PortTaken
 from .listing import list_captures
 from .local_import import UnimportableFile, import_files
 from .lock import AlreadyRunning
@@ -84,6 +83,13 @@ def _port(text: str) -> int:
     return _whole_number(text, 0, 65535, "a port (0 to 65535)")
 
 
+def _hub_url(text: str) -> str:
+    """serve --public-url and tailscale-check --public-url alike, so both mean the hub_url pairing hands out."""
+    if not devices.is_hub_url(text):
+        raise argparse.ArgumentTypeError(f"{text!r} is not a hub_url: https://<name>.<tailnet>.ts.net, lowercase, with no path or trailing /")
+    return text
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="campuslife-hub", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", type=Path, help=f"data root (default: ${ROOT_ENV}, else the platform default)")
@@ -115,7 +121,9 @@ def _parser() -> argparse.ArgumentParser:
     checking = commands.add_parser("tailscale-check", help="check what tailscale serve exposes and print the hub_url")
     checking.add_argument("--sync-port", type=_port, default=DEFAULT_SYNC_PORT, help=f"the sync listener's port (default {DEFAULT_SYNC_PORT})")
     checking.add_argument("--admin-port", type=_port, default=DEFAULT_ADMIN_PORT, help=f"the admin listener's port (default {DEFAULT_ADMIN_PORT})")
-    checking.add_argument("--public-url", metavar="URL", help="the hub_url serve is given, to compare with the tailnet's name for this machine")
+    checking.add_argument(
+        "--public-url", metavar="URL", type=_hub_url, help="the hub_url serve is given, to compare with the tailnet's name for this machine",
+    )
     return parser
 
 
@@ -136,6 +144,14 @@ def _serve_options(parser: argparse.ArgumentParser, *, defaults: bool) -> argpar
     parser.add_argument(
         "--backup-warn-days", type=_at_least_one, default=DEFAULT_WARN_AFTER.days if defaults else None,
         help=f"warn when the last backup is older than this many days (default {DEFAULT_WARN_AFTER.days})",
+    )
+    parser.add_argument(
+        "--public-url", metavar="URL", type=_hub_url,
+        help="the hub_url a pairing offer hands out, as tailscale-check prints it; without it no device can be added",
+    )
+    parser.add_argument(
+        "--dormant-after-days", type=_at_least_one, default=DEFAULT_DORMANT_AFTER.days if defaults else None,
+        help=f"a device unseen for longer than this many days is dormant until approved (default {DEFAULT_DORMANT_AFTER.days})",
     )
     return parser
 
@@ -260,11 +276,6 @@ async def _ls(root: Path) -> None:
             print(f"    {attachment.blob_sha256[:12]}  {attachment.cloud_policy:<13}  {attachment.original_filename or '-'}")
 
 
-def _sync_app(hosted: Hosted) -> ASGIApp:
-    """The sync app serve runs: until Devices can pair (#19), no bearer token names one."""
-    return sync.create_sync_app(hosted, sync.refuse_every_bearer)
-
-
 def _tailscale_check(arguments: argparse.Namespace) -> None:
     verdict = tailscale_check.check(
         tailscale_check.tailscale, sync_port=arguments.sync_port, admin_port=arguments.admin_port, public_url=arguments.public_url,
@@ -287,6 +298,7 @@ def _logon_task(root: Path, arguments: argparse.Namespace) -> LogonTask:
     options = [(flag, value) for flag, value in (
         ("--admin-port", arguments.admin_port), ("--sync-port", arguments.sync_port),
         ("--backup-keep", arguments.backup_keep), ("--backup-warn-days", arguments.backup_warn_days),
+        ("--public-url", arguments.public_url), ("--dormant-after-days", arguments.dormant_after_days),
     ) if value is not None]
     serve = ["--root", str(layout.root), "serve", *[part for flag, value in options for part in (flag, str(value))]]
     return LogonTask(str(autostart.launcher()), tuple(serve), str(layout.root), autostart.this_user())
@@ -314,8 +326,9 @@ def _run(arguments: argparse.Namespace, root: Path) -> None:
             asyncio.run(_init(root))
         case "serve":
             settings = BackupSettings(keep=arguments.backup_keep, warn_after=timedelta(days=arguments.backup_warn_days))
-            config = HostConfig(admin_port=arguments.admin_port, sync_port=arguments.sync_port, backup=settings)
-            host.run(host.run_hub(root, config, sync_app=_sync_app))
+            device_settings = DeviceSettings(public_url=arguments.public_url, dormant_after=timedelta(days=arguments.dormant_after_days))
+            config = HostConfig(admin_port=arguments.admin_port, sync_port=arguments.sync_port, backup=settings, devices=device_settings)
+            host.run(host.run_hub(root, config, sync_app=sync_devices.sync_app))
         case "open":
             _open(root, not arguments.no_browser)
         case "import":

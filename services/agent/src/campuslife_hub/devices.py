@@ -98,6 +98,12 @@ _TOKEN = json.loads((contract_root() / "schemas" / "device" / "pair_response.jso
 _ONE_LINE = json.loads((contract_root() / "schemas" / "device" / "pair_request.json").read_text(encoding="utf-8"))["$defs"]["one_line"]["pattern"]
 _NOT_ONE_LINE = re.compile("[" + _ONE_LINE.removeprefix("^[^").removesuffix("]*$") + "]")
 """A character the contract's one_line text refuses."""
+_HUB_URL = json.loads((contract_root() / "schemas" / "device" / "pairing_offer.json").read_text(encoding="utf-8"))["properties"]["hub_url"]
+
+
+def is_hub_url(text: str) -> bool:
+    """Whether text is a hub_url a pairing offer may hand out (device/pairing_offer): an https origin with no path."""
+    return len(text) <= _HUB_URL["maxLength"] and re.fullmatch(_HUB_URL["pattern"], text) is not None
 
 
 @dataclass(frozen=True)
