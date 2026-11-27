@@ -238,6 +238,26 @@ async def test_a_planner_that_proposes_a_job_that_cannot_be_stored_keeps_out_onl
     assert await queued(db, "transcribe") == []
 
 
+@pytest.mark.parametrize("gone", ["subject", "input"])
+async def test_a_planned_job_whose_subject_or_input_the_hub_no_longer_holds_is_dropped(db, device, blob_store, tmp_path, gone):
+    registry = handled("extract.text")
+    capture = await committed(db, device, blob_store, tmp_path)
+    [attachment] = capture["attachments"]
+
+    async def plan(view, context):
+        if gone == "subject":
+            return [JobSpec("extract.text", f"attachment:{new_id()}", (attachment["blob_sha256"],)),
+                    JobSpec("extract.text", f"capture:{new_id()}", (attachment["blob_sha256"],), {"n": 2})]
+        return [JobSpec("extract.text", f"attachment:{attachment['id']}", ("e" * 64,))]
+
+    registry.plan("extract", plan)
+    await ran_ingest(db, blob_store, registry)
+
+    assert await queued(db, "extract.text") == []
+    [ingest] = await ingest_of(db, capture)
+    assert ingest.state is JobState.SUCCEEDED
+
+
 async def test_without_planners_the_ingest_succeeds_and_queues_nothing(db, device, blob_store, tmp_path):
     capture = await committed(db, device, blob_store, tmp_path)
 
