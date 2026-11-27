@@ -33,7 +33,7 @@ servers:
     variables:
       hub:
         default: hub.example.invalid
-        description: The Hub's tailnet name, from the pairing QR code.
+        description: The host[:port] of the pairing offer's hub_url (device/pairing_offer).
 security:
   - device: []
 paths:
@@ -443,7 +443,7 @@ components:
     device:
       type: http
       scheme: bearer
-      description: The opaque token from POST /v1/pair or POST /v1/devices/me/token (device/pair_response token). It does not expire; revoke ends it, after a reissue the new token's first use ends the old one, and another reissue ends a new token not yet used (D6).
+      description: The opaque token from POST /v1/pair or POST /v1/devices/me/token (device/pair_response token). It does not expire; revoke ends it, after a reissue the new token's first use ends the old one, and another reissue ends a new token not yet used (D6, D23).
   parameters:
     Contract:
       name: CampusLife-Contract
