@@ -38,11 +38,22 @@ class TransferTableTest {
     }
 
     @Test
-    fun `nothing takes a row out of settled or rejected`() {
-        for (event in events) {
+    fun `only a changed epoch takes a row out of settled or rejected`() {
+        for (event in events - OutboxEvent.EPOCH_CHANGED) {
             assertEquals("$event", SETTLED, SETTLED.after(event))
             assertEquals("$event", REJECTED, REJECTED.after(event))
         }
+    }
+
+    @Test
+    fun `a changed epoch sends every answered Mutation again and leaves the unsent as they are`() {
+        for (state in listOf(ACKED, PULLING, SETTLED, REJECTED)) assertEquals("$state", PENDING, state.after(OutboxEvent.EPOCH_CHANGED))
+        for (state in listOf(HELD, PENDING)) assertEquals("$state", state, state.after(OutboxEvent.EPOCH_CHANGED))
+    }
+
+    @Test
+    fun `a Mutation the Hub cannot read in any batch is set aside with the rejected`() {
+        assertEquals(REJECTED, PENDING.after(OutboxEvent.UNSENDABLE))
     }
 
     @Test
@@ -54,6 +65,7 @@ class TransferTableTest {
             OutboxEvent.REFUSED,
             OutboxEvent.BLOBS_MISSING,
             OutboxEvent.BLOBS_GONE,
+            OutboxEvent.UNSENDABLE,
         )
         for (state in outboxStates - PENDING) for (event in answers) assertEquals("$state $event", state, state.after(event))
     }
