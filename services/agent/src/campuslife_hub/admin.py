@@ -416,7 +416,7 @@ async def purge_form(request: Request, blob: str) -> Response:
     target = purged.target
     left = (
         '<p class="warning">Part of the clean-up is left for the next maintenance: '
-        + escape("; ".join([*(f"hook {name} failed" for name in purged.failed_hooks), *(f"{kept.path}: {kept.reason}" for kept in purged.kept)]))
+        + escape("; ".join([*(f"hook {name} failed" for name in purged.failed_hooks), *(f"{kept.path}: {kept.reason}" for kept in purged.kept), *([purge.WAL_KEPT_REASON] if purged.wal_kept else [])]))
         + "</p>"
         if not purged.finished
         else ""
