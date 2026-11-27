@@ -23,9 +23,9 @@ CampusLife는 이를 별도 기능으로 분리하지 않습니다. 녹음·사�
 
 ### Windows
 1. Downloads, 브라우저 다운로드, USB 등에서 파일/폴더를 Companion Inbox에 드래그앤드롭합니다.
-2. 과목·강의 세션을 고르면 Blob 저장 + `capture.commit`(device=`hub`)을 모바일과 같은 함수로 호출합니다.
-3. commit 트랜잭션에서 추출 작업이 큐잉됩니다.
-4. 자료별 추출 진행 상태와 실패 이유를 확인합니다.
+2. 과목·강의 세션을 고르면 Blob 저장 + `capture.commit`(device=`hub`)을 모바일과 같은 함수로 호출합니다. 로컬 UI의 가져오기 폼은 LectureSession을 고르고, CLI는 `import --link item:<id>`를 씁니다. 둘 다 `/api/import`와 같은 `about` links를 넘겨 Attachment마다 그 LectureSession으로 가는 Relation이 생깁니다.
+3. commit 트랜잭션에서는 `capture.ingest` 하나만 큐잉되고, 그 job이 판별(identify)과 추출 job을 계획합니다(D26).
+4. 로컬 UI의 Capture 화면에서 파일마다 판별 형식, 필요한 job의 상태와 `outcome_code`, 실패 이유를 확인합니다. 이름·신고 MIME이 바이트와 어긋나거나 읽는 추출기가 없으면 그것도 보여 줍니다. 다시 처리하려면 Capture마다 또는 전체의 "Reprocess"를 누르거나 `campuslife-hub reprocess --capture <id> | --all`을 씁니다(§9).
 
 ## 3. 우선 지원 포맷 및 분석 방법
 
@@ -67,7 +67,7 @@ CampusLife는 이를 별도 기능으로 분리하지 않습니다. 녹음·사�
 원본 Blob은 읽기 전용이며 추출/변환 결과는 Artifact Blob으로 따로 저장합니다.
 
 ### ContentBlock
-Extractor는 여러 포맷을 공통 구조로 정규화합니다. ContentBlock은 `id = hash(blob_sha256, extractor_id, extractor_version, ordinal)`(결정적), blob_sha256, block_type, ordinal, text 또는 structured payload, locator를 가집니다. 같은 Blob은 한 번만 추출합니다.
+Extractor는 여러 포맷을 공통 구조로 정규화합니다. ContentBlock은 테이블이 아니라 extraction Artifact 본문(`artifact/extraction`)의 block입니다(D26). block은 `id = sha256(canonical_json([blob, extractor.id, extractor.version, extractor.params, ordinal]))`(결정적), block_type, text 또는 structured payload, refs(Locator)를 가지고, 본문 안의 순서가 ordinal입니다. 같은 Blob을 같은 추출기·버전·params로 읽는 job은 하나뿐입니다. 이름이 달라 params가 다르면(같은 바이트를 Markdown과 plain text로 읽음) extraction Artifact가 둘입니다.
 
 locator는 공통 Locator 스키마(D13)를 씁니다: `pdf_page`(page, 선택 box), `slide`(slide, shape), `doc_path`(DOCX/HWP/HWPX), `sheet_range`(XLSX/CSV), `media_time`(오디오/비디오/자막), `image_region`, `web_snapshot`, `document`.
 
@@ -75,9 +75,11 @@ locator는 공통 Locator 스키마(D13)를 씁니다: `pdf_page`(page, 선택 b
 
 FileExtractor 계약을 정의하고 형식별 adapter를 등록합니다. 각 extractor는 읽기 전용 원본 경로를 입력받아 document metadata, ordered ContentBlock 목록, warnings, extraction state, tool/version을 반환합니다.
 
-선택 출력으로 **PDF 렌디션**을 만들 수 있습니다. iPad·Android 뷰어는 PDF 렌더링만 구현하고, PPT/PPTX/DOCX/HWP 등은 Hub가 만든 렌디션 Blob(`Relation(rendition_of)`)을 보여줍니다. 렌디션은 원본이 아니며, AI 근거 Locator는 원본 형식의 위치(slide, doc_path 등)를 가리킵니다. 필기는 렌디션 Blob에 고정되고, 레이어가 생긴 렌디션은 pin되어 재생성·정리 대상에서 빠집니다(D12).
+변환기(descriptor `kind: render`, job type `render.<id>`)는 **PDF 렌디션**을 만듭니다. 변환기는 작업 디렉터리에 PDF를 쓰고, Hub는 그 파일을 그대로 rendition Artifact(`subject_ref: blob:<원본>`)의 `content_blob`으로 저장합니다. Relation은 만들지 않습니다(D26). iPad·Android 뷰어는 PDF 렌더링만 구현하고, PPT/PPTX/DOCX/HWP 등은 Hub가 만든 렌디션 Blob을 보여줍니다. 변환기 버전이 바뀌어 다시 만들어도 옛 렌디션은 남고, 지우는 것은 원본의 purge뿐입니다. 렌디션은 원본이 아니며, AI 근거 Locator는 원본 형식의 위치(slide, doc_path 등)를 가리킵니다. 필기는 렌디션 Blob에 고정되고, 레이어가 생긴 렌디션은 pin되어 재생성·정리 대상에서 빠집니다(D12).
 
-extractor는 형식 판별 결과(magic bytes + MIME)로 선택합니다. 확장자만으로 선택하지 않습니다. extractor는 subprocess로 실행하고 timeout·Windows Job Object 메모리 상한을 두며, 결과는 stdout JSON으로 받습니다. parser 크래시나 무한 루프가 Hub 본체를 멈추지 않습니다(D16).
+extractor는 형식 판별 결과(magic bytes + MIME)로 선택합니다. 확장자만으로 선택하지 않습니다. identify job이 child에서 Blob 바이트만으로 형식 계열을 판별하고, Attachment마다 확장자·신고 MIME이 그 계열 안에서만 좁힙니다(`refine`). extractor는 subprocess로 실행하고 timeout·Windows Job Object 메모리 상한을 두며, 결과는 stdout JSON으로 받습니다. parser 크래시나 무한 루프가 Hub 본체를 멈추지 않습니다(D16).
+
+추출기·변환기 하나는 `campuslife_hub.extract`의 함수와 descriptor(`Extractor(id, version, entry, accepts, kind)`)이고, `extractors.ALL`에 넣으면 등록됩니다. child 실행, 상한, 결과 매핑, Locator 앵커와 block id, 기록은 프레임워크가 맡습니다. ZIP 계열은 `extract/safe_zip.py`로만 엽니다.
 
 추천 초기 구현 후보(실제 도입 전에 라이선스/유지보수/Windows 호환성 확인):
 - PDF: PyMuPDF 또는 pypdf, 스캔 페이지 OCR은 별도 adapter
@@ -161,6 +163,10 @@ locator를 추출할 수 없으면 파일명/문서 단위 근거로 표시하�
 
 한 강의 세션의 파일 일부가 실패해도 성공한 파일의 분석은 진행합니다. 화면의 요약 상태는 Hub가 job을 집계한 `processing_summary`이며 따로 저장하지 않습니다.
 
+Windows 로컬 UI는 파일마다 그 파일에 필요한 job(Blob의 identify, 판별 결과로 고른 extract·render)의 최근 상태와 `outcome_code`, 실패 이유를 보여 줍니다. 이름과 바이트의 불일치, "읽는 추출기 없음"은 저장하지 않고 화면을 그릴 때 계산합니다.
+
+**재처리:** `reprocess`는 `capture.ingest`를 nonce와 함께 다시 넣고, 그 nonce가 identify·extract·render job params에 들어가 다시 돕니다. 원본 Blob은 바꾸지 않고, 같은 추출기 버전이면 block id가 같습니다. 추출기를 올려도 자동으로 다시 처리하지 않으므로, 새 버전으로 읽히고 싶은 Capture는 재처리합니다(D26).
+
 ## 10. 보안 및 리소스 보호
 
 - 확장자만 믿지 않고 magic bytes/MIME을 확인합니다.
@@ -168,6 +174,23 @@ locator를 추출할 수 없으면 파일명/문서 단위 근거로 표시하�
 - 매크로, 스크립트, 외부 링크, embedded object를 자동 실행하지 않습니다.
 - ZIP 추출은 파일 수/압축 해제 크기/중첩 깊이/경로를 제한합니다.
 - parser는 timeout, 메모리 및 페이지 수 제한을 가집니다.
+- 상한은 표 하나(`services/agent/src/campuslife_hub/extract/limits.py`의 `Limits`)에 있습니다. 표는 child 요청에 실리고, 해시가 identify·extract·render pipeline 버전(`<id>-<version>+L<해시 8자>`)에 들어가므로 값을 바꾸면 새 job이 됩니다. 넘으면 job은 `outcome_code: unsafe_input`으로 끝나고 다시 시도하지 않습니다.
+
+| 상한 | 기본값 | 출처 |
+|---|---|---|
+| `timeout_s` (child 한 번의 실행 시간) | 120 s | 측정하지 않음. 형식별 추출기(#6·#7·#13)와 변환기(O4)가 수백 MiB 강의 PDF·슬라이드에 필요한 여유로 둠 |
+| `mem_bytes` (child 메모리: POSIX 주소 공간, Windows commit) | 1 GiB | 위와 같음 |
+| `input_max_bytes` (extract·render가 통째로 읽는 Blob) | 256 MiB | 위와 같음. identify는 앞부분만 읽으므로 이 상한을 받지 않음 |
+| `rendition_max_bytes` (변환기가 쓴 PDF) | 512 MiB | 위와 같음 |
+| `stdout_max_bytes` (child 출력) | 64 MiB | text 추출기 측정: `max_blocks`에서 멈춘 출력이 약 10 MiB, 긴 블록 몇 개짜리 한국어 텍스트가 `max_text_chars`에서 멈추면 약 24 MiB |
+| `max_blocks` (본문 하나의 블록) | 20,000 | Hub가 본문을 만들고 검증하는 데 블록당 약 0.78 ms(20,000이면 약 16 s, handler timeout 안). 300쪽 교재 하나(약 3,000블록)를 자르지 않음. 50,000(약 38 s)은 timeout 여유가 적음 |
+| `max_block_text_chars` / `max_text_chars` | 200,000 / 8,000,000자 | 위 출력·본문 상한 안에 들도록 정함 |
+| `body_max_bytes` (Hub가 저장하는 본문, canonical JSON) | 64 MiB | `max_blocks`에서 멈춘 본문이 약 12.6 MiB |
+| `zip_max_members` / `zip_max_total_bytes` / `zip_max_member_bytes` | 10,000 / 1 GiB / 256 MiB | 멤버 10,000개 ZIP의 identify가 0.05 s·26 MiB |
+| `zip_max_ratio` (멤버 하나의 압축 해제 비율) | 200 | 0으로 채운 64 MiB의 deflate 비율 1,029(zip bomb)와, 한 문단을 140번 반복한 1 MiB Markdown의 비율 3.8 사이 |
+| `zip_max_depth` (ZIP 안의 ZIP) | 2 | 바깥 ZIP과 그 안 한 단계 |
+
+측정은 모두 로컬(Linux, CPython 3.12, 2026-11-28)에서 시험이 만든 합성 입력(한국어·영어 Markdown, ZIP)으로 했고, 사용자 파일이나 운영 데이터가 아닙니다. 수치와 측정 방법은 `limits.py` docstring에 있습니다.
 - 손상/암호화/DRM 자료는 우회하지 않습니다.
 - 외부 AI 전송은 `ProviderGateway` 하나를 거치며, 입력의 가장 엄격한 cloud policy(D8)를 그 자리에서 확인합니다.
 - `confirm_each_send`를 켜면 보낼 내용과 예상 비용을 확인한 뒤 전송하고, 모든 전송은 audit_log에 남습니다.
