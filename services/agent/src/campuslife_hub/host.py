@@ -175,9 +175,12 @@ async def _maintain(core: Core, stopping: asyncio.Event, every: timedelta, clock
     while not await _stopped_within(stopping, every):
         now = clock()
         try:
+            await devices.mark_dormant(core, now=now, dormant_after=dormant_after)
+        except Exception:
+            log.exception("making unseen devices dormant failed; it runs again in %s", every)
+        try:
             kept = await core.blobs.expire_sessions(now) + await core.blobs.collect_garbage(now)
             await forget_old_results(core.db, now)
-            await devices.mark_dormant(core, now=now, dormant_after=dormant_after)
             for finish in await purge.finish_unfinished(core.db, core.blobs, core.purge_hooks):
                 kept += finish.kept
         except Exception:
