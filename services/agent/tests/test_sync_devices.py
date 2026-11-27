@@ -18,7 +18,7 @@ from campuslife_hub.audit import AuditEvent
 from campuslife_hub.host import Hosted
 
 
-STATUS = {"app_version": "0.1.0", "pending_upload_count": 0, "pending_mutation_count": 0, "open_conflict_count": 0}
+STATUS = {"app_version": "0.1.0", "pending_upload_count": 0, "pending_mutation_count": 0, "rejected_mutation_count": 0}
 
 
 def pair_body(offered, **fields):
