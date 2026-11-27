@@ -3,14 +3,16 @@
 It does nothing else there. Its handler runs later, outside that transaction, and asks every
 registered planner what to run for the Capture, so planners, which are other code, cannot
 undo an ACK by failing. A purge can remove an Attachment or a Blob while the planners run, so
-the jobs they propose are queued only if the Hub still holds their subject and inputs.
+the jobs they propose are queued only if the Hub still holds their subject and inputs; the
+others are dropped with a warning. A subject the Hub never held is the planner's mistake, not
+a purge's, and fails the planning.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -55,20 +57,29 @@ def _view(snap: Snapshot, capture_id: str) -> CaptureView | None:
     return CaptureView(capture, tuple(json.loads(data) for (data,) in rows))
 
 
-def _enqueue_held(tx: Tx, registry: JobRegistry, specs: Iterable[JobSpec]) -> list[JobSpec]:
-    """Queue each spec whose subject and inputs the Hub holds; the ones it does not queue."""
+def _enqueue_held(tx: Tx, registry: JobRegistry, planned: Sequence[tuple[str, JobSpec]]) -> tuple[list[JobSpec], list[str]]:
+    """Queue each planned spec whose subject and inputs the Hub holds. A planner that proposed a job on a subject the
+    Hub never held has none of its specs queued. Returns the specs dropped for what a purge removed, and why each
+    such planner failed."""
+    mistakes: dict[str, str] = {}
+    for name, spec in planned:
+        if name not in mistakes and not refs.ever_existed(tx, spec.subject_ref):
+            mistakes[name] = f"{name}: the subject {spec.subject_ref} of a planned {spec.job_type} never was in the Hub"
     dropped = []
-    for spec in specs:
+    for name, spec in planned:
+        if name in mistakes:
+            continue
         if refs.exists(tx, spec.subject_ref) and all(has_blob(tx, sha256) for sha256 in spec.inputs):
             registry.enqueue(tx, spec)
         else:
             dropped.append(spec)
-    return dropped
+    return dropped, list(mistakes.values())
 
 
 async def run_ingest(job: Job, context: JobContext) -> Finished:
-    """Queue every planner's jobs. A planner that raises, or proposes a job without a handler or one that cannot be
-    stored, keeps out only its own jobs and makes the ingest try again; jobs queued before come back as they are."""
+    """Queue every planner's jobs. A planner that raises, or proposes a job without a handler, one that cannot be
+    stored or one on a subject the Hub never held, keeps out only its own jobs and makes the ingest try again; jobs
+    queued before come back as they are."""
     capture_id = job.params["capture_id"]
     view = await context.db.read(lambda snap: _view(snap, capture_id))
     if view is None:
@@ -82,10 +93,11 @@ async def run_ingest(job: Job, context: JobContext) -> Finished:
         except Exception as error:
             failures.append(f"{name}: {type(error).__name__}: {error}")
         else:
-            planned += specs
-    dropped = await context.db.write(lambda tx: _enqueue_held(tx, context.registry, planned))
+            planned += [(name, spec) for spec in specs]
+    dropped, mistakes = await context.db.write(lambda tx: _enqueue_held(tx, context.registry, planned))
     for spec in dropped:
-        log.info("dropped the planned %s on %s: the Hub no longer holds its subject or an input", spec.job_type, spec.subject_ref)
+        log.warning("dropped the planned %s on %s: the Hub no longer holds its subject or an input", spec.job_type, spec.subject_ref)
+    failures += mistakes
     if failures:
         raise PlanningFailed("; ".join(failures))
     return Succeeded()
