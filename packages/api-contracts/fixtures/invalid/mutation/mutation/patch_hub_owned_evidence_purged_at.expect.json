@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/set/evidence_purged_at",
+    "rule": "owner"
+  }
+]
