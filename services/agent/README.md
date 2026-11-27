@@ -112,7 +112,7 @@ uv run campuslife-hub tailscale-check
    - Funnel이 꺼져 있습니다. Funnel은 Hub를 인터넷에 엽니다.
    - tailscale이 로그인되어 있고 MagicDNS 이름이 있습니다.
 5. 모두 맞으면 `hub_url https://<이름>.<tailnet>.ts.net`과 `ok`를 출력합니다. 하나라도 틀리면 `problem:` 줄을 출력하고 0이 아닌 코드로 끝납니다. 포트를 바꿨으면 `--sync-port`, `--admin-port`를 같은 값으로 줍니다.
-   - pairing QR에 들어가는 `hub_url`은 `serve --public-url`의 값입니다(#19). `tailscale-check --public-url <URL>`을 주면, 그 값이 MagicDNS 이름과 다를 때 `warning:`을 출력합니다. 두 명령 모두 `hub_url`이 아닌 값(`http://`, 대문자 호스트, 경로나 끝의 `/`)을 거부하고, 비교는 글자 그대로 합니다.
+   - pairing QR에 들어가는 `hub_url`은 `serve --public-url`의 값입니다(#19). `tailscale-check --public-url <URL>`을 주면, 그 값이 MagicDNS 이름과 다를 때 `warning:`을 출력합니다. 두 명령 모두 `hub_url`이 아닌 값(`http://`, 대문자 호스트, 경로나 끝의 `/`)과 `:443`을 붙인 값을 거부하고, 비교는 글자 그대로 합니다.
    - 두 JSON의 모양은 tailscale 소스에서 읽은 것이라, 실제 tailnet에서는 #39가 확인합니다.
 6. 연결 확인: pairing한 장치의 토큰이 없는 요청은 sync 리스너가 400이나 401로 거절합니다. 그래도 응답에 `CampusLife-Hub-Id` 헤더가 있으면 serve를 거쳐 Hub까지 닿은 것입니다. Hub가 꺼져 있으면 serve가 이 헤더 없는 502로 답합니다.
 
@@ -123,7 +123,7 @@ uv run campuslife-hub tailscale-check
 
 - 장치는 sync 리스너의 `POST /v1/pair`로 pairing하고, 받은 토큰으로 모든 요청을 인증합니다. Hub는 토큰과 pairing secret의 SHA-256만 저장하고 로그에서 가립니다.
 - 틀린 secret이 10분에 10번 오면 그 뒤 pairing 시도는 `Retry-After`가 붙은 401입니다. 이 횟수는 메모리에만 있어 Hub를 다시 시작하면 지워집니다.
-- 90일(`serve --dormant-after-days`) 동안 인증하지 않은 장치는 dormant가 되어 재승인할 때까지 401 `device_dormant`를 받습니다. 인증할 때와 1시간마다 하는 정리 때 판정합니다.
+- 90일(`serve --dormant-after-days`, 1–36500일) 동안 인증하지 않은 장치는 dormant가 되어 재승인할 때까지 401 `device_dormant`를 받습니다. 인증할 때와 1시간마다 하는 정리 때 판정합니다.
 - 장치가 보내는 상태(heartbeat)는 마지막 하나만 남깁니다.
 
 ### 백업 (U1, U3, E20)
