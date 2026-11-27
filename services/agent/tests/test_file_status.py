@@ -6,7 +6,7 @@ from test_capture_commit import blob_store, device
 
 from campuslife_hub import ingest
 from campuslife_hub.extract.fakes import fake
-from campuslife_hub.extract.framework import IDENTIFY, RULES_CHANGED
+from campuslife_hub.extract.framework import IDENTIFY, RULES_CHANGED, can_read
 from campuslife_hub.extract.limits import Limits
 from campuslife_hub.ingest import REPROCESS
 from campuslife_hub.jobs import JobState, OutcomeCode
@@ -145,3 +145,54 @@ async def test_a_file_read_under_the_current_rules_has_no_rules_fact(db, device,
     await hub.settle()
 
     assert RULES_CHANGED not in (await status(hub, capture["attachments"][0])).facts
+
+
+async def test_a_file_an_extractor_added_since_could_read_says_so_and_nothing_is_queued(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path)
+    capture = await hub.capture(("a.csv", b"a,b\n1,2\n"))
+    await hub.settle()
+    queued = len(await hub.jobs())
+    upgraded = hub_with(db, blob_store, device, tmp_path, fake("echo", {"text/csv": {}}))
+
+    found = await status(upgraded, capture["attachments"][0])
+    await upgraded.settle()
+
+    assert upgraded.files.identify_pipeline == hub.files.identify_pipeline
+    assert found.facts == (can_read("extract.fake_echo"),)
+    assert kinds(found) == [(IDENTIFY, {}, JobState.SUCCEEDED, None)]
+    assert len(await upgraded.jobs()) == queued
+
+
+async def test_a_file_read_by_an_older_extractor_version_says_the_new_one_could_read_it(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path, fake("echo", {"text/plain": {}}), base=())
+    capture = await hub.capture(("a.txt", b"plain"))
+    await hub.settle()
+    upgraded = hub_with(db, blob_store, device, tmp_path, fake("echo", {"text/plain": {}}, version="2"), base=())
+
+    found = await status(upgraded, capture["attachments"][0])
+
+    assert found.facts == (can_read("extract.fake_echo"),)
+    assert [(job.job_type, job.state) for job in found.jobs] == [(IDENTIFY, JobState.SUCCEEDED), ("extract.fake_echo", JobState.SUCCEEDED)]
+
+
+async def test_a_reader_whose_job_under_the_current_rules_failed_has_no_reader_fact(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path, fake("refuse", {"text/plain": {"status": "corrupt"}}), base=())
+    capture = await hub.capture(("a.txt", b"plain"))
+    await hub.settle()
+
+    found = await status(hub, capture["attachments"][0])
+
+    assert found.facts == ()
+    assert found.jobs[-1].state is JobState.FAILED
+
+
+async def test_after_a_reprocess_under_the_new_version_the_reader_fact_goes(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path, fake("echo", {"text/plain": {}}), base=())
+    capture = await hub.capture(("a.txt", b"plain"))
+    await hub.settle()
+    upgraded = hub_with(db, blob_store, device, tmp_path, fake("echo", {"text/plain": {}}, version="2"), base=())
+
+    await db.write(lambda tx: ingest.reprocess(tx, [capture["id"]]))
+    await upgraded.settle()
+
+    assert (await status(upgraded, capture["attachments"][0])).facts == ()
