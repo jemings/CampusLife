@@ -236,6 +236,7 @@ def test_a_scan_finds_a_letter_after_a_nul_in_the_original():
 def test_a_scan_folds_case_and_latin_diacritics_as_the_tokenizer_does():
     cafe = Index({1: "CAFÉ힙 메뉴", 2: "카페 메뉴"})
     assert cafe.search("cafe힙") == [1]
+    assert cafe.search("CAFÉ힙") == [1]
     assert cafe.search("café") == [1]
 
 
@@ -254,8 +255,21 @@ def test_the_match_and_the_scan_find_the_same_documents():
         "\ud7b0\ud7b1\ud7b2",
         "\u3400\u3401\u3402",
         "\U00020000\U00020001\U00020002",
+        "\ufa0e\ufa0f\ufa11",
+        "\u309d\u309e\u309d",
+        "\u30fc\u30fd\u30fe",
     ],
-    ids=["compatibility jamo", "jamo", "jamo extended-A", "jamo extended-B", "ideographs extension A", "ideographs SIP"],
+    ids=[
+        "compatibility jamo",
+        "jamo",
+        "jamo extended-A",
+        "jamo extended-B",
+        "ideographs extension A",
+        "ideographs SIP",
+        "compatibility ideographs",
+        "hiragana iteration marks",
+        "katakana marks",
+    ],
 )
 def test_two_letters_inside_a_longer_run_are_found_in_every_hangul_and_cjk_block(letters):
     assert Index({1: f"{letters} 끝", 2: "다른 글"}).search(letters[:2]) == [1]
@@ -279,3 +293,11 @@ def test_the_original_is_folded_as_unicode61_folds_latin_letters():
     differing = {letter: tokens[letter] for letter in letters if HANGUL_BIGRAM.fold_original(letter) != tokens[letter]}
     assert differing == UNICODE61_SPECIAL_FOLDS
     assert HANGUL_BIGRAM.fold_original("자료구조 ガ 漢字") == "자료구조 ガ 漢字"
+
+
+def test_a_term_of_letters_and_digits_is_not_scanned():
+    assert plan_query("Python 과제 3주차", HANGUL_BIGRAM).like == ()
+
+
+def test_a_document_with_a_nul_or_a_lone_surrogate_is_indexed():
+    assert Index({1: "자료\x00구조", 2: "자료\ud800구조"}).search("자료") == [1, 2]
