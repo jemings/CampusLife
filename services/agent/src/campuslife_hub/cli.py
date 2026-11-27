@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import sqlite3
 import sys
@@ -43,6 +44,7 @@ from .listing import list_captures
 from .local_import import UnimportableFile, import_files
 from .lock import AlreadyRunning
 from .migrations import DatabaseTooNew
+from .redaction import Redactor, file_handler
 
 ROOT_ENV = "CAMPUSLIFE_ROOT"
 EXPECTED_FAILURES = (
@@ -294,6 +296,19 @@ def _run(arguments: argparse.Namespace, root: Path) -> None:
             _autostart(root, arguments)
 
 
+def _leave_in_the_log(root: Path, said: str) -> None:
+    """Without stderr, as under pythonw, the data root's log is where the reason a command failed can still be read; a
+    log that cannot be written leaves it nowhere."""
+    try:
+        handler = file_handler(Layout(root).logs / host.LOG_FILE, Redactor())
+    except OSError:
+        return
+    try:
+        handler.handle(logging.LogRecord(__name__, logging.ERROR, __file__, 0, said, None, None))
+    finally:
+        handler.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     root = arguments.root or Path(os.environ.get(ROOT_ENV) or default_data_root())
@@ -301,7 +316,11 @@ def main(argv: list[str] | None = None) -> int:
         autostart.refuse_store_python()
         _run(arguments, root)
     except (*EXPECTED_FAILURES, CommandFailed) as error:
-        print(f"campuslife-hub: {error}", file=sys.stderr)
+        said = f"campuslife-hub: {error}"
+        if sys.stderr is not None:
+            print(said, file=sys.stderr)
+        elif host.LOGGED not in getattr(error, "__notes__", ()):
+            _leave_in_the_log(root, said)
         return 1
     return 0
 

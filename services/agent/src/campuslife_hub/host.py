@@ -50,6 +50,8 @@ LOOPBACK = "127.0.0.1"
 DEFAULT_SYNC_PORT = 8730
 DEFAULT_ADMIN_PORT = 8731
 LOG_FILE = "hub.log"
+LOGGED = "logged in logs/hub.log"
+"""The note run_hub adds to the error it logged, so the CLI does not leave it in the log a second time."""
 WORK_THREAD = "campuslife-hub-work"
 
 
@@ -264,7 +266,8 @@ def stop_on_signals(stop: asyncio.Event) -> Iterator[None]:
 
 
 async def run_hub(root: Path, config: HostConfig = HostConfig(), *, registry: JobRegistry | None = None, sync_app: SyncAppFactory | None = None) -> None:
-    """The Hub at root, serving until a signal stops it, with its log file in root/logs."""
+    """The Hub at root, serving until a signal stops it, with its log file in root/logs, where an error that ends it,
+    starting or serving, is logged too: run from the logon task through pythonw, the Hub has no stderr."""
     layout = Layout(safe_data_root(root))
     redactor = Redactor()
     handlers = [file_handler(layout.logs / LOG_FILE, redactor)]
@@ -281,6 +284,10 @@ async def run_hub(root: Path, config: HostConfig = HostConfig(), *, registry: Jo
             stop = asyncio.Event()
             with stop_on_signals(stop):
                 await serve(core, registry or JobRegistry(), stop, admin_token=token, redactor=redactor, config=config, sync_app=sync_app)
+    except Exception as error:
+        log.error("the Hub ended: %s: %s", type(error).__name__, error)
+        error.add_note(LOGGED)
+        raise
     finally:
         root_logger.setLevel(level)
         for handler in handlers:
