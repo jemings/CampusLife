@@ -232,9 +232,10 @@ def test_check_reads_the_serve_config_and_the_status_through_the_command_it_is_g
     assert sorted(asked) == [("serve", "status", "--json"), ("status", "--json")]
 
 
-def test_output_that_is_not_json_is_tailscale_unavailable():
+@pytest.mark.parametrize("printed", ["No serve config", "[]", "null"], ids=["not json", "a list", "null"])
+def test_output_that_is_not_a_json_object_is_tailscale_unavailable(printed):
     with pytest.raises(TailscaleUnavailable):
-        check(lambda arguments: "No serve config", sync_port=8730, admin_port=8731, public_url=None)
+        check(lambda arguments: printed, sync_port=8730, admin_port=8731, public_url=None)
 
 
 @pytest.mark.parametrize(
