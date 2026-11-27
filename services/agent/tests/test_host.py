@@ -448,7 +448,7 @@ async def test_a_chunked_body_reaches_the_sync_app_whole(tmp_path):
 
 
 @pytest.mark.parametrize("framing", ["content-length", "chunked"])
-async def test_a_body_cut_off_midway_applies_nothing_and_the_listener_goes_on(tmp_path, framing):
+async def test_a_body_cut_off_midway_applies_nothing_logs_no_failure_and_the_listener_goes_on(tmp_path, caplog, framing):
     body = json.dumps(tag_batch()).encode()
     async with serving(tmp_path, sync_app=sync_admitting_the_hub_device) as (core, client, listening, stop, served):
         reader, writer = await asyncio.open_connection("127.0.0.1", listening.sync[1])
@@ -466,6 +466,8 @@ async def test_a_body_cut_off_midway_applies_nothing_and_the_listener_goes_on(tm
         async with sync_client(listening) as sync:
             assert await tags(sync) == []
             assert (await sync.post("/v1/mutations", json=tag_batch())).json()["results"][0]["result"] == "applied"
+
+    assert [record.getMessage() for record in caplog.records if record.exc_info or record.levelno >= logging.ERROR] == []
 
 
 async def test_only_the_sync_listener_keeps_an_idle_connection_for_the_time_the_host_config_gives(tmp_path):

@@ -9,6 +9,8 @@ from campuslife_hub.sync_envelope import ANY_CONTRACT_OPERATIONS, PUBLIC_OPERATI
 HUB = {"CampusLife-Hub-Id": "c56a4180-65aa-42ec-a945-5fd21dec0538", "CampusLife-Epoch": "e4eaaaf2-d142-41ff-9e1f-2b3c4d5e6f70"}
 HUB_BODY = {"hub_id": HUB["CampusLife-Hub-Id"], "epoch": HUB["CampusLife-Epoch"], "contract_version": 1, "min_contract_version": 1}
 ERROR = {"code": "invalid_request", "message": "x"}
+SHA = "ab" * 32
+OCTETS = {**HUB, "Content-Type": "application/octet-stream", "Accept-Ranges": "bytes"}
 
 
 def answer(method, path, status, *, headers=HUB, json=None, content=None):
@@ -20,6 +22,7 @@ def test_a_response_the_document_allows_passes():
     check(answer("GET", "/v1/hub", 500, json={"code": "internal_error", "message": "x"}))
     check(answer("GET", "/v1/nowhere", 404, json={"code": "not_found", "message": "x"}))
     check(answer("PUT", "/v1/blobs/uploads/" + "ab" * 32 + "/chunks/3", 204))
+    check(answer("GET", f"/v1/blobs/{SHA}", 200, headers={**OCTETS, "ETag": f'"{SHA}"'}, content=b"x"))
 
 
 @pytest.mark.parametrize(
@@ -34,9 +37,12 @@ def test_a_response_the_document_allows_passes():
         answer("GET", "/v1/nowhere", 200, json=HUB_BODY),
         answer("GET", "/v1/nowhere", 422, json=ERROR),
         answer("PUT", "/v1/blobs/uploads/" + "ab" * 32 + "/chunks/3", 204, content=b"x"),
+        answer("GET", f"/v1/blobs/{SHA}", 200, headers=OCTETS, content=b"x"),
+        answer("GET", f"/v1/blobs/{SHA}", 200, headers={**OCTETS, "ETag": "md5-not-a-sha"}, content=b"x"),
+        answer("GET", f"/v1/blobs/{SHA}", 200, headers={**HUB, "Content-Type": "text/plain", "Accept-Ranges": "bytes", "ETag": f'"{SHA}"'}, content=b"x"),
     ],
     ids=["no hub headers", "no epoch", "body off schema", "status not listed", "error off schema", "plain 500", "no operation 200",
-         "no operation 422", "body on 204"],
+         "no operation 422", "body on 204", "required header missing", "header value off schema", "wrong media type"],
 )
 def test_a_response_the_document_does_not_allow_fails(response):
     with pytest.raises(AssertionError):

@@ -444,3 +444,9 @@ async def test_a_device_s_batches_apply_one_after_another(tmp_path):
 
     outcomes = sorted([result["result"] for result in answer.json()["results"]] for answer in answers)
     assert outcomes == [["applied", "applied"], ["duplicate", "duplicate"]]
+
+
+async def test_a_trailing_slash_is_a_contract_error_not_a_redirect(tmp_path):
+    async with syncing(tmp_path) as (core, client, phone, runner):
+        answers = [await client.get("/v1/hub/"), await client.get("/v1/changes/?since=0"), await client.post("/v1/mutations/", json={"mutations": []})]
+    assert [(answer.status_code, answer.json()["code"]) for answer in answers] == [(404, "not_found")] * 3

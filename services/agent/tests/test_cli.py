@@ -517,20 +517,24 @@ def test_serve_needs_an_initialised_root_and_a_free_port(tmp_path, capsys):
     assert signal.getsignal(signal.SIGINT) is handlers
 
 
-def test_serve_needs_a_free_sync_port_and_says_so_on_the_console_and_once_in_the_log(tmp_path, capsys):
+def test_serve_needs_a_free_sync_port_and_says_so_on_the_console_and_once_in_the_log(tmp_path):
+    """Run as a process with a deadline, so a serve that does not refuse fails the test instead of serving on."""
     root = tmp_path / "CampusLife"
     hub(root, "init")
     taken = socket.socket()
     taken.bind(("127.0.0.1", 0))
     taken.listen()
     port = taken.getsockname()[1]
-    capsys.readouterr()
     try:
-        assert hub(root, "serve", "--admin-port", "0", "--sync-port", str(port)) == 1
+        finished = subprocess.run(
+            [sys.executable, "-m", "campuslife_hub.cli", "--root", str(root), "serve", "--admin-port", "0", "--sync-port", str(port)],
+            capture_output=True, text=True, timeout=60,
+        )
     finally:
         taken.close()
 
-    shown = [line for line in capsys.readouterr().err.splitlines() if f"127.0.0.1:{port} cannot be listened on" in line]
+    assert finished.returncode == 1
+    shown = [line for line in finished.stderr.splitlines() if f"127.0.0.1:{port} cannot be listened on" in line]
     logged = [line for line in (root / "logs" / "hub.log").read_text(encoding="utf-8").splitlines() if f"127.0.0.1:{port}" in line]
     assert len(shown) == 1 and len(logged) == 1
     assert not (root / "admin.port").exists()
