@@ -25,6 +25,10 @@ android {
         compose = true
     }
 
+    lint {
+        checkDependencies = true
+    }
+
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
