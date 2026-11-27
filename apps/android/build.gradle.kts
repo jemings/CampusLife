@@ -14,5 +14,16 @@ subprojects {
             events(TestLogEvent.FAILED)
             exceptionFormat = TestExceptionFormat.FULL
         }
+        val taskPath = path
+        afterSuite(
+            KotlinClosure2<TestDescriptor, TestResult, Unit>({ suite, result ->
+                if (suite.parent == null) {
+                    println(
+                        "$taskPath: ${result.testCount} tests, ${result.failedTestCount} failed, " +
+                            "${result.skippedTestCount} skipped",
+                    )
+                }
+            }),
+        )
     }
 }
