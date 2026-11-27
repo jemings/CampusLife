@@ -65,10 +65,10 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 
 | Entity | 주요 필드 |
 |---|---|
-| Device | id, platform(android\|ipados\|windows_hub), device_name, app_version, state(active\|dormant\|revoked), created_at, last_seen_at |
-| audit_log | 외부 AI 전송, 삭제, revoke, 충돌 해소 기록 (Hub 전용, 동기화하지 않음) |
+| Device | id, platform(android\|ipados\|windows_hub), device_name, app_version, state(active\|dormant\|revoked), created_at, last_seen_at, last_rejected_at, last_status?(마지막 status heartbeat), last_status_at? |
+| audit_log | seq, at, event, subject?, details. pairing(성공·실패), revoke, 재승인, dormant 전환, 토큰 재발급·retire를 기록하고(#19) 외부 AI 전송, 삭제, 충돌 해소가 더해집니다. append-only, Hub 전용, 동기화하지 않음 |
 
-- Hub는 토큰의 SHA-256만 저장합니다. 이 값(예전 표의 `token_hash`)은 Hub DB에만 있고 wire에 나가지 않습니다(D6). 계약의 Device 모양은 pairing offer(QR), pair 요청·응답, status heartbeat뿐입니다(E20, D23).
+- Hub는 토큰과 pairing secret의 SHA-256만 저장합니다(`device_tokens`, `pairing_secrets`). 이 값(예전 표의 `token_hash`)은 Hub DB에만 있고 wire에 나가지 않습니다(D6). 장치마다 current 토큰 하나와, 재발급한 뒤 아직 쓰이지 않은 pending 토큰 하나까지 있습니다. 계약의 Device 모양은 pairing offer(QR), pair 요청·응답, status heartbeat뿐입니다(E20, D23).
 - `windows_hub`는 Hub 자신의 Device 행이고 로컬 import가 씁니다. pair하는 장치는 `android`·`ipados`입니다.
 
 ## 3. Item kind
