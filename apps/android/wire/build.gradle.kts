@@ -14,7 +14,12 @@ java {
 kotlin {
     compilerOptions {
         jvmTarget = JvmTarget.fromTarget(bytecodeTarget)
+        freeCompilerArgs.add("-Xjdk-release=$bytecodeTarget")
     }
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.release = bytecodeTarget.toInt()
 }
 
 dependencies {
