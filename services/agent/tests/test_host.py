@@ -295,6 +295,55 @@ async def test_a_failed_maintenance_round_is_logged_and_the_next_one_runs(tmp_pa
     assert "maintenance failed" in caplog.text
 
 
+async def test_a_failure_to_make_devices_dormant_leaves_the_rest_of_maintenance_running(tmp_path, caplog, monkeypatch):
+    left = tmp_path / "purged.pdf"
+    left.write_bytes(b"synthetic purged slides")
+
+    async def overflowing(core, *, now, dormant_after):
+        raise OverflowError("date value out of range")
+
+    monkeypatch.setattr(devices, "mark_dormant", overflowing)
+    with caplog.at_level(logging.ERROR, logger="campuslife_hub.host"):
+        async with serving(tmp_path, config={"maintenance_every": timedelta(seconds=0.05)}) as (core, *_):
+            sha = (await core.blobs.put_file(left)).sha256
+            target = purge.PurgeTarget(blobs=(sha,))
+            await core.db.write(lambda tx: tx.execute("DELETE FROM blobs WHERE sha256 = ?", (sha,)))
+            await core.db.write(lambda tx: tx.execute("INSERT INTO purge_journal (id, target, registered_at) VALUES ('j', ?, '2026-03-02T00:30:00.000Z')",
+                                                       (target.to_json(),)))
+
+            async def finished():
+                (done,) = await core.db.read(lambda snap: snap.execute("SELECT finished_at IS NOT NULL FROM purge_journal").fetchone())
+                return bool(done)
+
+            await until(finished)
+
+    assert "making unseen devices dormant failed" in caplog.text
+
+
+async def test_a_failure_elsewhere_in_maintenance_still_makes_unseen_devices_dormant(tmp_path, caplog):
+    paired_at = datetime.now(UTC)
+    config = {"maintenance_every": timedelta(seconds=0.05), "devices": DeviceSettings(dormant_after=timedelta(days=30))}
+
+    async def unplugged(now):
+        raise OSError("disk unplugged")
+
+    with caplog.at_level(logging.ERROR, logger="campuslife_hub.host"):
+        async with serving(tmp_path, config=config, clock=lambda: paired_at + timedelta(days=31)) as (core, *_):
+            core.blobs.collect_garbage = unplugged
+            redactor = Redactor()
+            offer = await devices.offer(core, now=paired_at, public_url="https://campus-laptop.tail0a1b2c.ts.net", redactor=redactor)
+            request = devices.PairRequest(offer.secret, devices.ClientPlatform.ANDROID, "Fold8", "0.1.0")
+            paired = await devices.pair(core, request, now=paired_at, limiter=devices.PairingLimiter(), redactor=redactor)
+
+            async def dormant():
+                record = await core.db.read(lambda snap: devices.device(snap, paired.device_id))
+                return record.state == devices.DeviceState.DORMANT
+
+            await until(dormant)
+
+    assert "maintenance failed" in caplog.text
+
+
 async def test_stopping_leaves_behind_a_handler_that_will_not_end_and_its_job_running(tmp_path, caplog):
     started, released = asyncio.Event(), asyncio.Event()
 
