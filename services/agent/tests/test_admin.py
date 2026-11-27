@@ -68,6 +68,35 @@ async def log_in(client):
     return response
 
 
+POLICIES = {
+    "no-referrer", "no-referrer-when-downgrade", "same-origin", "origin", "strict-origin", "origin-when-cross-origin",
+    "strict-origin-when-cross-origin", "unsafe-url",
+}
+
+
+def browser_origin(page, action):
+    """The Origin header a browser gives the POST a form on page submits to action (Fetch, "append a request Origin
+    header"). A form's POST is not a CORS request, so the Referrer-Policy page came with decides whether it is null."""
+    here, there = page.url, page.url.join(action)
+    origin = f"{here.scheme}://{here.host}:{here.port}"
+    named = [token.strip() for token in page.headers.get("referrer-policy", "").split(",") if token.strip() in POLICIES]
+    policy = named[-1] if named else "strict-origin-when-cross-origin"
+    if policy == "no-referrer":
+        return "null"
+    if policy == "same-origin":
+        return origin if (there.scheme, there.host, there.port) == (here.scheme, here.host, here.port) else "null"
+    if policy in ("no-referrer-when-downgrade", "strict-origin", "strict-origin-when-cross-origin"):
+        return "null" if here.scheme == "https" and there.scheme != "https" else origin
+    return origin
+
+
+async def submitted(client, page_path, action, **request):
+    """The page at page_path and the answer to submitting its form to action as a browser would, Origin and all."""
+    page = await client.get(page_path)
+    assert f'action="{action}"' in page.text, page.text
+    return page, await client.post(action, headers={"origin": browser_origin(page, action)}, **request)
+
+
 def source(tmp_path, name, content=b"synthetic lecture handout"):
     path = tmp_path / "inbox" / name
     path.parent.mkdir(exist_ok=True)
@@ -158,7 +187,9 @@ async def test_logging_out_ends_the_session(tmp_path):
         assert (await client.get("/", headers={"cookie": f"{SESSION_COOKIE}={session}"})).status_code == 401
 
 
-@pytest.mark.parametrize(("origin", "status"), [(None, 403), ("http://campuslife.example", 403), (f"http://127.0.0.1:{PORT + 1}", 403), (BASE, 404)])
+@pytest.mark.parametrize(
+    ("origin", "status"), [(None, 403), ("null", 403), ("http://campuslife.example", 403), (f"http://127.0.0.1:{PORT + 1}", 403), (BASE, 404)]
+)
 async def test_a_change_under_a_session_needs_this_listeners_origin(tmp_path, origin, status):
     async with hub(tmp_path) as (client, _):
         await log_in(client)
@@ -186,7 +217,7 @@ async def test_every_page_and_refusal_carries_the_page_headers(tmp_path, path):
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.headers["x-frame-options"] == "DENY"
         assert response.headers["cache-control"] == "no-store"
-        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.headers["referrer-policy"] == "same-origin"
 
 
 @pytest.mark.parametrize(
@@ -709,6 +740,17 @@ async def test_an_api_import_the_disk_refuses_is_refused_with_the_reason(tmp_pat
         assert response.status_code == 400
         assert "No space left on device" in response.json()["error"]
         assert await admin.core.db.read(list_captures) == []
+
+
+async def test_the_forms_of_the_local_ui_work_with_the_origin_a_browser_sends_them_with(tmp_path):
+    drive = tmp_path / "drive"
+    async with hub(tmp_path) as (client, _):
+        await log_in(client)
+        _, backed_up = await submitted(client, "/backup", "/backup", data={"target": str(drive)})
+        _, logged_out = await submitted(client, "/", "/logout")
+
+    assert (backed_up.status_code, logged_out.status_code) == (200, 200)
+    assert len(backup.generations(drive)) == 1
 
 
 async def test_the_backup_page_warns_before_the_first_backup_and_backs_up_to_the_folder_given(tmp_path):

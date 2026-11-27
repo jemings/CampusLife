@@ -7,7 +7,7 @@ from datetime import timedelta
 
 import pytest
 import segno
-from test_admin import ORIGIN, SIGNED, Clock, hub, log_in
+from test_admin import ORIGIN, SIGNED, Clock, hub, log_in, submitted
 
 from campuslife_hub import audit, devices
 from campuslife_hub.audit import AuditEvent
@@ -161,14 +161,12 @@ def offer_json(admin, secret):
 async def test_adding_a_device_shows_the_pairing_offer_as_a_qr_code_and_a_manual_code_that_pair(tmp_path):
     async with hub(tmp_path, clock=Clock(), **WITH_URL) as (client, admin):
         await log_in(client)
-        listed = (await client.get("/devices")).text
-        offered = await client.post("/devices/pairing-offer", headers=ORIGIN)
+        _, offered = await submitted(client, "/devices", "/devices/pairing-offer")
         code = MANUAL_CODE.search(offered.text).group(1)
         secret = code.replace("-", "")
         request = PairRequest(secret, ClientPlatform.IPADOS, "iPad", "0.1.0")
         answer = await devices.pair(admin.core, request, now=admin.clock(), limiter=PairingLimiter(), redactor=admin.redactor)
 
-    assert 'action="/devices/pairing-offer"' in listed
     assert offered.status_code == 200
     assert segno.make(offer_json(admin, secret), error="m", micro=False).svg_inline(scale=5, dark="#000", light="#fff") in offered.text
     assert f"<code>{PUBLIC_URL}</code>" in offered.text and "2026-03-02T00:35:00.000Z" in offered.text
@@ -205,10 +203,10 @@ async def test_revoking_from_the_local_ui_asks_first_then_revokes_that_device_on
 
         asked = await client.get(f"/devices/{phone.device_id}/revoke")
         assert await state_of(admin, phone.device_id) == DeviceState.ACTIVE
-        done = await client.post(f"/devices/{phone.device_id}/revoke", headers=ORIGIN)
+        _, done = await submitted(client, f"/devices/{phone.device_id}/revoke", f"/devices/{phone.device_id}/revoke")
 
         assert (asked.status_code, done.status_code) == (200, 200)
-        assert "&lt;b&gt;Fold8&lt;/b&gt;" in asked.text and f'action="/devices/{phone.device_id}/revoke"' in asked.text
+        assert "&lt;b&gt;Fold8&lt;/b&gt;" in asked.text
         assert "cannot be undone" in asked.text
         assert (await state_of(admin, phone.device_id), await state_of(admin, kept.device_id)) == (DeviceState.REVOKED, DeviceState.ACTIVE)
 
@@ -222,8 +220,7 @@ async def test_approving_from_the_local_ui_shows_when_the_device_was_last_seen_a
         assert (await devices.authenticate(admin.core, phone.token, now=clock(), redactor=admin.redactor)).code == "device_dormant"
         await log_in(client)
 
-        asked = await client.get(f"/devices/{phone.device_id}/approve")
-        done = await client.post(f"/devices/{phone.device_id}/approve", headers=ORIGIN)
+        asked, done = await submitted(client, f"/devices/{phone.device_id}/approve", f"/devices/{phone.device_id}/approve")
 
         assert "last seen 2026-03-02T00:30:00.000Z" in asked.text and "last refused 2026-06-01T00:30:00.000Z" in asked.text
         assert "a lost device approved here syncs again" in asked.text
