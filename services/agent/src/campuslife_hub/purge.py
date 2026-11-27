@@ -26,7 +26,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, fields
 
 from . import jobs, store
-from .blobs import BlobStore, KeptLeftover, has_blob
+from .blobs import BLOB_REFERENCES, BlobStore, KeptLeftover, has_blob
 from .clock import now_instant
 from .db import Database, Snapshot, Tx
 from .jobs import JobState
@@ -129,14 +129,15 @@ def _ids(runner: Tx | Snapshot, sql: str, params: Sequence[object] | dict[str, o
 
 
 def _made_from(runner: Tx | Snapshot, sha256: str) -> dict[str, str]:
-    """Each Artifact made from the Blob, directly or through other such Artifacts, with its content Blob."""
-    made: dict[str, str] = {}
+    """Each Artifact holding the Blob or made from it, directly or through other such Artifacts, with its content
+    Blob. An Artifact made from kept inputs stays, though its content may have the same bytes as one that goes."""
+    made: dict[str, str] = dict(runner.execute("SELECT id, content_blob FROM artifacts WHERE content_blob = ?", (sha256,)).fetchall())
     reached = frontier = {sha256}
     while frontier:
         rows = runner.execute(
-            "SELECT id, content_blob FROM artifacts WHERE content_blob IN (SELECT value FROM json_each(:frontier))"
-            " OR EXISTS (SELECT 1 FROM json_each(artifacts.data, '$.input_hashes') WHERE value IN (SELECT value FROM json_each(:frontier)))",
-            {"frontier": _listed(frontier)},
+            "SELECT id, content_blob FROM artifacts"
+            " WHERE EXISTS (SELECT 1 FROM json_each(artifacts.data, '$.input_hashes') WHERE value IN (SELECT value FROM json_each(?)))",
+            (_listed(frontier),),
         ).fetchall()
         new = {artifact_id: content for artifact_id, content in rows if artifact_id not in made}
         made.update(new)
@@ -145,10 +146,15 @@ def _made_from(runner: Tx | Snapshot, sha256: str) -> dict[str, str]:
     return made
 
 
-def _named_elsewhere(runner: Tx | Snapshot, sha256: str, attachments: set[str], artifacts: set[str]) -> bool:
-    return bool(
-        runner.execute("SELECT 1 FROM attachments WHERE blob_sha256 = ? AND id NOT IN (SELECT value FROM json_each(?))", (sha256, _listed(attachments))).fetchone()
-        or runner.execute("SELECT 1 FROM artifacts WHERE content_blob = ? AND id NOT IN (SELECT value FROM json_each(?))", (sha256, _listed(artifacts))).fetchone()
+def _named_elsewhere(runner: Tx | Snapshot, sha256: str, removed: dict[str, set[str]]) -> bool:
+    """Whether a row the purge keeps names the Blob through BLOB_REFERENCES. A Relation does not keep it: the
+    Relations at a Blob the purge removes go with it."""
+    return any(
+        runner.execute(
+            f"SELECT 1 FROM {table} WHERE {column} = ? AND id NOT IN (SELECT value FROM json_each(?))", (sha256, _listed(removed.get(table, ())))
+        ).fetchone()
+        for table, column in BLOB_REFERENCES
+        if table != "relations"
     )
 
 
@@ -170,7 +176,8 @@ def _reach(runner: Tx | Snapshot, sha256: str, items: Iterable[str]) -> tuple[Pu
     artifacts = set(made)
     if not (attachments or artifacts or has_blob(runner, sha256)):
         raise PurgeRefused(f"the Hub holds no Blob {sha256}")
-    blobs = {sha256} | {content for content in set(made.values()) if not _named_elsewhere(runner, content, attachments, artifacts)}
+    removed = {"attachments": attachments, "artifacts": artifacts}
+    blobs = {sha256} | {content for content in set(made.values()) if not _named_elsewhere(runner, content, removed)}
     suggestions = _ids(runner, "SELECT id FROM suggestions WHERE source_artifact_id IN (SELECT value FROM json_each(?))", (_listed(artifacts),))
     items = set(items)
     ends = (
