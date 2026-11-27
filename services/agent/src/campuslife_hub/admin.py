@@ -186,7 +186,7 @@ async def import_form(request: Request) -> Response:
 
 def _job_row(job: Job, redactor: Redactor) -> str:
     actions = []
-    if job.state in RETRYABLE:
+    if job.state in RETRYABLE and not jobs.is_released(job):
         actions.append(f'<form method="post" action="/jobs/{escape(job.id)}/retry"><button>Retry</button></form>')
     if job.state in CANCELLABLE:
         actions.append(f'<form method="post" action="/jobs/{escape(job.id)}/cancel"><button>Cancel</button></form>')

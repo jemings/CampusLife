@@ -331,3 +331,17 @@ def test_a_planner_name_is_registered_once():
 
     with pytest.raises(ValueError):
         registry.plan("extract", planning("extract.text"))
+
+
+async def test_an_ingest_queued_under_a_retired_pipeline_is_queued_again_under_the_current_one(db, device, blob_store, tmp_path):
+    registry, seen = handled("extract.text"), []
+    registry.plan("extract", planning("extract.text", seen))
+    capture = await committed(db, device, blob_store, tmp_path)
+    [current] = await ingest_of(db, capture)
+    retired = await db.write(lambda tx: jobs.enqueue(tx, ingest_spec(capture), Pipeline("capture.ingest-0")))
+
+    await JobRunner(JobContext(db, blob_store, registry)).run_due()
+
+    states = {job.id: (job.state, job.error) for job in await ingest_of(db, capture)}
+    assert states == {current.id: (JobState.SUCCEEDED, None), retired.id: (JobState.FAILED, "pipeline retired: capture.ingest-0, now capture.ingest-1")}
+    assert len(seen) == 1

@@ -387,6 +387,14 @@ class BlobStore:
     async def put_file(self, src: Path) -> StoredBlob:
         return await self._store_and_register([Path(src)])
 
+    async def put_bytes(self, data: bytes) -> StoredBlob:
+        """Store bytes the Hub made itself, staged only in the store's own staging directory."""
+        staging = await asyncio.to_thread(self._write_staging, data)
+        try:
+            return await self._store_and_register([staging])
+        finally:
+            self._discard_quietly(staging)
+
     async def open_blob(self, sha256: str) -> tuple[StoredBlob, BinaryIO] | None:
         """The stored Blob and a handle on its bytes; None when the Hub does not store it or its file is gone.
 

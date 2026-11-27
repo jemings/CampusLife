@@ -29,6 +29,7 @@ from campuslife_hub.data_root import Layout
 from campuslife_hub.devices import ClientPlatform, DeviceSettings, DeviceState, PairingLimiter, PairRequest
 from campuslife_hub.host import Hosted
 from campuslife_hub.lock import HubLock
+from campuslife_hub.pipelines import default_registry
 from campuslife_hub.redaction import Redactor
 
 
@@ -549,12 +550,14 @@ async def test_serve_puts_the_sync_listener_on_8730_beside_the_admin_listener_an
     root = tmp_path / "CampusLife"
     await asyncio.to_thread(hub, root, "init")
     started = []
-    monkeypatch.setattr(host, "run_hub", lambda root, config, *, sync_app: started.append((config, sync_app)))
+    monkeypatch.setattr(host, "run_hub", lambda root, config, *, registry, sync_app: started.append((config, registry, sync_app)))
     monkeypatch.setattr(host, "run", lambda ran: None)
 
     assert await asyncio.to_thread(hub, root, "serve") == 0
 
-    [(config, sync_app)] = started
+    [(config, registry, sync_app)] = started
+    assert registry.job_types == default_registry().job_types
+    assert [name for name, _ in registry.planners] == ["files"]
     assert (config.admin_port, config.sync_port) == (8731, 8730)
     assert config.devices == DeviceSettings(public_url=None, dormant_after=timedelta(days=90))
     async with open_core(root, create=False, sync_roots=[]) as core:
@@ -574,7 +577,7 @@ def test_serve_takes_the_public_url_and_the_dormant_period_for_devices(tmp_path,
     root = tmp_path / "CampusLife"
     hub(root, "init")
     started = []
-    monkeypatch.setattr(host, "run_hub", lambda root, config, *, sync_app: started.append(config))
+    monkeypatch.setattr(host, "run_hub", lambda root, config, *, registry, sync_app: started.append(config))
     monkeypatch.setattr(host, "run", lambda ran: None)
 
     assert hub(root, "serve", "--public-url", "https://campus-laptop.tail0a1b2c.ts.net", "--dormant-after-days", "30") == 0
@@ -587,7 +590,7 @@ def test_serve_takes_a_dormant_period_of_up_to_a_hundred_years(tmp_path, monkeyp
     root = tmp_path / "CampusLife"
     hub(root, "init")
     started = []
-    monkeypatch.setattr(host, "run_hub", lambda root, config, *, sync_app: started.append(config))
+    monkeypatch.setattr(host, "run_hub", lambda root, config, *, registry, sync_app: started.append(config))
     monkeypatch.setattr(host, "run", lambda ran: None)
 
     assert hub(root, "serve", "--dormant-after-days", "36500") == 0
@@ -641,7 +644,7 @@ def test_serve_takes_a_public_url_on_another_port(tmp_path, monkeypatch):
     root = tmp_path / "CampusLife"
     hub(root, "init")
     started = []
-    monkeypatch.setattr(host, "run_hub", lambda root, config, *, sync_app: started.append(config))
+    monkeypatch.setattr(host, "run_hub", lambda root, config, *, registry, sync_app: started.append(config))
     monkeypatch.setattr(host, "run", lambda ran: None)
 
     assert hub(root, "serve", "--public-url", "https://campus-laptop.tail0a1b2c.ts.net:8443") == 0

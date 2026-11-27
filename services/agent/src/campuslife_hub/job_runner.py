@@ -4,7 +4,9 @@ A handler is registered per job type with the Pipeline that goes into its job_ke
 time it may take. It returns how the job finished. An exception, a result that cannot be
 recorded, or running past its time means "try again later", up to MAX_ATTEMPTS.
 Planners are registered by name; the capture.ingest handler, registered in every
-JobRegistry, asks them what to run for each committed Capture.
+JobRegistry, asks them what to run for each committed Capture. A job queued under a pipeline its
+type no longer has is retired when it comes up (S18): it fails without running and the same work
+is queued under the current pipeline.
 
 A handler runs on the event loop and is stopped by cancelling it, so its blocking work (a parser,
 a converter, a model) goes to isolate.run, which ends its program when cancelled. A thread it
@@ -19,11 +21,12 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from . import jobs
 from .blobs import BlobStore
 from .db import Database, Tx
-from .ingest import INGEST, INGEST_PIPELINE, CaptureView, run_ingest
+from .ingest import INGEST, INGEST_PIPELINE, CaptureView, enqueue_held, run_ingest
 from .jobs import MAX_ATTEMPTS, Failed, Finished, Job, JobSpec, JobState, Pipeline
 
 log = logging.getLogger(__name__)
@@ -39,6 +42,8 @@ STOP_GRACE = timedelta(seconds=5)
 is not claimed again until it ends."""
 
 ERROR_MAX_CHARS = 2000
+
+PIPELINE_RETIRED = "pipeline retired"
 
 type Handler = Callable[[Job, JobContext], Awaitable[Finished]]
 type Planner = Callable[[CaptureView, JobContext], Awaitable[Iterable[JobSpec]]]
@@ -101,6 +106,13 @@ class JobContext:
     db: Database
     blobs: BlobStore
     registry: JobRegistry
+    work_root: Path | None = None
+    """Where a handler makes its job's directory (Layout.work); a handler that needs one fails without it."""
+
+    def work_dir(self, job: Job) -> Path:
+        if self.work_root is None:
+            raise RuntimeError(f"job {job.id} needs a work directory and the runner has none")
+        return self.work_root / job.id
 
 
 @dataclass
@@ -112,7 +124,7 @@ class _Running:
 _NOT_STARTED = object()
 
 
-async def _called(handler: Handler, job: Job, context: JobContext) -> object:
+async def _called(handler: Handler, job: Job, context: JobContext, clock: Callable[[], datetime]) -> object:
     """Awaited inside the job's task, so a handler that is not a coroutine fails the job rather than the runner.
 
     A job cancelled since its claim does not start. Its state is read in a write, which comes after any cancel
@@ -120,7 +132,16 @@ async def _called(handler: Handler, job: Job, context: JobContext) -> object:
     """
     if (await context.db.write(lambda tx: jobs.get(tx, job.id))).state is not JobState.RUNNING:
         return _NOT_STARTED
+    if job.pipeline != context.registry.pipeline(job.job_type):
+        return await context.db.write(lambda tx: _retire(tx, context.registry, job, clock()))
     return await handler(job, context)
+
+
+def _retire(tx: Tx, registry: JobRegistry, job: Job, now: datetime) -> Failed:
+    """S18: a job queued under a pipeline its type no longer has does not run; the same work is queued under the
+    current one, when the Hub still holds its subject and inputs."""
+    enqueue_held(tx, registry, [("retired", JobSpec(job.job_type, job.subject_ref, job.inputs, job.params))], now=now)
+    return Failed(f"{PIPELINE_RETIRED}: {job.pipeline.version}, now {registry.pipeline(job.job_type).version}")
 
 
 def _result_of(task: asyncio.Task) -> object:
@@ -213,7 +234,7 @@ class JobRunner:
         job = await db.write(lambda tx: jobs.claim(tx, registry.job_types, now=self._clock(), skipping=held))
         if job is None:
             return None
-        task = asyncio.create_task(_called(registry.handler(job.job_type), job, self.context))
+        task = asyncio.create_task(_called(registry.handler(job.job_type), job, self.context, self._clock))
         running = self._running[job.id] = _Running()
         try:
             await self._settle(job, task, running)

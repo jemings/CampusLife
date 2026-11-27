@@ -42,7 +42,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
 
-from . import admin_client, autostart, backup, devices, fsck, host, sync_devices, tailscale_check
+from . import admin_client, autostart, backup, devices, fsck, host, pipelines, sync_devices, tailscale_check
 from .admin_client import AdminRefused, HubDidNotAnswer, HubNotServing, NotTheHub
 from .admin_token import AdminTokenUnusable
 from .autostart import AutostartFailed, LogonTask
@@ -457,7 +457,7 @@ def _run(arguments: argparse.Namespace, root: Path) -> None:
             settings = BackupSettings(keep=arguments.backup_keep, warn_after=timedelta(days=arguments.backup_warn_days))
             device_settings = DeviceSettings(public_url=arguments.public_url, dormant_after=timedelta(days=arguments.dormant_after_days))
             config = HostConfig(admin_port=arguments.admin_port, sync_port=arguments.sync_port, backup=settings, devices=device_settings)
-            host.run(host.run_hub(root, config, sync_app=sync_devices.sync_app))
+            host.run(host.run_hub(root, config, registry=pipelines.default_registry(), sync_app=sync_devices.sync_app))
         case "open":
             _open(root, not arguments.no_browser)
         case "import":

@@ -28,6 +28,8 @@ from campuslife_hub.devices import DeviceSettings, Refusal, RefusalCode
 from campuslife_hub.host import HostConfig, PortTaken
 from campuslife_hub.job_runner import JobRegistry, JobRunner
 from campuslife_hub.jobs import JobSpec, JobState, Pipeline, Succeeded
+from campuslife_hub.local_import import import_files
+from campuslife_hub.pipelines import default_registry
 from campuslife_hub.redaction import Redactor, file_handler
 from campuslife_hub.sync import create_sync_app, refuse_every_bearer
 
@@ -835,3 +837,25 @@ async def test_a_download_cut_off_mid_body_resumes_by_range_over_another_connect
     assert hashlib.sha256(reached + rest.content).hexdigest() == DOWNLOADED_SHA
     assert finished
     assert not core.blobs.path_of(DOWNLOADED_SHA).exists()
+
+
+async def test_serve_with_the_default_registry_identifies_and_extracts_an_imported_text_file(tmp_path):
+    source = tmp_path / "자료구조 1주차.md"
+    source.write_text("# 트리\n\n트리는 계층 구조입니다.\n", encoding="utf-8")
+
+    async with serving(tmp_path, registry=default_registry()) as (core, client, listening, stop, served):
+        await import_files(core, [source])
+
+        async def jobs_states():
+            return await core.db.read(lambda snap: snap.execute("SELECT job_type, state FROM processing_jobs ORDER BY rowid").fetchall())
+
+        async def extract_finished():
+            return any(job_type == "extract.text" and state not in ("pending", "running", "retry_wait") for job_type, state in await jobs_states())
+
+        await until(extract_finished, within_s=60)
+        states = await jobs_states()
+        (data,) = await core.db.read(lambda snap: snap.execute("SELECT data FROM artifacts WHERE artifact_type = 'extraction'").fetchone())
+
+    assert states == [("capture.ingest", "succeeded"), ("identify", "succeeded"), ("extract.text", "succeeded")]
+    assert json.loads(data)["pipeline_version"].startswith("text-")
+    assert list((tmp_path / "root" / "work").iterdir()) == []

@@ -706,3 +706,33 @@ async def test_running_until_stopped_picks_up_jobs_as_they_come_and_as_they_fall
     assert attempts == [queued.id, queued.id]
     stop.set()
     await asyncio.wait_for(serving, 10)
+
+
+async def test_a_job_queued_under_a_retired_pipeline_does_not_run_and_its_work_is_queued_under_the_current_one(db, blob_store, registry, runner, tmp_path):
+    seen = []
+    handles(registry, returning(Succeeded(), seen), pipeline=Pipeline("extract-2"))
+    source = tmp_path / "notes.txt"
+    source.write_bytes(b"notes")
+    sha256 = (await blob_store.put_file(source)).sha256
+    work = JobSpec("extract.text", f"blob:{sha256}", (sha256,), {"syntax": "plain"})
+    old = await db.write(lambda tx: jobs.enqueue(tx, work, EXTRACT, now=NOW))
+
+    await runner.run_due()
+
+    retired = await job(db, old)
+    assert (retired.state, retired.outcome_code, retired.error) == (JobState.FAILED, None, "pipeline retired: extract-1, now extract-2")
+    [current] = [each for each in await db.read(lambda snap: jobs.of_subject(snap, f"blob:{sha256}")) if each.id != old.id]
+    assert (current.pipeline, current.inputs, current.params, current.state) == (Pipeline("extract-2"), (sha256,), {"syntax": "plain"}, JobState.SUCCEEDED)
+    assert [ran.id for ran, _ in seen] == [current.id]
+
+
+async def test_a_retired_job_whose_subject_is_gone_is_not_queued_again(db, registry, runner):
+    seen = []
+    handles(registry, returning(Succeeded(), seen), pipeline=Pipeline("extract-2"))
+    old = await db.write(lambda tx: jobs.enqueue(tx, spec(), EXTRACT, now=NOW))
+
+    await runner.run_due()
+
+    assert (await job(db, old)).state is JobState.FAILED
+    assert await db.read(lambda snap: jobs.of_subject(snap, "attachment:1")) == [await job(db, old)]
+    assert seen == []

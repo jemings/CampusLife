@@ -58,6 +58,15 @@ async def test_the_same_bytes_twice_keep_one_file_and_leave_no_staging(tmp_path,
     assert list((tmp_path / "staging").iterdir()) == []
 
 
+async def test_bytes_the_hub_made_are_stored_through_its_own_staging_and_leave_none_behind(tmp_path, blob_store, db):
+    stored = await blob_store.put_bytes(b"abc")
+
+    assert stored == StoredBlob(ABC_SHA256, 3)
+    assert (tmp_path / "blobs" / "ba" / "78" / ABC_SHA256).read_bytes() == b"abc"
+    assert await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+    assert list((tmp_path / "staging").iterdir()) == []
+
+
 async def test_an_empty_file_is_a_blob(tmp_path, blob_store):
     assert await blob_store.put_file(source(tmp_path, "empty", b"")) == StoredBlob(EMPTY_SHA256, 0)
 

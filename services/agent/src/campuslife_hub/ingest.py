@@ -14,6 +14,7 @@ import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from . import jobs, refs, store
@@ -57,7 +58,9 @@ def _view(snap: Snapshot, capture_id: str) -> CaptureView | None:
     return CaptureView(capture, tuple(json.loads(data) for (data,) in rows))
 
 
-def _enqueue_held(tx: Tx, registry: JobRegistry, planned: Sequence[tuple[str, JobSpec]]) -> tuple[list[JobSpec], list[str]]:
+def enqueue_held(
+    tx: Tx, registry: JobRegistry, planned: Sequence[tuple[str, JobSpec]], *, now: datetime | None = None,
+) -> tuple[list[JobSpec], list[str]]:
     """Queue each planned spec whose subject and inputs the Hub holds. A planner that proposed a job on a subject the
     Hub has no record of (refs.ever_existed) has none of its specs queued. Returns the specs dropped for what a purge removed, and why each
     such planner failed."""
@@ -72,7 +75,7 @@ def _enqueue_held(tx: Tx, registry: JobRegistry, planned: Sequence[tuple[str, Jo
         if name in mistakes:
             continue
         if refs.exists(tx, spec.subject_ref) and all(has_blob(tx, sha256) for sha256 in spec.inputs):
-            registry.enqueue(tx, spec)
+            registry.enqueue(tx, spec, now=now)
         else:
             dropped.append(spec)
     return dropped, list(mistakes.values())
@@ -96,7 +99,7 @@ async def run_ingest(job: Job, context: JobContext) -> Finished:
             failures.append(f"{name}: {type(error).__name__}: {error}")
         else:
             planned += [(name, spec) for spec in specs]
-    dropped, mistakes = await context.db.write(lambda tx: _enqueue_held(tx, context.registry, planned))
+    dropped, mistakes = await context.db.write(lambda tx: enqueue_held(tx, context.registry, planned))
     for spec in dropped:
         log.warning("dropped the planned %s on %s: the Hub does not hold its subject or an input", spec.job_type, spec.subject_ref)
     failures += mistakes

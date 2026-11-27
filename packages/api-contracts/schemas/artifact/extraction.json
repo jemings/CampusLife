@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/artifact/extraction.json",
   "title": "Extraction body",
-  "description": "The body of an extraction Artifact (#5 decision 1): what one extractor version read from one Blob, as ordered ContentBlocks. The Artifact's subject_ref is blob:<blob>. Every block id is derived from the blob, the extractor and the block's ordinal (rule block_id), and every ref, of any kind, names that blob and no capture (rule block_anchor): the Hub builds both itself and does not take them from the extractor. Open, as artifact/body.",
+  "description": "The body of an extraction Artifact (#5 decision 1): what one extractor version read from one Blob, as ordered ContentBlocks. The Artifact's subject_ref is blob:<blob>. Every block id is derived from the blob, the extractor's id, version and params and the block's ordinal (rule block_id), and every ref, of any kind, names that blob and no capture (rule block_anchor): the Hub builds both itself and does not take them from the extractor. Open, as artifact/body.",
   "$ref": "body.json",
   "type": "object",
   "required": ["v", "blob", "extractor", "blocks"],
@@ -10,10 +10,11 @@
     "blob": { "description": "The Blob the blocks were read from.", "$ref": "../common/sha256.json" },
     "extractor": {
       "type": "object",
-      "required": ["id", "version"],
+      "required": ["id", "version", "params"],
       "properties": {
         "id": { "description": "The extractor; its jobs are extract.<id>.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64 },
-        "version": { "description": "The extractor's version; a new version reads a Blob again into a new Artifact with new block ids. No - or +, which separate it in the pipeline version.", "type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z._]*$", "maxLength": 64 }
+        "version": { "description": "The extractor's version; a new version reads a Blob again into a new Artifact with new block ids. No - or +, which separate it in the pipeline version.", "type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z._]*$", "maxLength": 64 },
+        "params": { "description": "The params the extractor read the Blob with, {} when it takes none: one Blob read under other params (Markdown or plain text) is another Artifact with other block ids.", "type": "object" }
       }
     },
     "blocks": {
