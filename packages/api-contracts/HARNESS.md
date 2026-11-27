@@ -83,8 +83,9 @@ uv run campuslife-contracts compare fixtures/valid <out>
 - `blocks`의 순서가 ordinal(0부터)입니다. `refs`는 블록의 근거 위치이고, 비어 있으면 근거 없는 블록으로 표시합니다. 모르는 `block_type`은 `text`만으로 표시하고 `payload`는 해석하지 않습니다.
 - 본문 Blob의 바이트는 `canonical_json(body)`입니다(비교기와 같은 함수). 그래서 같은 본문은 같은 Blob이고, 그 Blob을 입력으로 받는 job(#8)의 job_key가 흔들리지 않습니다. Hub가 쓸 때 지킵니다(#5 PR2).
 - block `id`는 Hub가 만드는 소문자 hex SHA-256이고 본문 안에서 하나뿐입니다. LLM은 이 id로만 인용합니다(D13). 클라이언트는 id를 다시 계산하지 않고 그대로 보존합니다.
-- extraction 본문은 추출기 하나의 한 버전이 Blob 하나(`blob`, Artifact의 `subject_ref`는 `blob:<blob>`)에서 읽은 블록입니다. 규칙 두 개는 Hub 검증기만 봅니다.
-  - `block_id`: 블록 `id`는 `canonical_json([blob, extractor.id, extractor.version, ordinal])`의 SHA-256입니다. 같은 Blob·추출기 버전이면 id가 같고, 버전이 바뀌면 새 Artifact에 새 id가 생깁니다(옛 Artifact는 남음).
+- extraction 본문은 추출기 하나의 한 버전이 한 params로 Blob 하나(`blob`, Artifact의 `subject_ref`는 `blob:<blob>`)에서 읽은 블록입니다. `extractor.params`는 필수이고, params가 없는 추출기는 `{}`입니다. 규칙 두 개는 Hub 검증기만 봅니다.
+  - `block_id`: 블록 `id`는 `canonical_json([blob, extractor.id, extractor.version, extractor.params, ordinal])`의 SHA-256입니다. 같은 Blob·추출기·버전·params이면 id가 같습니다. 버전이나 params(예: 같은 Blob을 Markdown과 plain으로 읽음)가 다르면 다른 Artifact에 다른 id가 생기고, 옛 Artifact는 남습니다.
+  - 상한 표의 해시는 id에 넣지 않습니다. 같은 (blob, 추출기, 버전, params) 안에서 상한을 바꿔 다시 추출하면, 같은 ordinal이 다른 내용으로 같은 id를 가질 수 있습니다. 그래서 인용의 기준은 그 subject의 `current` extraction Artifact 하나입니다(#8).
   - `block_anchor`: 모든 ref는 kind와 상관없이 `blob`이 본문의 `blob`과 같고 `capture`가 없습니다. 모르는 kind도 예외가 아닙니다. 추출기 출력은 신뢰할 수 없는 입력이고 이 규칙은 Hub 검증기만 읽기 때문입니다. 정확한 위치를 모르는 블록은 `document`를 씁니다.
 - 본문·블록 크기(블록 수, `text` 길이 등) 상한은 계약에 두지 않습니다. #5 PR2의 상한 표(S7)가 Hub에서 강제합니다.
 - identify 본문(`artifact/identify`)은 Blob 바이트가 보여 주는 형식(`media_type`, 바이트로 더 가를 수 없으면 `text/plain` 같은 계열)과 판별기 `identifier`만 담고 `blocks`는 비어 있습니다. 파일 이름·신고 MIME으로 좁힌 값은 Attachment마다 Hub가 계산해 `detected_mime`에 씁니다. 이름과 바이트가 어긋난다는 사실은 저장하지 않습니다.
