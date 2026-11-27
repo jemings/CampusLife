@@ -181,14 +181,21 @@ async def test_a_suggestion_kept_with_repeated_evidence_puts_each_locator_on_the
     assert locators == [page_at(pdf), page_at(pdf, 3)]
 
 
+@pytest.mark.parametrize("action", ["create_item", "patch_item", "add_relation"])
 @pytest.mark.parametrize("anchor", ["blob", "capture"])
-async def test_a_proposal_whose_evidence_rests_on_what_the_hub_does_not_hold_is_refused(db, blob_store, tmp_path, anchor):
+async def test_a_proposal_whose_evidence_rests_on_what_the_hub_does_not_hold_is_refused(db, blob_store, tmp_path, anchor, action):
     artifact_id, pdf = await grounds(db, blob_store, tmp_path)
+    item_id = new_id()
+    proposals = {
+        "create_item": ASSIGNMENT,
+        "patch_item": due_at_patch(item_id, None, ASSIGNMENT["due_at"]),
+        "add_relation": {"id": f"item:{item_id}|evidence|blob:{pdf}", "from": f"item:{item_id}", "type": "evidence", "to": f"blob:{pdf}"},
+    }
     missing = {"blob": {"v": 1, "kind": "document", "blob": "e" * 64}, "capture": {**SPOKEN, "capture": new_id()}}[anchor]
     before = await feed(db)
 
-    with pytest.raises(suggestions.InvalidSuggestion):
-        await propose(db, artifact_id, evidence=[page_at(pdf), missing])
+    with pytest.raises(suggestions.InvalidSuggestion, match="does not hold"):
+        await propose(db, artifact_id, action, proposals[action], evidence=[page_at(pdf), missing])
 
     assert await feed(db) == before
 
