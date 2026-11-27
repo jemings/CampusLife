@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +21,11 @@ FAKES = tuple(
     fake(name, {}) for name in ("echo", "crash", "hang", "hog", "flood", "garbage", "exit_silently", "refuse", "modules", "zip_walk")
 )
 DOCUMENT = [{"kind": "document"}]
+
+
+def same_path(seen, expected):
+    """Windows may give the same directory by its short name or in another case."""
+    return os.path.normcase(os.path.realpath(seen)) == os.path.normcase(os.path.realpath(expected))
 
 
 def block(text="x", refs=DOCUMENT, **more):
@@ -211,8 +217,8 @@ async def test_the_child_runs_in_its_work_directory_with_only_the_env_it_is_give
         "campuslife_hub.extract.extractors", "campuslife_hub.extract.text",
     }
     assert not {"sqlite3", "socket", "ssl", "http.client", "urllib.request", "campuslife_contracts"} & set(loaded)
-    assert where[0] == str((tmp_path / "work" / job.id).resolve())
-    allowed = {"SYSTEMROOT", "SystemRoot", "WINDIR", "TEMP", "TMP"} if WINDOWS else {"TMPDIR"}
+    assert same_path(where[0], tmp_path / "work" / job.id)
+    allowed = {"SYSTEMROOT", "WINDIR", "TEMP", "TMP"} if WINDOWS else {"TMPDIR"}
     assert set(where[1:]) - {"__PYVENV_LAUNCHER__", "PYTHONHASHSEED", "LC_CTYPE"} <= allowed
     assert not (tmp_path / "work" / job.id).exists()
 

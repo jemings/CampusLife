@@ -238,7 +238,9 @@ async def test_a_program_runs_in_cwd_with_only_the_env_it_is_given(tmp_path, mon
 
     result = await run(probe, cwd=tmp_path, env=bare_env(CAMPUSLIFE_PROBE="given"))
 
-    assert json.loads(result.stdout) == [os.path.realpath(tmp_path), "given", None]
+    cwd, given, parent_only = json.loads(result.stdout)
+    assert os.path.normcase(os.path.realpath(cwd)) == os.path.normcase(os.path.realpath(tmp_path))
+    assert (given, parent_only) == ("given", None)
 
 
 async def test_without_env_the_program_inherits_the_hubs(monkeypatch):
