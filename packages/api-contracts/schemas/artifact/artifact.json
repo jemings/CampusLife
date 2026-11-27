@@ -29,7 +29,7 @@
       "items": { "$ref": "../common/sha256.json" },
       "x-owner": "hub"
     },
-    "content_blob": { "description": "The Artifact's body: for extraction, JSON in artifact/extraction; for a rendition, the rendered PDF Blob itself, the Blob annotations are pinned to (D12).", "$ref": "../common/sha256.json", "x-owner": "hub" },
+    "content_blob": { "description": "The Artifact's body: for extraction, JSON in artifact/extraction, its bytes canonical_json(body); for a rendition, the rendered PDF Blob itself, the Blob annotations are pinned to (D12).", "$ref": "../common/sha256.json", "x-owner": "hub" },
     "created_at": { "$ref": "../common/instant.json", "x-owner": "hub" }
   },
   "$defs": {
