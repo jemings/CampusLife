@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from campuslife_contracts import validate
 from conftest import contract_fixture
@@ -20,16 +22,18 @@ ASSIGNMENT = {
     "due_at": "2026-03-16T14:59:00.000Z",
     "fields": {"course_id": COURSE, "due_text": "3월 16일 23:59까지"},
 }
+RECORDED_AT = datetime(2026, 3, 2, 1, 10, tzinfo=UTC)
+LATER = RECORDED_AT + timedelta(minutes=5)
 
 
-async def grounds(db, blob_store, tmp_path, pipeline="suggest-1"):
+async def grounds(db, blob_store, tmp_path, pipeline="suggest-1", recorded_at=RECORDED_AT):
     """An Artifact to propose from, and the PDF Blob and recording Capture its evidence rests on."""
     pdf = await store_bytes(blob_store, tmp_path, b"%PDF synthetic slides")
     content = await store_bytes(blob_store, tmp_path, pipeline.encode())
     capture = {"id": CAPTURE, "device_id": new_id(), "created_at": "2026-03-02T00:30:00.000Z", "origin": {"type": "manual"}}
     await db.write(lambda tx: store.write(tx, EntityRef(Entity.CAPTURE, CAPTURE), capture))
     job = await db.write(lambda tx: jobs.enqueue(tx, JobSpec("suggest", f"capture:{CAPTURE}", (pdf,), {}), Pipeline(pipeline, "local", "m", "1")))
-    artifact = await db.write(lambda tx: artifacts.record(tx, job, "suggestions", content))
+    artifact = await db.write(lambda tx: artifacts.record(tx, job, "suggestions", content, now=recorded_at))
     return artifact["id"], pdf
 
 
@@ -105,7 +109,7 @@ async def test_a_fingerprint_the_user_decided_is_not_proposed_again(db, device, 
     artifact_id, _ = await grounds(db, blob_store, tmp_path)
     decided = await propose(db, artifact_id)
     await decide(db, device, decision(decided))
-    newer_id, _ = await grounds(db, blob_store, tmp_path, pipeline="suggest-2")
+    newer_id, _ = await grounds(db, blob_store, tmp_path, pipeline="suggest-2", recorded_at=LATER)
     before = await feed(db)
 
     assert await propose(db, newer_id) is None
@@ -118,12 +122,91 @@ async def test_a_newer_artifact_proposing_an_open_fingerprint_supersedes_the_old
     artifact_id, _ = await grounds(db, blob_store, tmp_path)
     older = await propose(db, artifact_id)
     other = await propose(db, artifact_id, fingerprint=OTHER_FINGERPRINT)
-    newer_id, _ = await grounds(db, blob_store, tmp_path, pipeline="suggest-2")
+    newer_id, _ = await grounds(db, blob_store, tmp_path, pipeline="suggest-2", recorded_at=LATER)
 
     newer = await propose(db, newer_id)
 
     assert (newer["source_artifact_id"], newer["state"]) == (newer_id, "open")
     assert [await state_of(db, each) for each in (older, other, newer)] == ["superseded", "open", "open"]
+
+
+async def test_an_older_artifact_proposing_again_leaves_the_newer_suggestion_open(db, blob_store, tmp_path):
+    older_id, _ = await grounds(db, blob_store, tmp_path)
+    older = await propose(db, older_id)
+    newer_id, _ = await grounds(db, blob_store, tmp_path, pipeline="suggest-2", recorded_at=LATER)
+    newer = await propose(db, newer_id)
+    before = await feed(db)
+
+    assert await propose(db, older_id) is None
+
+    assert await feed(db) == before
+    assert [await state_of(db, each) for each in (older, newer)] == ["superseded", "open"]
+
+
+async def test_an_artifact_recorded_at_the_same_instant_leaves_the_open_suggestion_as_it_is(db, blob_store, tmp_path):
+    first_id, _ = await grounds(db, blob_store, tmp_path)
+    first = await propose(db, first_id)
+    second_id, _ = await grounds(db, blob_store, tmp_path, pipeline="suggest-2")
+
+    assert await propose(db, second_id) is None
+
+    assert await state_of(db, first) == "open"
+
+
+async def test_cited_blocks_on_one_page_are_kept_as_one_locator(db, device, blob_store, tmp_path):
+    artifact_id, pdf = await grounds(db, blob_store, tmp_path)
+
+    suggestion = await propose(db, artifact_id, evidence=[page_at(pdf), SPOKEN, page_at(pdf), SPOKEN])
+    assert await decide(db, device, accepting(suggestion)) == {"result": "applied"}
+
+    assert suggestion["evidence"] == [page_at(pdf), SPOKEN]
+    [(item_id, _)] = rows(await feed(db), "item").items()
+    assert rows(await feed(db), "relation")[f"item:{item_id}|evidence|blob:{pdf}"]["locators"] == [page_at(pdf)]
+
+
+@pytest.mark.parametrize("action", ["create_item", "add_relation"])
+async def test_a_suggestion_kept_with_repeated_evidence_puts_each_locator_on_the_relation_once(db, device, blob_store, tmp_path, action):
+    artifact_id, pdf = await grounds(db, blob_store, tmp_path)
+    item_id, create = created_item()
+    await apply(db, device, create)
+    relation_id = f"item:{item_id}|evidence|blob:{pdf}"
+    proposals = {"create_item": ASSIGNMENT, "add_relation": {"id": relation_id, "from": f"item:{item_id}", "type": "evidence", "to": f"blob:{pdf}"}}
+    kept = {"id": new_id(), "source_artifact_id": artifact_id, "action": action, "proposed": proposals[action],
+            "evidence": [page_at(pdf), page_at(pdf, 3), page_at(pdf)], "fingerprint": FINGERPRINT, "state": "open"}
+    await db.write(lambda tx: store.write(tx, EntityRef(Entity.SUGGESTION, kept["id"]), kept))
+
+    assert await decide(db, device, accepting(kept)) == {"result": "applied"}
+
+    [locators] = [row["locators"] for row in rows(await feed(db), "relation").values()]
+    assert locators == [page_at(pdf), page_at(pdf, 3)]
+
+
+@pytest.mark.parametrize("anchor", ["blob", "capture"])
+async def test_a_proposal_whose_evidence_rests_on_what_the_hub_does_not_hold_is_refused(db, blob_store, tmp_path, anchor):
+    artifact_id, pdf = await grounds(db, blob_store, tmp_path)
+    missing = {"blob": {"v": 1, "kind": "document", "blob": "e" * 64}, "capture": {**SPOKEN, "capture": new_id()}}[anchor]
+    before = await feed(db)
+
+    with pytest.raises(suggestions.InvalidSuggestion):
+        await propose(db, artifact_id, evidence=[page_at(pdf), missing])
+
+    assert await feed(db) == before
+
+
+@pytest.mark.parametrize("line_break", ["\r\n", "\r"])
+async def test_proposed_text_is_kept_with_lf_line_ends_and_accepted_as_it_is(db, device, blob_store, tmp_path, line_break):
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+    item_id, create = created_item()
+    await apply(db, device, create)
+    created = await propose(db, artifact_id, proposal={**ASSIGNMENT, "body": f"1주차{line_break}2주차"})
+    patching = await propose(db, artifact_id, "patch_item", {"entity": "item", "id": item_id, "set": {"body": {"from_hash": None, "to": f"a{line_break}b"}}},
+                             fingerprint=OTHER_FINGERPRINT)
+
+    results = [await decide(db, device, accepting(each)) for each in (created, patching)]
+
+    assert (created["proposed"]["body"], patching["proposed"]["set"]["body"]["to"]) == ("1주차\n2주차", "a\nb")
+    assert results == [{"result": "applied"}, {"result": "applied", "applied_fields": ["body"]}]
+    assert sorted(item["body"] for item in rows(await feed(db), "item").values()) == ["1주차\n2주차", "a\nb"]
 
 
 @pytest.mark.parametrize(
@@ -258,6 +341,37 @@ async def test_a_patch_item_whose_item_changed_since_is_a_conflict_and_the_sugge
     assert await state_of(db, suggestion) == "accepted"
 
 
+async def test_a_patch_item_that_lost_every_key_adds_no_evidence(db, device, blob_store, tmp_path):
+    artifact_id, pdf = await grounds(db, blob_store, tmp_path)
+    item_id, create = created_item(due_at="2026-03-16T14:59:00.000Z")
+    await apply(db, device, create)
+    suggestion = await propose(db, artifact_id, "patch_item", due_at_patch(item_id, "2026-03-16T14:59:00.000Z", "2026-03-23T14:59:00.000Z"),
+                               [page_at(pdf)])
+    moved = {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": item_id,
+             "set": {"due_at": {"from": "2026-03-16T14:59:00.000Z", "to": "2026-03-20T14:59:00.000Z"}}}
+    await apply(db, device, moved)
+
+    assert await decide(db, device, accepting(suggestion)) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["due_at"]}
+
+    assert rows(await feed(db), "relation") == {}
+    assert await state_of(db, suggestion) == "accepted"
+
+
+async def test_a_patch_item_that_won_some_keys_adds_its_evidence(db, device, blob_store, tmp_path):
+    artifact_id, pdf = await grounds(db, blob_store, tmp_path)
+    item_id, create = created_item(due_at="2026-03-16T14:59:00.000Z")
+    await apply(db, device, create)
+    proposal = due_at_patch(item_id, "2026-03-16T14:59:00.000Z", "2026-03-23T14:59:00.000Z", title={"from": create["data"]["title"], "to": "과제 3"})
+    suggestion = await propose(db, artifact_id, "patch_item", proposal, [page_at(pdf)])
+    moved = {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": item_id,
+             "set": {"due_at": {"from": "2026-03-16T14:59:00.000Z", "to": "2026-03-20T14:59:00.000Z"}}}
+    await apply(db, device, moved)
+
+    assert await decide(db, device, accepting(suggestion)) == {"result": "conflict", "applied_fields": ["title"], "conflicted_fields": ["due_at"]}
+
+    assert rows(await feed(db), "relation")[f"item:{item_id}|evidence|blob:{pdf}"]["locators"] == [page_at(pdf)]
+
+
 async def test_a_patch_item_on_a_deleted_item_is_rejected_as_deleted_and_stays_open(db, device, blob_store, tmp_path):
     artifact_id, pdf = await grounds(db, blob_store, tmp_path)
     item_id, create = created_item(due_at="2026-03-16T14:59:00.000Z")
@@ -294,6 +408,20 @@ async def test_accepting_another_known_relation_type_creates_it_without_locators
     assert rows(await feed(db), "relation") == {relation["id"]: relation}
 
 
+async def test_accepting_the_contract_supersedes_example_leaves_its_evidence_on_the_suggestion(db, device, blob_store, tmp_path):
+    example = contract_fixture("valid", "suggestion/suggestion", "add_supersedes")
+    for content in (b"foo", b"bar"):
+        await store_bytes(blob_store, tmp_path, content)
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+    suggestion = await propose(db, artifact_id, "add_relation", example["proposed"], example["evidence"], example["fingerprint"])
+
+    assert await decide(db, device, accepting(suggestion)) == {"result": "applied"}
+
+    changes = await feed(db)
+    assert rows(changes, "relation") == {example["proposed"]["id"]: example["proposed"]}
+    assert rows(changes, "suggestion")[suggestion["id"]]["evidence"] == example["evidence"]
+
+
 @pytest.mark.parametrize(("missing", "relation_type"), [(f"blob:{'f' * 64}", "supersedes"), (f"item:{COURSE}", "evidence")])
 async def test_a_relation_whose_end_the_hub_lacks_is_rejected_with_nothing_written(db, device, blob_store, tmp_path, missing, relation_type):
     artifact_id, pdf = await grounds(db, blob_store, tmp_path)
@@ -312,8 +440,12 @@ async def test_evidence_on_something_the_hub_no_longer_holds_rejects_the_accept_
     item_id, create = created_item(due_at="2026-03-16T14:59:00.000Z")
     await apply(db, device, create)
     proposal = ASSIGNMENT if action == "create_item" else due_at_patch(item_id, "2026-03-16T14:59:00.000Z", "2026-03-23T14:59:00.000Z")
-    gone = {**SPOKEN, "capture": new_id()}
-    suggestion = await propose(db, artifact_id, action, proposal, [page_at(pdf), gone])
+    purged = new_id()
+    purged_ref = EntityRef(Entity.CAPTURE, purged)
+    await db.write(lambda tx: store.write(tx, purged_ref, {"id": purged, "device_id": new_id(), "created_at": "2026-03-02T00:30:00.000Z",
+                                                           "origin": {"type": "manual"}}))
+    suggestion = await propose(db, artifact_id, action, proposal, [page_at(pdf), {**SPOKEN, "capture": purged}])
+    await db.write(lambda tx: store.write(tx, purged_ref, None))
     before = await feed(db)
 
     assert await decide(db, device, accepting(suggestion)) == {"result": "rejected", "reason": "link_target_missing"}
@@ -415,7 +547,7 @@ async def test_a_decision_on_a_suggestion_decided_before_changes_nothing(db, dev
 async def test_a_superseded_suggestion_takes_no_decision(db, device, blob_store, tmp_path, decision):
     artifact_id, _ = await grounds(db, blob_store, tmp_path)
     older = await propose(db, artifact_id)
-    newer_id, _ = await grounds(db, blob_store, tmp_path, pipeline="suggest-2")
+    newer_id, _ = await grounds(db, blob_store, tmp_path, pipeline="suggest-2", recorded_at=LATER)
     await propose(db, newer_id)
     before = await feed(db)
 
