@@ -425,17 +425,18 @@ class BlobStore:
 
         A new upload must fit twice in the space free on the data root's volume when it opens: finalize writes
         the combined file while the chunks are still there. Answering that the Blob is stored restarts its
-        collection clock, so it outlives the commit the device sends next.
+        collection clock, so it outlives the commit the device sends next, and ends the device's own upload of it,
+        as finalize does.
         """
         _refuse_outside_contract("blob/upload_request", {"sha256": sha256, "size": size})
 
-        def open_or_resume(tx: Tx) -> StoredBlob | UploadSession:
+        def open_or_resume(tx: Tx) -> tuple[StoredBlob | UploadSession, list[str]]:
             stored = _stored_blob(tx, sha256)
             if stored is not None:
                 if stored.size != size:
                     raise InvalidUpload(f"the stored Blob {sha256} is {stored.size} bytes, not {size}")
                 _restart_collection_clock(tx, sha256)
-                return stored
+                return stored, _end_sessions(tx, "device_id = ? AND sha256 = ?", (device, sha256))
             session = _open_session(tx, device, sha256)
             if session is None:
                 free = self._free_space(self._uploads_dir)
@@ -450,9 +451,11 @@ class BlobStore:
                 raise InvalidUpload(f"the open upload of {sha256} is {session.size} bytes, not {size}")
             else:
                 tx.execute("UPDATE upload_sessions SET touched_at = ? WHERE id = ?", (now_instant(), session.id))
-            return UploadSession(sha256, size, session.chunk_size, self._received(session))
+            return UploadSession(sha256, size, session.chunk_size, self._received(session)), []
 
-        return await self._db.write(open_or_resume)
+        opened, ended = await self._db.write(open_or_resume)
+        await self._discard_sessions(ended)
+        return opened
 
     def _write_staging(self, data: bytes) -> Path:
         staging = self._new_staging_path()
