@@ -47,22 +47,41 @@ def test_the_hub_url_is_the_magicdns_name_without_its_final_dot():
     assert hub_url({}) is None
 
 
+def on_8443(proxy=None, forward=None):
+    """GOOD, plus port 8443 serving / through proxy or forwarding raw TCP to forward."""
+    if forward is not None:
+        return {**GOOD, "TCP": {**GOOD["TCP"], "8443": {"TCPForward": forward}}}
+    return {**GOOD, "TCP": {**GOOD["TCP"], "8443": {"HTTPS": True}}, "Web": {**GOOD["Web"], f"{NAME}:8443": {"Handlers": {"/": {"Proxy": proxy}}}}}
+
+
+ADMIN_MAPPED = "admin port 8731"
+
+
 @pytest.mark.parametrize(
-    ("serve", "said"),
+    "serve",
     [
-        (serving(("/", "http://127.0.0.1:8731")), "admin"),
-        (serving(("/", "http://127.0.0.1:8730"), ("/admin", "http://localhost:8731")), "admin"),
-        (serving(("/", "http://127.0.0.1:8730"), tcp={"443": {"HTTPS": True}, "8443": {"TCPForward": "127.0.0.1:8731"}}), "admin"),
-        ({**GOOD, "Web": {**GOOD["Web"], f"{NAME}:8443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8731"}}}},
-          "TCP": {"443": {"HTTPS": True}, "8443": {"HTTPS": True}}}, "admin"),
+        serving(("/", "http://127.0.0.1:8731")),
+        serving(("/", "http://127.0.0.1:8730"), ("/admin", "http://127.0.0.1:8731")),
+        on_8443(proxy="http://127.0.0.1:8731"),
+        on_8443(proxy="http://localhost:8731"),
+        on_8443(proxy="http://[::1]:8731"),
+        on_8443(forward="127.0.0.1:8731"),
+        on_8443(forward="localhost:8731"),
+        on_8443(forward="[::1]:8731"),
     ],
-    ids=["443 to admin", "a path to admin", "a TCP forward to admin", "another port to admin"],
+    ids=["443 to admin", "a path to admin", "another port to admin", "localhost", "ipv6 loopback", "a TCP forward to admin",
+         "a TCP forward to localhost", "a TCP forward to ipv6 loopback"],
 )
-def test_any_mapping_of_the_admin_port_is_a_problem(serve, said):
+def test_any_mapping_of_the_admin_port_is_a_problem_naming_it(serve):
     verdict = judged(serve)
 
     assert not verdict.ok
-    assert any(said in problem for problem in verdict.problems)
+    assert any(ADMIN_MAPPED in problem for problem in verdict.problems), verdict.problems
+
+
+@pytest.mark.parametrize("target", ["http://192.168.0.10:8731", "http://127.0.0.1:18731"], ids=["another machine", "another port"])
+def test_a_mapping_elsewhere_is_not_named_the_admin_port(target):
+    assert not [problem for problem in judged(on_8443(proxy=target)).problems if ADMIN_MAPPED in problem]
 
 
 @pytest.mark.parametrize("funnel", [{f"{NAME}:443": True}, {f"{NAME}:8443": True}])
