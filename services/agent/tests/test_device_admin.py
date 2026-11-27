@@ -140,6 +140,23 @@ async def test_the_device_page_shows_each_name_escaped_beside_the_start_of_its_i
     assert '<a href="/devices">Devices</a>' in shown
 
 
+async def test_what_a_device_reports_about_itself_is_escaped_on_the_device_page(tmp_path):
+    """app_version and last_error come from the device, and the one-line rule lets <, > and & through."""
+    async with hub(tmp_path, **WITH_URL) as (client, admin):
+        await log_in(client)
+        offer = await devices.offer(admin.core, now=admin.clock(), public_url=PUBLIC_URL, redactor=admin.redactor)
+        request = PairRequest(offer.secret, ClientPlatform.ANDROID, "Fold8", "<img src=x>")
+        phone = await devices.pair(admin.core, request, now=admin.clock(), limiter=PairingLimiter(), redactor=admin.redactor)
+        shown_paired = (await client.get("/devices")).text
+        status = {"app_version": "<i>v</i>", "pending_upload_count": 0, "pending_mutation_count": 0, "open_conflict_count": 0, "last_error": "<b>boom</b>"}
+        await devices.heartbeat(admin.core, phone.device_id, status, now=admin.clock())
+        shown = (await client.get("/devices")).text
+
+    assert "<img src=x>" not in shown_paired and "&lt;img src=x&gt;" in shown_paired
+    assert "<i>v</i>" not in shown and "&lt;i&gt;v&lt;/i&gt;" in shown
+    assert "<b>boom</b>" not in shown and "&lt;b&gt;boom&lt;/b&gt;" in shown
+
+
 async def test_each_device_on_the_page_offers_only_the_changes_its_state_allows(tmp_path):
     async with hub(tmp_path, **WITH_URL) as (client, admin):
         await log_in(client)
@@ -173,6 +190,15 @@ async def test_adding_a_device_shows_the_pairing_offer_as_a_qr_code_and_a_manual
     assert "style=" not in offered.text and "<script" not in offered.text
     assert offered.headers["cache-control"] == "no-store"
     assert isinstance(answer, devices.Paired)
+
+
+async def test_the_secret_a_pairing_offer_shows_is_masked_in_log_lines(tmp_path):
+    async with hub(tmp_path, **WITH_URL) as (client, admin):
+        await log_in(client)
+        _, offered = await submitted(client, "/devices", "/devices/pairing-offer")
+        secret = MANUAL_CODE.search(offered.text).group(1).replace("-", "")
+
+        assert secret not in admin.redactor.redact(f"pairing with {secret}")
 
 
 async def test_a_pairing_offer_is_made_only_by_a_request_from_the_local_ui_itself(tmp_path):
