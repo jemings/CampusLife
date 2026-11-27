@@ -4,6 +4,6 @@
   "suggestion_id": "16fd2706-8baf-433b-82eb-8c7fada847da",
   "edits": {
     "body": "사전 신청자만 입장",
-    "fields.place": "학생회관 2층"
+    "fields.place_text": "학생회관 2층"
   }
 }

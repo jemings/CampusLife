@@ -4,7 +4,7 @@
   "entity": "item",
   "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
   "set": {
-    "fields.place": {
+    "fields.place_text": {
       "from": "공학관 대강당",
       "to": "학생회관 2층"
     }

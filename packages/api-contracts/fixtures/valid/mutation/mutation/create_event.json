@@ -8,7 +8,7 @@
     "title": "AI 특강",
     "fields": {
       "category": "seminar",
-      "place": "공학관 대강당",
+      "place_text": "공학관 대강당",
       "organization_id": "9b2c1f4e-3a5d-4c6b-8e7f-1a2b3c4d5e6f",
       "url": "https://cse.example.invalid/notice/1024"
     },

@@ -34,7 +34,7 @@
       "x-owner": "hub"
     },
     "created_item_id": {
-      "description": "The Item that accepting a create_item made, written in the same transaction, so every device finds the Item a Suggestion became. Only an accepted Suggestion has it.",
+      "description": "The Item that accepting a create_item made, written in the same transaction, so every device finds the Item a Suggestion became. Only an accepted Suggestion has it, never a patch_item or add_relation, which make no Item; an unknown action may.",
       "$ref": "../common/uuid.json",
       "x-owner": "hub"
     }
@@ -81,7 +81,8 @@
       "properties": {
         "action": { "const": "patch_item" },
         "proposed": { "$ref": "#/$defs/item_patch" }
-      }
+      },
+      "not": { "required": ["created_item_id"] }
     },
     "add_relation": {
       "type": "object",
@@ -89,7 +90,8 @@
       "properties": {
         "action": { "const": "add_relation" },
         "proposed": { "description": "The Relation accepting creates.", "$ref": "../relation/relation.json" }
-      }
+      },
+      "not": { "required": ["created_item_id"] }
     },
     "item_proposal": {
       "description": "The Item columns accepting creates: what a client's create sends (mutation item_data), but open like the Item, fields of a known kind included. The Hub picks the new Item's id.",

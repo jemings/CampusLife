@@ -5,7 +5,7 @@
   "description": "A group the user deals with: a department, student council, club, study group or company. Other kinds name it by fields.organization_id. Open.",
   "type": "object",
   "properties": {
-    "category": { "description": "What sort of organization it is, as an open name: a client keeps any value of the pattern and offers the examples.", "type": "string", "pattern": "^[a-z][a-z_]*$", "examples": ["department", "student_council", "club", "study_group", "company"] },
+    "category": { "description": "What sort of organization it is.", "$ref": "../../common/open_name.json", "examples": ["department", "student_council", "club", "study_group", "company"] },
     "url": { "description": "Its web page, as a capture url.", "$ref": "../../capture/capture.json#/properties/url" }
   }
 }

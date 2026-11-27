@@ -8,7 +8,7 @@
     "starts_at": "2026-03-20T06:00:00.000Z",
     "fields": {
       "category": "special_lecture",
-      "place": "공학관 대강당"
+      "place_text": "공학관 대강당"
     }
   },
   "evidence": [

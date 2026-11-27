@@ -128,7 +128,7 @@
       "task": { "$ref": "../item/fields/task.json", "properties": { "progress": true, "reminders": true }, "additionalProperties": false },
       "assignment": { "$ref": "../item/fields/assignment.json", "properties": { "course_id": true, "due_text": true, "submission": true }, "additionalProperties": false },
       "exam": { "$ref": "../item/fields/exam.json", "properties": { "course_id": true, "scope_text": true }, "additionalProperties": false },
-      "event": { "$ref": "../item/fields/event.json", "properties": { "category": true, "place": true, "organization_id": true, "url": true }, "additionalProperties": false },
+      "event": { "$ref": "../item/fields/event.json", "properties": { "category": true, "place_text": true, "organization_id": true, "url": true }, "additionalProperties": false },
       "announcement": { "$ref": "../item/fields/announcement.json", "properties": { "category": true, "organization_id": true, "url": true }, "additionalProperties": false },
       "opportunity": { "$ref": "../item/fields/opportunity.json", "properties": { "category": true, "eligibility_text": true, "due_text": true, "organization_id": true, "url": true }, "additionalProperties": false },
       "organization": { "$ref": "../item/fields/organization.json", "properties": { "category": true, "url": true }, "additionalProperties": false }

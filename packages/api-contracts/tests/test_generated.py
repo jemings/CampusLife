@@ -369,7 +369,7 @@ LENGTHS = {
     "item/fields/course#/properties/instructor": NON_EMPTY,
     "item/fields/course#/properties/room": NON_EMPTY,
     "item/fields/exam#/properties/scope_text": NON_EMPTY,
-    "item/fields/event#/properties/place": NON_EMPTY,
+    "item/fields/event#/properties/place_text": NON_EMPTY,
     "item/fields/opportunity#/properties/due_text": NON_EMPTY,
     "item/fields/opportunity#/properties/eligibility_text": NON_EMPTY,
     "item/item#/properties/title": NON_EMPTY,
