@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import sqlite3
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from campuslife_hub import artifacts, jobs, purge
 from campuslife_hub.artifacts import InvalidArtifact
 from campuslife_hub.blobs import has_blob
 from campuslife_hub.core import open_core
+from campuslife_hub.data_root import Layout
 from campuslife_hub.ingest import INGEST
 from campuslife_hub.job_runner import JobContext, JobRegistry, JobRunner
 from campuslife_hub.jobs import JobSpec, JobState, Pipeline
@@ -498,6 +500,7 @@ import asyncio, os, sys
 from pathlib import Path
 from campuslife_hub import purge
 from campuslife_hub.core import open_core
+from campuslife_hub.data_root import Layout
 
 async def crash(*args, **kwargs):
     os._exit({CRASH})
@@ -611,3 +614,43 @@ async def test_a_blob_purged_while_it_is_being_read_stays_on_the_unfinished_purg
     assert not purged.finished
     assert [finish.finished for finish in finished] == [True]
     assert not blob_store.path_of(sha).exists()
+
+
+SECRET_BODY = "퍼지대상비밀문장XYZZY"
+SECRET_FILENAME = "3주차.pdf"
+
+
+def wal_of(database):
+    return database.with_name(database.name + "-wal")
+
+
+def database_file_bytes(database):
+    return b"".join(path.read_bytes() for path in (database, wal_of(database)) if path.exists())
+
+
+def test_a_connection_with_secure_delete_off_leaves_the_deleted_text_in_the_file(tmp_path):
+    path = tmp_path / "control.db"
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA secure_delete = OFF")
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, text TEXT)")
+    conn.executemany("INSERT INTO t (text) VALUES (?)", [(f"filler {i}",) for i in range(200)] + [(SECRET_BODY,)])
+    conn.execute("DELETE FROM t WHERE text = ?", (SECRET_BODY,))
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+
+    assert SECRET_BODY.encode() in path.read_bytes()
+
+
+async def test_a_purge_leaves_no_deleted_text_in_the_database_file_or_its_wal(db, device, blob_store, tmp_path):
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    await apply(db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": None, "to": SECRET_BODY}}})
+    held_before = database_file_bytes(Layout(tmp_path).database)
+    assert SECRET_BODY.encode() in held_before and SECRET_FILENAME.encode() in held_before
+
+    purged = await purge.purge_blob(db, blob_store, lecture_.pdf, delete_notes=[lecture_.note], hooks=PurgeHooks())
+
+    assert purged.finished
+    left = database_file_bytes(Layout(tmp_path).database)
+    assert SECRET_BODY.encode() not in left
+    assert SECRET_FILENAME.encode() not in left
