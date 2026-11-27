@@ -76,7 +76,7 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 | kind | 주요 fields | 비고 |
 |---|---|---|
 | term | year, semester(first\|summer\|second\|winter), starts_on, ends_on | MVP |
-| course | instructor?, room?, credits?, schedule_slots[]?(local_time_rule), default_cloud_policy?, confirm_each_send? | MVP |
+| course | term_id?, instructor?, room?, credits?, schedule_slots[]?(local_time_rule), default_cloud_policy?, confirm_each_send? | MVP |
 | lecture_session | course_id, date(local_date) | 녹음 시작 시 생성 |
 | assignment | course_id, due_text, submission | MVP |
 | exam | course_id, scope_text | MVP |
