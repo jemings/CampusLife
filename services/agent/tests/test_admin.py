@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException
 from opentelemetry import trace
 
 from campuslife_hub import admin as admin_app
-from campuslife_hub import admin_auth, jobs
+from campuslife_hub import admin_auth, artifacts, backup, jobs, mutations
 from campuslife_hub.admin import Admin, create_app
 from campuslife_hub.admin_auth import (
     HELLO_LIFETIME, LOGIN_CODE_LIFETIME, MAX_SIGNED_BODY_BYTES, SESSION_COOKIE, SESSION_LIFETIME, AdminAuth, hello_mac,
@@ -23,6 +23,7 @@ from campuslife_hub.job_runner import JobContext, JobRegistry, JobRunner
 from campuslife_hub.jobs import Failed, JobSpec, JobState, Pipeline
 from campuslife_hub.listing import AttachmentSummary, CaptureSummary, list_captures
 from campuslife_hub.local_import import import_files
+from campuslife_hub.purge import PurgeHooks
 from campuslife_hub.redaction import Redactor
 
 PORT = 8765
@@ -44,14 +45,15 @@ class Clock:
 
 
 @asynccontextmanager
-async def hub(tmp_path, *, routers=(), clock=None, raise_app_exceptions=True, stop=lambda: None, served_as=lambda app: app):
+async def hub(tmp_path, *, routers=(), clock=None, raise_app_exceptions=True, stop=lambda: None, served_as=lambda app: app, **admin_options):
     """An admin app over a fresh Hub, and a client that talks to it as a browser on this machine would."""
-    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+    async with open_core(tmp_path / "root", create=True, sync_roots=[], purge_hooks=PurgeHooks()) as core:
         redactor = Redactor()
         auth = AdminAuth(TOKEN, redactor, **({"clock": clock} if clock else {}))
         registry = JobRegistry()
         registry.handle("extract.text", EXTRACT, lambda job, context: None)
-        admin = Admin(core, JobRunner(JobContext(core.db, core.blobs, registry)), auth, redactor, status=lambda: {"runner": {"restarts": 0}}, stop=stop)
+        admin = Admin(core, JobRunner(JobContext(core.db, core.blobs, registry)), auth, redactor, status=lambda: {"runner": {"restarts": 0}}, stop=stop,
+                      **({"clock": clock} if clock else {}), **admin_options)
         app = create_app(admin, port=PORT, routers=routers)
         transport = httpx.ASGITransport(app=served_as(app), raise_app_exceptions=raise_app_exceptions)
         async with httpx.AsyncClient(transport=transport, base_url=BASE) as client:
@@ -706,3 +708,134 @@ async def test_an_api_import_the_disk_refuses_is_refused_with_the_reason(tmp_pat
         assert response.status_code == 400
         assert "No space left on device" in response.json()["error"]
         assert await admin.core.db.read(list_captures) == []
+
+
+async def test_the_backup_page_warns_before_the_first_backup_and_backs_up_to_the_folder_given(tmp_path):
+    drive = tmp_path / "drive"
+    async with hub(tmp_path) as (client, admin):
+        await log_in(client)
+        await import_files(admin.core, [source(tmp_path, "week1.pdf")])
+
+        before = await client.get("/backup")
+        made = await client.post("/backup", data={"target": str(drive)}, headers=ORIGIN)
+        after = await client.get("/backup")
+
+    assert "No backup yet" in before.text
+    assert made.status_code == 200
+    [generation] = backup.generations(drive)
+    assert generation in made.text and "1 Blobs, 1 copied" in made.text
+    assert "No backup yet" not in after.text and "warning" not in after.text
+    assert f'value="{drive.resolve()}"' in after.text
+
+
+async def test_a_backup_from_the_local_ui_keeps_as_many_generations_as_the_hub_is_set_to(tmp_path):
+    drive = tmp_path / "drive"
+    async with hub(tmp_path, backup_settings=backup.BackupSettings(keep=1)) as (client, admin):
+        await log_in(client)
+        page = await client.get("/backup")
+        first = await client.post("/backup", data={"target": str(drive)}, headers=ORIGIN)
+        second = await client.post("/backup", data={"target": str(drive)}, headers=ORIGIN)
+
+    [kept] = backup.generations(drive)
+    assert "newest 1 generations" in page.text
+    assert kept in second.text and "Removed the older generations" in second.text
+    assert kept not in first.text
+
+
+async def test_the_captures_page_warns_once_the_last_backup_is_older_than_the_warning_period(tmp_path):
+    clock = Clock()
+    clock.now = datetime.now(UTC)
+    async with hub(tmp_path, clock=clock, backup_settings=backup.BackupSettings(keep=5, warn_after=timedelta(days=3))) as (client, admin):
+        await log_in(client)
+        never = await client.get("/")
+        await backup.back_up(admin.core, tmp_path / "drive")
+        fresh = await client.get("/")
+        clock.now += timedelta(days=3, minutes=1)
+        await log_in(client)
+        stale = await client.get("/")
+
+    assert "No backup yet" in never.text
+    assert 'class="warning"' not in fresh.text
+    assert 'class="warning"' in stale.text and "more than 3 days" in stale.text
+
+
+async def test_the_admin_api_backs_up_and_the_status_reports_the_last_backup(tmp_path):
+    drive = tmp_path / "drive"
+    async with hub(tmp_path) as (client, admin):
+        before = (await client.get("/api/status", auth=SIGNED)).json()["backup"]
+        made = await client.post("/api/backup", json={"target": str(drive), "keep": 2}, auth=SIGNED)
+        after = (await client.get("/api/status", auth=SIGNED)).json()["backup"]
+
+    assert before == {"last": None, "overdue": True, "warn_after_days": 7, "keep": 5}
+    assert made.status_code == 200
+    assert made.json()["generation"] == backup.generations(drive)[0]
+    assert after["last"]["generation"] == made.json()["generation"] and after["overdue"] is False
+
+
+@pytest.mark.parametrize("body", [{"target": "inside"}, {"target": ""}, {"target": "elsewhere", "keep": 0}, {}], ids=["data root", "empty", "keep 0", "none"])
+async def test_a_backup_the_hub_cannot_make_is_refused_with_the_reason(tmp_path, body):
+    async with hub(tmp_path) as (client, admin):
+        places = {"inside": str(admin.core.layout.root / "backup"), "elsewhere": str(tmp_path / "drive"), "": ""}
+        response = await client.post("/api/backup", json={**body, **({"target": places[body["target"]]} if "target" in body else {})}, auth=SIGNED)
+
+    assert response.status_code == 400
+    assert response.json()["error"]
+    assert not (tmp_path / "drive").exists()
+
+
+async def a_fork_note(admin, tmp_path):
+    """An imported PDF, an Artifact made from it and a Note forked from that Artifact."""
+    await import_files(admin.core, [source(tmp_path, "week3.pdf", b"%PDF synthetic week 3")])
+    [(attachment_id, sha)] = await admin.core.db.read(lambda snap: snap.execute("SELECT id, blob_sha256 FROM attachments").fetchall())
+    job = await admin.core.db.write(lambda tx: jobs.enqueue(tx, JobSpec("extract.text", f"attachment:{attachment_id}", (sha,), {}), EXTRACT))
+    content = (await admin.core.blobs.put_file(source(tmp_path, "text.txt", b"week 3 text"))).sha256
+    artifact = await admin.core.db.write(lambda tx: artifacts.record(tx, job, "ocr", content))
+    note_id = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+    create = {"mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301", "op": "create", "entity": "item", "id": note_id,
+              "data": {"kind": "note", "title": "3주차 <정리>", "fields": {"forked_from_artifact": artifact["id"]}}}
+    assert (await mutations.apply(admin.core.db, [create], admin.core.hub_device))[0]["result"] == "applied"
+    return sha, note_id
+
+
+async def test_the_purge_page_shows_what_goes_asks_about_fork_notes_and_says_backups_still_hold_it(tmp_path):
+    async with hub(tmp_path) as (client, admin):
+        await log_in(client)
+        sha, note_id = await a_fork_note(admin, tmp_path)
+
+        captures = await client.get("/")
+        page = await client.get(f"/blobs/{sha}/purge")
+
+    assert f'href="/blobs/{sha}/purge"' in captures.text
+    assert page.status_code == 200
+    assert "week3.pdf" in page.text and "1 Artifacts" in page.text
+    assert f'name="delete_note" value="{note_id}"' in page.text and "3주차 &lt;정리&gt;" in page.text
+    assert "Delete these Notes too?" in page.text
+    assert "backup generations" in page.text.lower()
+
+
+@pytest.mark.parametrize("chosen", [True, False], ids=["notes chosen", "notes kept"])
+async def test_purging_from_the_local_ui_removes_the_blob_and_the_notes_chosen(tmp_path, chosen):
+    async with hub(tmp_path) as (client, admin):
+        await log_in(client)
+        sha, note_id = await a_fork_note(admin, tmp_path)
+
+        response = await client.post(f"/blobs/{sha}/purge", data={"delete_note": note_id} if chosen else {}, headers=ORIGIN)
+
+        note = await admin.core.db.read(lambda snap: snap.execute("SELECT data FROM items WHERE id = ?", (note_id,)).fetchone())
+        attachments = await admin.core.db.read(lambda snap: snap.execute("SELECT count(*) FROM attachments").fetchone())
+        assert not admin.core.blobs.path_of(sha).exists()
+
+    assert response.status_code == 200 and "Purged" in response.text
+    assert attachments == (0,)
+    assert (note is None) is chosen
+    if not chosen:
+        assert "evidence_purged_at" in json.loads(note[0])
+
+
+@pytest.mark.parametrize("blob", ["e" * 64, "not-a-sha256"])
+async def test_a_purge_page_for_a_blob_the_hub_does_not_hold_is_not_found(tmp_path, blob):
+    async with hub(tmp_path) as (client, _):
+        await log_in(client)
+
+        assert (await client.get(f"/blobs/{blob}/purge")).status_code == 404
+        assert (await client.post(f"/blobs/{blob}/purge", headers=ORIGIN)).status_code == 404

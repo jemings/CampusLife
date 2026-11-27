@@ -17,7 +17,7 @@ from conftest import SignedAs
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 
-from campuslife_hub import host, jobs, mutations, purge
+from campuslife_hub import backup, host, jobs, mutations, purge
 from campuslife_hub.core import open_core
 from campuslife_hub.db import Database
 from campuslife_hub.host import HostConfig, PortTaken
@@ -206,6 +206,15 @@ async def test_maintenance_runs_every_period_with_the_hosts_clock(tmp_path):
             return counts == [0, 0, 0]
 
         await until(all_forgotten)
+
+
+async def test_the_backup_settings_reach_the_admin_listener(tmp_path):
+    settings = backup.BackupSettings(keep=3, warn_after=timedelta(days=2))
+
+    async with serving(tmp_path, config={"backup": settings}) as (core, client, *_):
+        reported = (await client.get("/api/status", auth=SIGNED)).json()["backup"]
+
+    assert (reported["keep"], reported["warn_after_days"]) == (3, 2)
 
 
 async def test_maintenance_finishes_a_purge_left_unfinished(tmp_path):
