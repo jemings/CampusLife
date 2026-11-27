@@ -42,7 +42,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import store
-from .blobs import BLOB_REFERENCES, READ_ONLY, BlobStore, copy_hashing, fsync_directory
+from .blobs import BLOB_REFERENCES, READ_ONLY, BlobStore, copy_hashing, fsync_directory, with_lock_retry
 from .clock import instant
 from .core import Core, safe_data_root
 from .data_root import Layout
@@ -148,7 +148,7 @@ def _remove(path: Path) -> None:
     """Remove a file, read-only ones included (E9); one already gone is fine."""
     with suppress(FileNotFoundError):
         os.chmod(path, WRITABLE)
-        path.unlink()
+        with_lock_retry(path.unlink)
 
 
 def _remove_tree(path: Path) -> None:
@@ -156,8 +156,18 @@ def _remove_tree(path: Path) -> None:
 
 
 def _replace_durably(partial: Path, final: Path) -> None:
-    os.replace(partial, final)
+    with_lock_retry(lambda: os.replace(partial, final))
     fsync_directory(final.parent)
+
+
+def _copy(source: Path, partial: Path) -> str:
+    """Copy source to partial; the sha256 of what it copied."""
+
+    def attempt() -> str:
+        _remove(partial)
+        return copy_hashing([source], partial).sha256
+
+    return with_lock_retry(attempt)
 
 
 def _snapshot(database: Path, into: Path) -> _Snapshot:
@@ -192,7 +202,7 @@ def _copy_blobs(blobs: BlobStore, into: Path, wanted: Iterable[tuple[str, int]])
             continue
         partial = into / f".copy-{uuid.uuid4()}{PARTIAL}"
         try:
-            if copy_hashing([source], partial).sha256 != sha256:
+            if _copy(source, partial) != sha256:
                 missing.append(sha256)
                 continue
             final.parent.mkdir(parents=True, exist_ok=True)
@@ -362,7 +372,7 @@ def _restore_blob(source: Path, layout: Layout, sha256: str) -> None:
     layout.staging.mkdir(parents=True, exist_ok=True)
     partial = layout.staging / f"{uuid.uuid4()}{PARTIAL}"
     try:
-        if copy_hashing([drive_copy], partial).sha256 != sha256:
+        if _copy(drive_copy, partial) != sha256:
             raise RestoreRefused(f"Blob {sha256} on the backup drive is damaged")
         final = _blob_at(layout.blobs, sha256)
         final.parent.mkdir(parents=True, exist_ok=True)
@@ -385,7 +395,7 @@ def _place(source: Path, name: str, manifest: dict, layout: Layout, epoch: str) 
     layout.database.parent.mkdir(parents=True, exist_ok=True)
     partial = layout.database.with_name(layout.database.name + PARTIAL)
     try:
-        if copy_hashing([snapshot], partial).sha256 != manifest["database"]["sha256"]:
+        if _copy(snapshot, partial) != manifest["database"]["sha256"]:
             raise RestoreRefused(f"the snapshot of generation {name} is damaged")
         _reissue(partial, epoch)
         for blob in manifest["blobs"]:
