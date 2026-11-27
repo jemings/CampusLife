@@ -35,14 +35,17 @@ class ReferenceDdlTest {
         val notNull: Boolean,
         val default: String?,
         val primaryKeyPosition: Int,
+        val hidden: Int,
     )
+
+    private data class IndexColumn(val name: String?, val descending: Boolean, val collation: String?, val key: Boolean)
 
     private data class Index(
         val name: String,
         val unique: Boolean,
         val origin: String,
         val partial: Boolean,
-        val columns: List<String>,
+        val columns: List<IndexColumn>,
     )
 
     private data class ForeignKey(
@@ -71,7 +74,8 @@ class ReferenceDdlTest {
 
         fun index(row: List<String?>): Index {
             val name = row[1]!!
-            val columns = rows("PRAGMA index_info(`$name`)").sortedBy { it[0]!!.toInt() }.map { it[2]!! }
+            val columns = rows("PRAGMA index_xinfo(`$name`)").sortedBy { it[0]!!.toInt() }
+                .map { IndexColumn(it[2], it[3] == "1", it[4], it[5] == "1") }
             return Index(name, row[2] == "1", row[3]!!, row[4] == "1", columns)
         }
 
@@ -81,7 +85,8 @@ class ReferenceDdlTest {
         )
         return tables.associate { (name, sql) ->
             name!! to Table(
-                columns = rows("PRAGMA table_info(`$name`)").map { Column(it[1]!!, it[2]!!, it[3] == "1", it[4], it[5]!!.toInt()) },
+                columns = rows("PRAGMA table_xinfo(`$name`)")
+                    .map { Column(it[1]!!, it[2]!!, it[3] == "1", it[4], it[5]!!.toInt(), it[6]!!.toInt()) },
                 autoincrement = sql!!.contains("AUTOINCREMENT", ignoreCase = true),
                 indexes = rows("PRAGMA index_list(`$name`)").map(::index).toSet(),
                 foreignKeys = rows("PRAGMA foreign_key_list(`$name`)").map { ForeignKey(it[2]!!, it[3]!!, it[4]!!, it[5]!!, it[6]!!) }.toSet(),
