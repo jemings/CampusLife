@@ -8,6 +8,9 @@ DDL = Path(__file__).resolve().parents[1] / "ddl" / "client.sql"
 
 ROOM_COLUMN_TYPES = {"INTEGER", "TEXT", "REAL", "BLOB"}
 
+# The clauses the header of ddl/client.sql keeps out of the file.
+KEPT_OUT = re.compile(r"\b(CHECK|COLLATE|GENERATED|DEFERRABLE|DESC)\b|\bON\s+CONFLICT\b", re.IGNORECASE)
+
 
 @pytest.fixture
 def db():
@@ -52,11 +55,13 @@ def test_ddl_uses_only_what_room_can_declare(db):
         ).fetchone()
         assert (table, strict, without_rowid) == (table, 0, 0)
         (sql,) = db.execute("SELECT sql FROM sqlite_master WHERE name = ?", (table,)).fetchone()
-        assert not re.search(r"\bCHECK\b", sql, re.IGNORECASE), table
+        assert not KEPT_OUT.search(sql), table
         for row in db.execute(f"PRAGMA table_info({table})"):
             assert row[2] in ROOM_COLUMN_TYPES, (table, row[1], row[2])
         for row in db.execute(f"PRAGMA index_list({table})"):
             assert row[4] == 0, (table, row[1])
+    for name, sql in db.execute("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL"):
+        assert not KEPT_OUT.search(sql), name
 
 
 def test_outbox_order_is_never_reused(db):
