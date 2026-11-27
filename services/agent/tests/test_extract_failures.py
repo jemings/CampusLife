@@ -143,8 +143,9 @@ async def test_a_result_that_breaks_the_contract_is_refused_and_nothing_is_recor
         (Limits(max_blocks=2), [block()] * 3),
         (Limits(max_block_text_chars=4), [block("12345")]),
         (Limits(body_max_bytes=600), [block("x" * 100)] * 3),
+        (Limits(max_text_chars=5), [block("abc")] * 2),
     ],
-    ids=["blocks", "block text", "body bytes"],
+    ids=["blocks", "block text", "body bytes", "total text"],
 )
 async def test_a_result_past_a_size_limit_fails_with_unsafe_input(db, device, blob_store, tmp_path, limits, blocks):
     hub = hub_with(db, blob_store, device, tmp_path, *FAKES, limits=limits)
@@ -156,7 +157,7 @@ async def test_a_result_past_a_size_limit_fails_with_unsafe_input(db, device, bl
 
 
 async def test_a_result_at_the_size_limits_is_recorded(db, device, blob_store, tmp_path):
-    hub = hub_with(db, blob_store, device, tmp_path, *FAKES, limits=Limits(max_blocks=2, max_block_text_chars=4))
+    hub = hub_with(db, blob_store, device, tmp_path, *FAKES, limits=Limits(max_blocks=2, max_block_text_chars=4, max_text_chars=8))
 
     job = await ran(hub, "echo", {"blocks": [block("1234")] * 2})
 
