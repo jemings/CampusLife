@@ -745,6 +745,18 @@ def exit_code(*args):
         return exited.code
 
 
+@pytest.mark.parametrize(("option", "said"), [
+    ("--admin-port", "argument --admin-port: 'abc' is not a port (0 to 65535)"),
+    ("--backup-keep", "argument --backup-keep: 'abc' is not a whole number of at least 1"),
+])
+def test_a_serve_option_that_is_not_a_number_is_refused_in_words_a_person_reads(tmp_path, capsys, option, said):
+    assert exit_code(tmp_path / "CampusLife", "serve", option, "abc") == 2
+
+    shown = capsys.readouterr().err
+    assert said in shown
+    assert "_port" not in shown and "_at_least_one" not in shown
+
+
 @pytest.mark.parametrize(("command", "code", "said"), [
     (["restore", "--from", "{drive}"], 1, "is not empty"),
     (["backup", "--to", "{root}/inside"], 1, "inside the data root"),
