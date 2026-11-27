@@ -100,6 +100,7 @@ def write(path, data):
         (lambda path: write(path, b"\0\0\0\x18ftypisom" + bytes(8)), formats.MP4),
         (lambda path: write(path, b"ID3\x04" + bytes(16)), formats.MP3),
         (lambda path: write(path, b"\x00\x01binary\x00"), formats.UNKNOWN),
+        (lambda path: write(path, "본문 without a BOM".encode("utf-16-le")), formats.UNKNOWN),
         (lambda path: write(path, b"\xc3\x28 not utf-8 nor cp949 \x80\xff"), formats.UNKNOWN),
     ],
 )

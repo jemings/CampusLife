@@ -28,6 +28,7 @@ def test_a_plain_archive_opens_and_its_members_read_back(tmp_path):
         (make.drive_letter, Status.UNSAFE_INPUT),
         (make.symlink, Status.UNSAFE_INPUT),
         (make.bomb, Status.UNSAFE_INPUT),
+        (make.listed_twice, Status.UNSAFE_INPUT),
         (make.encrypted_member, Status.PASSWORD_REQUIRED),
     ],
 )
@@ -58,6 +59,19 @@ def test_each_zip_limit_of_the_table_holds(tmp_path, limits, case):
     assert refusal(path, limits) is Status.UNSAFE_INPUT
     with open_zip(path, Limits()) as archive:
         assert archive.members
+
+
+def test_a_member_that_declares_fewer_bytes_than_it_holds_is_read_to_its_declared_size_and_found_corrupt(tmp_path):
+    with open_zip(make.understated(tmp_path / "x.zip"), LIMITS) as archive, pytest.raises(Refused) as refused:
+        archive.read("a.txt")
+
+    assert refused.value.status is Status.CORRUPT
+
+
+def test_a_member_name_ends_at_its_first_nul(tmp_path):
+    with open_zip(make.nul_in_name(tmp_path / "x.zip"), LIMITS) as archive:
+        assert [member.name for member in archive.members] == ["notes.txt"]
+        assert archive.read("notes.txt") == b"notes"
 
 
 def test_the_limits_allow_exactly_their_bound(tmp_path):

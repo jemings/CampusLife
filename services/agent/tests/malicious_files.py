@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import stat
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -100,6 +101,35 @@ def nested(path: Path, depth: int) -> Path:
             archive.writestr(name, data)
         data, name = buffer.getvalue(), "inner.zip"
     path.write_bytes(data)
+    return path
+
+
+def listed_twice(path: Path) -> Path:
+    """A .docx whose main part is listed twice, so a reader could take either."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return _zip(path, [("word/document.xml", b"<w:document/>"), ("word/document.xml", b"<w:document>other</w:document>")])
+
+
+def _patched(data: bytearray, signature: bytes, offset: int, value: bytes) -> None:
+    at = data.find(signature)
+    data[at + offset:at + offset + len(value)] = value
+
+
+def understated(path: Path) -> Path:
+    """A member whose headers declare 10 of its 1,000 bytes."""
+    _zip(path, [("a.txt", b"a" * 1000)])
+    data = bytearray(path.read_bytes())
+    _patched(data, b"PK\x01\x02", 24, (10).to_bytes(4, "little"))
+    _patched(data, b"PK\x03\x04", 22, (10).to_bytes(4, "little"))
+    path.write_bytes(bytes(data))
+    return path
+
+
+def nul_in_name(path: Path) -> Path:
+    """A member named notes.txt, a NUL, then a path that climbs out."""
+    _zip(path, [("notes.txt#../../x", b"notes")])
+    path.write_bytes(path.read_bytes().replace(b"notes.txt#", b"notes.txt\x00"))
     return path
 
 
