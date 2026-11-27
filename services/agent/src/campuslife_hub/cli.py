@@ -293,28 +293,40 @@ async def _devices(root: Path) -> None:
         print(DORMANT_HINT)
 
 
-async def _change_device(root: Path, action: str, device: str) -> bool:
-    """Whether revoke or approve changed device, done by the serving Hub or, with none, here under the lock."""
+async def _change_device(root: Path, action: str, device: str) -> tuple[bool, dict | None]:
+    """Whether revoke or approve changed device, done by the serving Hub or, with none, here under the lock, and the
+    device as it was before."""
     change = {"revoke": devices.revoke, "approve": devices.approve}[action]
     try:
         async with open_core(root, create=False) as core:
-            return await change(core, device, now=datetime.now(UTC))
+            before = await core.db.read(lambda snap: devices.device(snap, device))
+            return await change(core, device, now=datetime.now(UTC)), None if before is None else asdict(before)
     except AlreadyRunning as held:
-        return _through_the_holder(root, held, "POST", f"/api/devices/{device}/{action}")["changed"]
+        listed = _through_the_holder(root, held, "GET", "/api/devices")["devices"]
+        changed = _through_the_holder(root, held, "POST", f"/api/devices/{device}/{action}")["changed"]
+        return changed, next((known for known in listed if known["id"] == device), None)
 
 
 async def _revoke(root: Path, device: str) -> None:
-    if await _change_device(root, "revoke", device):
+    changed, _ = await _change_device(root, "revoke", device)
+    if changed:
         print(f"revoked {device}: its next request is refused and its unfinished uploads end")
     else:
         print(f"{device} was revoked already")
 
 
 async def _approve(root: Path, device: str) -> None:
-    if await _change_device(root, "approve", device):
-        print(f"approved {device}: it syncs again with the token it holds")
-    else:
+    changed, before = await _change_device(root, "approve", device)
+    if not changed:
         print(f"{device} is active already")
+        return
+    seen = (
+        f" ({before['platform']} {before['device_name']}, last seen {before['last_seen_at'] or 'never'}, "
+        f"last refused {before['last_rejected_at'] or 'never'})"
+        if before is not None
+        else ""
+    )
+    print(f"approved {device}{seen}: it syncs again with the token it holds")
 
 
 async def _fsck(root: Path) -> None:
