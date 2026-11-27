@@ -89,7 +89,7 @@
       "additionalProperties": false
     },
     "item_data": {
-      "description": "The Item columns a client writes; id is the envelope's, schema_version, rev and deleted_at are the Hub's. Closed, fields included.",
+      "description": "The Item columns a client writes; id is the envelope's, schema_version, rev, deleted_at and evidence_purged_at are the Hub's. Closed, fields included.",
       "type": "object",
       "required": ["kind", "title", "fields"],
       "properties": {

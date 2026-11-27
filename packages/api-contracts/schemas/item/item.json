@@ -22,6 +22,7 @@
     "fields": { "description": "Kind-specific members, checked against item/fields/<kind> for the MVP kinds.", "type": "object", "x-owner": "user" },
     "rev": { "description": "change_seq of the row's last write (D3).", "$ref": "../common/int64.json#/$defs/non_negative", "x-owner": "hub" },
     "deleted_at": { "$ref": "../common/instant.json", "x-owner": "hub" },
+    "evidence_purged_at": { "description": "When a purge (U2) removed the Artifact this note was forked from (fields.forked_from_artifact): the note stays, its evidence links are gone, and the Hub keeps the Artifact id as it was.", "$ref": "../common/instant.json", "x-owner": "hub" },
     "status": { "description": "Removed from the common columns (U4); refused even in this open shape so it does not come back by accident.", "not": {} }
   },
   "allOf": [{ "$ref": "#/$defs/dates_follow_all_day" }, { "$ref": "#/$defs/fields_of_kind" }],
