@@ -44,11 +44,13 @@
 | `GET /v1/blobs/{sha}` | Range 다운로드, ETag = sha256 |
 | `POST /v1/mutations` | `capture.commit`, Item patch, `suggestion.accept`, `layer.adopt` 등 모든 쓰기 (배치, 순서 보존) |
 | `GET /v1/changes?since=` | 바뀐 행의 현재 상태, `hub_id`, `epoch` |
-| `GET /v1/hub` | `hub_id`, `epoch`, `min_client_version` |
+| `GET /v1/hub` | `hub_id`, `epoch`, `contract_version`, `min_contract_version`(E18) |
 | `POST /v1/devices/me/status` | 진단용 heartbeat(대기 건수, 저장 공간, 마지막 오류) |
 | admin 포트 | pairing secret 발급, 장치 목록, revoke, 로컬 웹 UI |
 
 경로와 payload는 `packages/api-contracts`의 JSON Schema/OpenAPI가 기준이며, golden fixture로 세 언어 구현을 검증합니다(D17).
+
+Hub의 sync 리스너(`127.0.0.1:8730`, D22)는 모든 응답에 `CampusLife-Hub-Id`·`CampusLife-Epoch`를 붙이고, 요청을 `CampusLife-Contract` → 장치 토큰 → 계약 버전 → 본문 순서로 판정합니다. 이 헤더가 없는 응답(Hub가 꺼졌을 때 serve가 내는 502 등)은 Hub에 닿지 못한 것으로 보고 backoff합니다. pairing·토큰 재발급·heartbeat 경로는 #19가 같은 리스너에 붙입니다.
 
 ### 3.1 수집 업로드 (D7)
 
@@ -60,7 +62,7 @@
 3. chunk는 순서와 무관하게 `PUT /v1/blobs/uploads/{sha}/chunks/{i}`하며, 같은 바이트를 다시 보내도 no-op입니다. 그래서 iOS 백그라운드 task가 뒤섞인 순서로 끝나도 안전합니다. 이미 받은 번호에 다른 바이트가 오면 409 `chunk_mismatch`입니다.
 4. `POST /v1/blobs/uploads/{sha}/finalize`에서 Hub는 전체 sha256·size를 검증하고 같은 볼륨에서 원자 이동한 뒤 Blob을 등록합니다(200 `{sha256, size}`). 빠진 chunk가 있으면 409 `incomplete`(`missing_chunks`), 해시가 맞지 않으면 chunk를 폐기하고 409 `hash_mismatch`입니다. 이미 저장된 Blob의 finalize는 세션이 없어도 200이라 다시 보내도 됩니다.
 5. 모든 Blob이 올라가면 `capture.commit` Mutation을 보냅니다. 참조한 Blob 중 하나라도 없으면 `retry{missing_blobs}`가 오고, 모두 있으면 한 트랜잭션으로 Capture·Attachment·초기 ProcessingJob을 등록하고 `applied`(= ACK)를 돌려줍니다.
-6. 같은 capture_id + 같은 내용은 이전 결과를 반환하고, 다른 내용이면 `409 id_reuse`입니다.
+6. 같은 `mutation_id`의 재전송은 `duplicate`(+`original`)입니다. 다른 `mutation_id`로 같은 capture_id + 같은 내용이 오면 `applied`(no-op), 다른 내용이면 HTTP 200 배치 응답 안의 `rejected{reason: id_reuse}`입니다(E7, E12).
 7. 로컬 원본은 ACK + Hub `backed_up_at` + 보존 기간이 지나야 정리합니다(D14).
 
 Hub에는 반쯤 도착한 Capture가 없습니다.
@@ -77,13 +79,14 @@ Hub에는 반쯤 도착한 Capture가 없습니다.
 
 ### 3.3 Mutation과 충돌 (D18)
 
-- 형식: `{mutation_id, entity, id, op, set:{field:{from, to}}}`. 긴 텍스트는 `from_hash`를 보냅니다.
+- 형식: `op`로 구분하는 union입니다(E11). patch는 `{mutation_id, op: "patch", entity, id, set:{key:{from, to}}}`이고, `x-text` 열(긴 텍스트)은 `from` 대신 `from_hash`를 보냅니다.
+- `POST /v1/mutations`의 배치는 1–200개이고 순서대로 적용합니다. 한 장치의 배치는 한 번에 하나씩 적용되므로, 응답을 못 받고 다시 보낸 배치는 앞 배치가 끝난 뒤 `duplicate`를 받습니다.
 - Hub의 현재 값이 `from`과 같으면 적용합니다. 다르면 그 필드만 충돌입니다.
   - 스칼라 필드: 충돌한 필드만 제외하고 나머지를 적용합니다.
-  - 텍스트 본문: Hub 값을 유지하고, 제출된 값을 ConflictRecord로 보존한 뒤 사용자에게 비교 UI를 띄웁니다.
+  - 텍스트 본문: Hub 값을 유지하고 제출된 값을 보존합니다. ConflictRecord와 비교 UI는 #18이고, 그전에는 동기화하지 않는 `conflict_stash`에 둡니다(D21 E8).
   - Relation·Tag: 독립 행이라 충돌이 없습니다.
-  - 삭제된 엔터티에 온 patch: 거부하되 제출 값은 ConflictRecord로 보존합니다.
-- 결과 종류: `applied | duplicate | conflict | rejected | retry`. `rejected`는 큐를 막지 않고 "확인 필요" 목록으로 옮깁니다.
+  - 지워진 엔터티에 온 patch: `rejected{deleted}`이고 제출 값은 같은 방식으로 보존합니다.
+- 결과 종류: `applied | duplicate | conflict | rejected | retry | not_attempted`(E12). 첫 `retry` 뒤는 `not_attempted`이고, `rejected`는 큐를 막지 않고 "확인 필요" 목록으로 옮깁니다.
 - 클라이언트는 로컬에 낙관적으로 먼저 반영하고, conflict 응답을 받으면 Hub 상태로 덮어씁니다. 클라이언트에는 병합 로직이 없습니다.
 - 한 장치의 outbox는 FIFO라서 "Course 생성 → capture.commit" 같은 의존 순서가 자연스럽게 지켜집니다.
 
