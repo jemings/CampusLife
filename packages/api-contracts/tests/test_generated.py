@@ -289,6 +289,7 @@ REQUIRED = {
     "artifact/extraction#": {"v", "blob", "extractor", "blocks"},
     "artifact/extraction#/properties/extractor": {"id", "version"},
     "artifact/extraction#/$defs/warning": {"code"},
+    "artifact/identify#": {"v", "blob", "identifier", "media_type", "blocks"},
     "locator/locator#": {"v", "kind"},
     "locator/locator#/$defs/known": {"v", "kind"},
     "suggestion/suggestion#": {"id", "source_artifact_id", "action", "proposed", "evidence", "fingerprint", "state"},

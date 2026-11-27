@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/artifact/identify.json",
+  "title": "Identify body",
+  "description": "The body of an identify Artifact (#5): the media type one identifier version read from the bytes of one Blob, whatever the Blob is named. The Artifact's subject_ref is blob:<blob>. Only what the bytes tell: a family such as text/plain where the bytes cannot tell more. A file name or a declared type narrows it for each Attachment, and that narrowing, with a name the bytes disagree with, is not stored here. It has no blocks. Open, as artifact/body.",
+  "$ref": "body.json",
+  "type": "object",
+  "required": ["v", "blob", "identifier", "media_type", "blocks"],
+  "properties": {
+    "blob": { "description": "The Blob whose bytes were read.", "$ref": "../common/sha256.json" },
+    "identifier": { "description": "The identifier and its version; a new version reads a Blob again into a new Artifact.", "$ref": "extraction.json#/properties/extractor" },
+    "media_type": { "description": "The media type the bytes show, application/octet-stream when they show none the identifier knows.", "$ref": "../capture/attachment.json#/$defs/mime" },
+    "blocks": { "description": "Always empty.", "maxItems": 0 }
+  }
+}

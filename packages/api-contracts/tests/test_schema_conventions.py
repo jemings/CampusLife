@@ -191,7 +191,7 @@ def test_the_strings_a_device_reports_are_one_line_text():
     assert status["last_error"]["$ref"] == "pair_request.json#/$defs/one_line"
 
 
-ARTIFACT_BODY_SCHEMAS = {"extraction": "artifact/extraction"}
+ARTIFACT_BODY_SCHEMAS = {"extraction": "artifact/extraction", "identify": "artifact/identify"}
 """The artifact types whose content Blob is JSON in the artifact/body envelope. A rendition's content Blob is the
 rendered PDF itself (D12: annotations and pins hold that Blob), so it has no body schema."""
 
