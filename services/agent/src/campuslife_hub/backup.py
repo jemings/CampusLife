@@ -392,6 +392,8 @@ async def restore(source: Path, root: Path, *, generation: str | None = None, sy
     layout.root.mkdir(parents=True, exist_ok=True)
     epoch = str(uuid.uuid4())
     with HubLock.acquire(layout.lock_file) as lock:
+        if not _holds_only_its_lock(layout.root, layout):
+            raise RestoreRefused(f"{layout.root} is not empty; restore into an empty or new data root")
         try:
             await asyncio.to_thread(_place, source, name, manifest, layout, epoch)
             db = await Database.open(layout, lock=lock, create=False)
