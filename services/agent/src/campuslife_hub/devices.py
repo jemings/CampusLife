@@ -23,9 +23,10 @@ import logging
 import math
 import re
 import secrets
+import time
 import uuid
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
@@ -162,27 +163,29 @@ class PairingLimiter:
     """Failed pairing attempts across every client, kept in memory only (#19 decision 7).
 
     One count for all: every request reaches the sync port from tailscale serve on 127.0.0.1, so there is no client
-    address to count by."""
+    address to count by. It counts on a monotonic clock, so setting the wall clock back cannot stretch the wait."""
 
-    def __init__(self, allowed: int = PAIR_FAILURES_ALLOWED, window: timedelta = PAIR_FAILURE_WINDOW):
-        self._allowed = allowed
-        self._window = window
-        self._failures: deque[datetime] = deque()
+    def __init__(
+        self, *, clock: Callable[[], float] = time.monotonic, allowed: int = PAIR_FAILURES_ALLOWED, window: timedelta = PAIR_FAILURE_WINDOW
+    ):
+        self._clock = clock
+        self._window = window.total_seconds()
+        self._failures: deque[float] = deque(maxlen=allowed)
         self.turn = asyncio.Lock()
         """Held by `pair` from the check to counting the failure, so attempts that arrive together cannot all pass the
         check before any failure is counted."""
 
-    def retry_after(self, now: datetime) -> int | None:
+    def retry_after(self) -> int | None:
         """Whole seconds until a pairing attempt is judged again, or None when it is judged now."""
+        now = self._clock()
         while self._failures and self._failures[0] + self._window <= now:
             self._failures.popleft()
-        if len(self._failures) < self._allowed:
+        if len(self._failures) < self._failures.maxlen:
             return None
-        frees_at = self._failures[len(self._failures) - self._allowed] + self._window
-        return max(1, math.ceil((frees_at - now).total_seconds()))
+        return math.ceil(self._failures[0] + self._window - now)
 
-    def failed(self, now: datetime) -> None:
-        self._failures.append(now)
+    def failed(self) -> None:
+        self._failures.append(self._clock())
 
 
 def _sha256(text: str) -> str:
@@ -250,7 +253,7 @@ async def pair(
     token = _new_token()
     seen_as = {} if tailscale_user is None else {"tailscale_user": tailscale_user}
     async with limiter.turn:
-        retry_after = limiter.retry_after(now)
+        retry_after = limiter.retry_after()
         if retry_after is not None:
             return Refusal(RefusalCode.UNAUTHORIZED, retry_after)
         pairing = await core.db.write(
@@ -259,7 +262,7 @@ async def pair(
         if pairing.revoked is not None:
             await _end_uploads(core, pairing.revoked)
         if pairing.device is None:
-            limiter.failed(now)
+            limiter.failed()
             return Refusal(RefusalCode.UNAUTHORIZED)
     return Paired(pairing.device, redactor.register(token))
 
