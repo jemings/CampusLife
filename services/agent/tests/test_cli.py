@@ -17,7 +17,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from campuslife_hub import admin_client, admin_token, backup
+from campuslife_hub import admin_client, admin_token, backup, host
 from campuslife_hub.admin_auth import hub_proof
 from campuslife_hub.cli import main
 from campuslife_hub.core import open_core
@@ -352,6 +352,27 @@ def test_without_a_console_a_root_the_cli_may_not_look_into_still_ends_with_1(tm
         shut.chmod(0o700)
 
 
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="chmod 000 keeps out only a POSIX user other than root")
+def test_a_root_that_cannot_be_looked_into_holds_no_hub_and_says_so_without_raising(tmp_path):
+    shut = tmp_path / "shut"
+    shut.mkdir()
+    shut.chmod(0)
+    try:
+        assert host.holds_hub(Layout(shut / "CampusLife")) is False
+    finally:
+        shut.chmod(0o700)
+
+
+def test_without_a_console_a_serve_refused_for_want_of_a_hub_leaves_the_empty_root_empty(tmp_path):
+    root = tmp_path / "Restored"
+    root.mkdir()
+
+    finished = no_console("", ["--root", str(root), "serve", "--admin-port", "0"])
+
+    assert finished.returncode == 1
+    assert list(root.iterdir()) == []
+
+
 def test_with_a_console_the_reason_serve_refused_shows_once_and_is_in_the_log(tmp_path, capsys):
     root = tmp_path / "CampusLife"
     hub(root, "init")
@@ -475,6 +496,20 @@ def test_serve_needs_an_initialised_root_and_a_free_port(tmp_path, capsys):
         taken.close()
     assert f"127.0.0.1:{port} cannot be listened on" in capsys.readouterr().err
     assert signal.getsignal(signal.SIGINT) is handlers
+
+
+def test_a_serve_refused_for_want_of_a_hub_leaves_the_empty_root_empty_for_restore(tmp_path, capsys):
+    source_root, restored, drive = tmp_path / "CampusLife", tmp_path / "Restored", tmp_path / "drive"
+    hub(source_root, "init")
+    assert hub(source_root, "backup", "--to", str(drive)) == 0
+    restored.mkdir()
+    capsys.readouterr()
+
+    assert hub(restored, "serve", "--admin-port", "0") == 1
+    assert "no Hub at" in capsys.readouterr().err
+    assert list(restored.iterdir()) == []
+
+    assert hub(restored, "restore", "--from", str(drive)) == 0
 
 
 @contextmanager

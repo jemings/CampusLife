@@ -306,9 +306,9 @@ def _leave_in_the_log(root: Path, said: str) -> None:
     Only a root that holds a Hub gets one: a log would make a root init must create, or restore must find empty, hold
     something. A root without a Hub, or a log that cannot be written, leaves the reason nowhere."""
     layout = Layout(root)
+    if not host.holds_hub(layout):
+        return
     try:
-        if not layout.database.is_file():
-            return
         handler = file_handler(layout.logs / host.LOG_FILE, Redactor())
     except OSError:
         return
