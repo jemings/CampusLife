@@ -1,4 +1,4 @@
-"""The limits table (S7): every bound an identify or extract job runs under, in one frozen value.
+"""The limits table (S7): every bound an identify, extract or render job runs under, in one frozen value.
 
 A job carries the table in its request, the child keeps to it, and the Hub checks what comes back against it. Its
 hash is part of the pipeline version, so a change of any bound makes new jobs rather than reusing results made under
@@ -21,8 +21,15 @@ generated Korean and English Markdown, generated ZIPs), not on users' files:
 - identify read a 10,000-member ZIP in 0.05 s and 26 MiB;
 - deflate packed 64 MiB of zeros, a zip bomb, 1,029 times; a 1 MiB Markdown file of one paragraph repeated 140 times;
   one paragraph alone 3.8 times. zip_max_ratio parts them;
-- timeout_s, mem_bytes and input_max_bytes are not measured here: they leave the format extractors to come (#6, #7,
-  #13) the room a lecture PDF or deck of a few hundred MiB needs, and those issues measure them.
+- timeout_s, mem_bytes, input_max_bytes and rendition_max_bytes are not measured here: they leave the format
+  extractors and the converter to come (#6, #7, #13, O4) the room a lecture PDF or deck of a few hundred MiB needs,
+  and those issues measure them. Nor are zip_max_member_bytes and zip_max_total_bytes: #13, which reads members,
+  measures them.
+
+identify does not read a Blob whole into memory: it reads the head, a ZIP's member names (safe_zip names_only, so
+only zip_max_members binds it there; it opens no archive inside one), and an OLE file in chunks. The byte bounds bind
+the jobs that read a Blob or its members: the total when an extractor opens an archive, a member's size and ratio
+when it reads the member.
 """
 
 from __future__ import annotations
@@ -43,7 +50,8 @@ class Limits:
     stdout_max_bytes: int = 64 * MiB
     """What the child may print; past it the child is killed."""
     input_max_bytes: int = 256 * MiB
-    """The Blob a job reads; a larger one is not handed to a child."""
+    """The Blob an extract or render job reads whole; a larger one is not handed to its child. identify holds no
+    more than a chunk of a Blob at once, so it takes one of any size."""
     max_blocks: int = 20_000
     """Blocks of one body: the Hub builds and validates them off the event loop in about 16 s."""
     max_block_text_chars: int = 200_000
@@ -51,6 +59,8 @@ class Limits:
     """The text of all blocks together; an extractor stops there, partial."""
     body_max_bytes: int = 64 * MiB
     """The body the Hub stores, as canonical JSON."""
+    rendition_max_bytes: int = 512 * MiB
+    """The PDF a converter writes; a larger one is not stored."""
     zip_max_members: int = 10_000
     zip_max_total_bytes: int = 1024 * MiB
     """What the members of one archive declare uncompressed, together."""

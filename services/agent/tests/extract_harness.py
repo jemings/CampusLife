@@ -6,6 +6,7 @@ import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from campuslife_contracts import validate
 from test_capture_commit import apply, commit, new_id, store_bytes
@@ -53,10 +54,11 @@ class Hub:
         return dict(self.registry.planners)["files"].__self__
 
     async def capture(self, *files, role="file"):
-        """Commit a Capture of files, each (name, bytes) or (name, bytes, declared MIME); the committed Capture."""
+        """Commit a Capture of files, each (name, bytes or a file's Path) or (name, bytes, declared MIME); the committed Capture."""
         attachments = []
         for name, data, *declared in files:
-            attachment = {"id": new_id(), "blob_sha256": await store_bytes(self.blobs, self.tmp_path, data), "role": role, "cloud_policy": "local_only"}
+            sha256 = (await self.blobs.put_file(data)).sha256 if isinstance(data, Path) else await store_bytes(self.blobs, self.tmp_path, data)
+            attachment = {"id": new_id(), "blob_sha256": sha256, "role": role, "cloud_policy": "local_only"}
             if name is not None:
                 attachment["original_filename"] = name
             if declared:

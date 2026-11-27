@@ -1,10 +1,11 @@
-"""Fake extractors for tests (decision on identify's input): registered only by tests, through
+"""Fake extractors and converters for tests (decision on identify's input, S12): registered only by tests, through
 pipelines.build_registry, to prove that an extractor plugs in by its descriptor alone and that what one does wrong
 stays in its child. Each reads its params; none is in extractors.ALL.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -23,6 +24,11 @@ ENTRY = "campuslife_hub.extract.fakes"
 def echo(path: Path, params: Mapping, limits: Limits) -> Extracted:
     """The blocks and warnings in params, partial when params say so."""
     return Extracted(list(params.get("blocks", [])), list(params.get("warnings", [])), bool(params.get("partial", False)))
+
+
+def show_params(path: Path, params: Mapping, limits: Limits) -> Extracted:
+    """One block holding the params the child was handed, as JSON."""
+    return Extracted([{"block_type": "paragraph", "text": json.dumps(dict(params), sort_keys=True), "refs": [{"kind": "document"}]}])
 
 
 def crash(path: Path, params: Mapping, limits: Limits) -> Extracted:
@@ -98,6 +104,33 @@ def zip_walk(path: Path, params: Mapping, limits: Limits) -> Extracted:
     return Extracted([{"block_type": "paragraph", "text": name, "refs": [{"kind": "document"}]} for name in names])
 
 
-def fake(name: str, accepts: Mapping[str, Mapping[str, object]], *, version: str = "1", extractor_id: str | None = None) -> Extractor:
+def pdf(path: Path, params: Mapping, limits: Limits, out: Path) -> None:
+    """A converter (kind render) writing a small PDF made of the params it was handed and the input's bytes, as
+    LibreOffice (O4) would one of a deck."""
+    out.write_bytes(b"%PDF-1.7\n%" + json.dumps(dict(params), sort_keys=True).encode() + b"\n" + path.read_bytes() + b"\n%%EOF\n")
+
+
+def not_pdf(path: Path, params: Mapping, limits: Limits, out: Path) -> None:
+    out.write_bytes(b"<html>not a PDF</html>")
+
+
+def no_pdf(path: Path, params: Mapping, limits: Limits, out: Path) -> None:
+    """A converter that says it converted and wrote nothing."""
+
+
+def pdf_link(path: Path, params: Mapping, limits: Limits, out: Path) -> None:
+    """A converter that leaves a link to a PDF where the PDF should be."""
+    elsewhere = out.with_name("elsewhere.pdf")
+    pdf(path, params, limits, elsewhere)
+    out.symlink_to(elsewhere)
+
+
+def refuse_render(path: Path, params: Mapping, limits: Limits, out: Path) -> None:
+    raise Refused(Status(params["status"]), "the fake converter refused")
+
+
+def fake(
+    name: str, accepts: Mapping[str, Mapping[str, object]], *, version: str = "1", extractor_id: str | None = None, kind: str = "extract",
+) -> Extractor:
     """A descriptor running the fake function name for the media types in accepts."""
-    return Extractor(extractor_id or f"fake_{name}", version, f"{ENTRY}:{name}", accepts)
+    return Extractor(extractor_id or f"fake_{name}", version, f"{ENTRY}:{name}", accepts, kind)

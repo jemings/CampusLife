@@ -344,7 +344,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 좌표는 회전·CropBox를 적용한 표시 방향 페이지 기준 `[0,1]` 정규화 좌표입니다. 원점은 좌상단이고, `page_box{w, h, rotation}`을 함께 기록합니다.
   - Hub는 PKDrawing을 해석하지 않습니다.
 - **overlay 렌더링:** overlay PDF·PNG는 **Hub가** `strokes.v1.json`으로 렌더링합니다. Artifact이며 캐시입니다. *(D20으로 대체됨: `artifact_type: overlay`인 Artifact 행으로 동기화되고, 같은 입력이면 다시 만들 수 있음. 백업 여부는 Artifact와 같음)* Android와 Windows는 이것을 엽니다. 렌더러는 Hub 하나입니다.
-- **렌디션 고정:** PPTX·DOCX·HWP는 Hub가 PDF 렌디션 Blob을 만들고 `Relation(rendition_of)`로 원본에 연결합니다. 필기는 **렌디션 Blob에 고정**됩니다.
+- **렌디션 고정:** PPTX·DOCX·HWP는 Hub가 PDF 렌디션 Blob을 만들고 `Relation(rendition_of)`로 원본에 연결합니다. *(D26으로 대체됨: Relation을 쓰지 않음. 렌디션은 `artifact_type: rendition`, subject `blob:<원본>`인 Artifact이고 그 `content_blob`이 PDF 자체임. `rendition_of`는 사용자가 수동으로 잇는 Relation으로 남음)* 필기는 **렌디션 Blob에 고정**됩니다.
   - 렌디션에 레이어가 하나라도 생기면 그 렌디션 Blob은 pin되어 재생성·정리 대상에서 빠집니다.
   - 변환기 버전이 바뀌면 새 렌디션은 새 Blob이 되므로 기존 필기가 어긋나지 않습니다.
 - **개정판 처리:** 개정판(새 Blob)으로 필기를 자동 이동하지 않습니다. `supersedes` Relation이 있고 페이지 수가 같으면 "필기 이월" Suggestion을 냅니다.
@@ -557,7 +557,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **값을 더하는 규칙 (첫 클라이언트 배포 뒤):**
 - 첫 클라이언트 배포(#3 릴리스) 전까지는 깨는 변경을 허용하고, 그 뒤에는 additive-only입니다(E21).
 - Hub가 보내는 모양은 안쪽까지 열려 있습니다. 모르는 멤버는 무시하고, 모르는 entity의 행은 건너뜁니다. Suggestion `proposed`도 마찬가지입니다.
-- 값이 늘 수 있는 열거값은 `^[a-z][a-z_]*$`인 모르는 값도 받습니다. Relation `type`, Attachment `role`, Capture `origin.type`, changes `entity`, Artifact `artifact_type`, Locator `kind`, Suggestion `action`, 오류 `code`는 `x-open: true`와 알려진 값 `examples`로 표시합니다. Item `kind`도 같은 pattern으로 열려 있고, 모르는 kind는 제목·날짜·본문만으로 렌더링합니다.
+- 값이 늘 수 있는 열거값은 `^[a-z][a-z_]*$`인 모르는 값도 받습니다. Relation `type`, Attachment `role`, Capture `origin.type`, changes `entity`, Artifact `artifact_type`, Locator `kind`, Suggestion `action`, 오류 `code`는 `x-open: true`와 알려진 값 `examples`로 표시합니다. *(D26으로 더해짐: Artifact 본문 block의 `block_type`, extraction 본문 warning의 `code`)* Item `kind`도 같은 pattern으로 열려 있고, 모르는 kind는 제목·날짜·본문만으로 렌더링합니다.
 - **feed union은 열려 있습니다.** Locator `kind`와 Suggestion `action`은 알려진 값이면 그 갈래로 검사하고, 모르는 값이면 멤버째 받습니다.
   - 모르는 Locator kind는 `blob`이 있으면 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. Locator `v`는 1 이상이고 늘 수 있습니다.
   - 모르는 kind도 `blob`(sha256), `capture`(UUID), `box`(정규화 `[x, y, w, h]`(D12·E17), `box_extent` 규칙도 적용)라는 이름은 타입을 지킵니다. 알려진 kind가 쓰는 공유 멤버라서 Locator 최상위가 예약하고, 클라이언트는 `blob`을 문자열로 읽어도 됩니다. 그 밖의 멤버는 열려 있습니다.
@@ -586,7 +586,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **사용자 결정**
 - **U1. 백업은 암호화하지 않습니다** (2026-11-26, "결정"). 설치·운영 문서(`services/agent/README.md`)와 PRIVACY-SECURITY에 백업 드라이브 분리 보관과 분실 위험을 적습니다.
 - **U2. 즉시 purge는 Blob 단위입니다** (2026-11-26, "결정").
-  - 그 Blob을 가리키는 모든 Attachment, 거기서 파생된 Artifact·Suggestion(전이 폐쇄), 인덱스·렌디션을 지웁니다.
+  - 그 Blob을 가리키는 모든 Attachment, 거기서 파생된 Artifact·Suggestion(전이 폐쇄), 인덱스·렌디션을 지웁니다. 지운 행의 텍스트가 SQLite 파일 바이트(DB 파일과 WAL)에도 남지 않게, Hub는 쓰기 연결에서 `secure_delete`를 켜고 purge 끝에 WAL을 비웁니다. 다른 연결이 WAL을 읽고 있으면 다음 maintenance에서 끝납니다. 이 수정 이후의 삭제부터 적용되며, 그 전에 지운 페이지에 남은 바이트는 지우지 않습니다(VACUUM 없음).
   - 그 Artifact에서 fork된 Note(사용자 데이터)는 지우지 않고 근거 링크가 사라졌다고 표시합니다. purge 확인 화면에 "이 Note들도 지울까요?"를 함께 보여 줍니다.
   - 백업 세대에는 남아 있음을 알립니다.
 - **U3. 백업은 수동입니다** (2026-11-26, "결정"). 로컬 UI와 CLI로 하고, 마지막 백업에서 7일이 지나면 경고하며, 드라이브에는 최근 5세대를 남깁니다. 둘 다 설정값(`serve --backup-warn-days`, `--backup-keep`)입니다.
@@ -596,7 +596,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 
 **오케스트레이터 결정: 배치와 기동** (2026-11-26, "결정")
 - **E1. 배치:** `services/agent/`(패키지 `campuslife_hub`), `.python-version` 3.12, `uv.lock` 커밋. 계약 패키지는 editable path 의존입니다(non-editable이면 패키지 밖 `schemas/`를 찾지 못함). 루트 uv workspace는 쓰지 않습니다(#20의 패키지별 lock·CI와 충돌).
-- **E2. SQLite 기동 검사:** 하한 3.35(RETURNING)와 기능 probe(fts5, trigram, json_extract, generated column). 실패하면 이유를 출력하고 기동을 거부합니다. 빌드의 버전 번호만으로는 어떤 모듈을 넣고 빌드했는지 알 수 없어서 실제로 시도해 봅니다. WAL, `synchronous=FULL`은 항상입니다.
+- **E2. SQLite 기동 검사:** 하한 3.35(RETURNING)와 기능 probe(fts5, trigram, json_extract, generated column). 실패하면 이유를 출력하고 기동을 거부합니다. 빌드의 버전 번호만으로는 어떤 모듈을 넣고 빌드했는지 알 수 없어서 실제로 시도해 봅니다. WAL, `synchronous=FULL`은 항상입니다. `secure_delete`를 켜지 못하는 빌드도 기동을 거부합니다.
 - **E3. 마이그레이션:** 번호 붙인 SQL 파일과 `PRAGMA user_version`. DB가 코드보다 새로우면 기동을 거부합니다. alembic·ORM은 쓰지 않습니다.
 - **E11. 단일 인스턴스:** `<root>/hub.lock`(`msvcrt.locking`/`fcntl.flock`). 두 번째 실행은 메시지와 함께 0이 아닌 코드로 끝납니다. 쓰기 CLI는 서빙 중인 Hub의 admin API를 거치고, Hub가 없으면 lock을 직접 잡습니다. restore는 채울 빈 root의 lock을 잡습니다.
   - 읽기 명령(`ls`, `fsck`)은 DB에 쓰지 않습니다(2026-11-26, "PR #28 1차"). migrate·신원 발급을 하지 않고, 스키마가 코드와 다르면 거부합니다. 근거: lock을 쥔 옛 Hub가 있는데 새 checkout의 읽기 명령이 DB를 새 버전으로 올리면 옛 Hub가 깨집니다.
@@ -901,6 +901,55 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - 기록(#18 PR2): Hub의 `conflict_records.py`가 patch의 진 키와 지워진 대상에 온 patch의 키를 Mutation의 기록에 남기고(`user_data.py`), 즉시 purge가 그 엔터티의 기록을 tombstone으로 만듭니다(`purge.py`). `0011_conflict_records.sql`이 `conflict_stash`를 옮깁니다. 열린 기록 수는 admin `/api/status`의 `conflicts.open`과 장치 화면에 나옵니다. `strictest_submitted_cloud_policy`는 #8의 ProviderGateway가 유효 정책을 계산할 때 읽습니다(결정 11).
   - 이주한 기록의 키 순서는 canonical이 아닐 수 있습니다. SQL 이주(D21 E3)가 JSON 키를 정렬하지 못하기 때문이고, 값은 같으며 다음 쓰기가 canonical로 다시 씁니다.
 - 범위: 이 항목은 #18 PR1(계약과 경계)에서 적습니다. 기록 생성과 이주, 해소 op, 휴지통 만료, 시험용 모의 장치, Windows `/conflicts`, 클라이언트 규칙 문서(MULTI-DEVICE §3.2·§3.3·§8)는 #18의 뒤 PR입니다. 클라이언트 쪽(기준 epoch 헤더, 409 처리, 60일 보관, `rejected_mutation_count`)은 #3·#16이 구현합니다.
+
+---
+
+## D26. 파일 처리 프레임워크 (#5, 2026-11-27 ~ 2026-11-28)
+
+**문제:** 여러 형식의 파일을 같은 경로로 분석하려고 보니(#5) 정하지 않았거나 문서끼리 어긋나는 곳이 있었습니다.
+- ContentBlock의 저장 위치가 없었습니다. DOMAIN-MODEL은 동기화하지 않는 ContentBlock 테이블을 적었고, Artifact 본문 스키마는 #8로 미뤄져 있었습니다.
+- D12는 "Hub가 `Relation(rendition_of)`로 연결"한다고 했지만, D1은 Relation을 Mutation으로만 바꾸게 하고 계약의 Relation 열은 모두 `x-owner: client`입니다.
+- 신뢰할 수 없는 파일을 어디서 판별·파싱하는지, 상한을 어디에 두는지, 다시 처리하는 방법이 없었습니다.
+
+각 결정의 근거와 버린 안은 #5 본문의 "결정"과 PR별 결정 절에 있습니다.
+
+**검토한 안:**
+- ContentBlock 저장: A. extraction Artifact의 content Blob. B. 동기화하지 않는 `content_blocks` 테이블.
+- 렌디션 연결: A. Artifact만. B. 파이프라인이 Relation을 직접 씀. C. `windows_hub` Mutation으로 Relation을 만듦.
+- 판별: A. identify job이 child에서 바이트만 보고, Attachment마다 이름·신고 MIME으로 좁힘. B. planner가 Hub 안에서 sniff. C. Attachment별 hint를 identify params에 넣음.
+- 재처리: A. ingest params의 nonce. B. 업그레이드 때 자동 replan.
+
+**결정** (오케스트레이터 결정, 사용자가 결정을 위임)
+- **ContentBlock은 extraction Artifact에 둡니다(결정 1).** `artifact_type: extraction`, subject `blob:<sha>`, content Blob에 순서 있는 blocks. 테이블은 만들지 않습니다. 계약 `input_hashes`가 "Artifacts by their content Blob"이라 #8 job_key가 추출 결과를 그대로 따르고, purge·백업이 손대지 않고 덮습니다. 같은 Blob을 같은 추출기·버전·params로 읽으면 한 번만 추출합니다(D2).
+- **본문 envelope(결정 8):** `artifact/body` `{v, blocks:[{id, block_type, text?, payload?, refs:[Locator]}]}`를 #5가 먼저 정하고, `artifact_type`마다 스키마가 좁힙니다(`artifact/extraction`, `artifact/identify`). #8은 additive로 넓힙니다.
+  - 본문 Blob의 바이트는 `canonical_json(body)`입니다. 같은 본문은 같은 Blob입니다.
+  - block id는 `sha256(canonical_json([blob, extractor.id, extractor.version, extractor.params, ordinal]))`입니다. 상한 표 해시는 넣지 않으므로 인용의 기준은 그 subject의 `current` extraction 하나입니다(#8).
+  - extraction의 모든 ref는 kind와 상관없이 본문의 `blob`을 가리킵니다. child 출력은 신뢰할 수 없는 입력이라 Hub가 id와 Locator 앵커를 직접 만들고 `validate()`합니다.
+  - 규칙은 `packages/api-contracts/HARNESS.md`의 "Artifact 본문"에 있습니다.
+- **렌디션은 Artifact로만 둡니다(결정 3).** `artifact_type: rendition`, subject `blob:<원본>`, `content_blob`은 PDF 자체이고 JSON 본문이 없습니다. 무엇의 렌디션인지는 `artifact_type`·`subject_ref`·`pipeline_version`(변환기 id-version)이 말합니다. 파이프라인은 Relation을 쓰지 않습니다. `rendition_of` Relation은 사용자가 수동으로 잇는 용도(교수가 배포한 PDF가 PPTX의 렌디션)로 남습니다. D12의 해당 문장을 대체합니다.
+  - PDF가 곧 `content_blob`이어야 `blobs.BLOB_REFERENCES`를 보는 GC·purge·backup·다운로드가 손대지 않고 맞고, AnnotationLayer `target_blob_sha256`(#17)이 그 Blob을 가리킬 수 있습니다.
+  - 변환기 버전이 바뀌면 새 job이 새 Artifact를 만들고 옛 렌디션은 남습니다. 렌디션을 지우는 것은 원본의 purge뿐입니다.
+- **판별과 계획은 두 단계입니다(결정 2와 PR2 결정).** planner는 Blob마다 identify job을 냅니다. identify는 child에서 바이트만 보고 `blob_media`(Blob당 하나, 동기화하지 않음)에 판별 형식을 씁니다. 이름·신고 MIME으로 좁히는 일은 Attachment마다 순수 함수 `refine`이 하고, 그 값이 Attachment `detected_mime`입니다. 이름과 바이트가 어긋난다는 사실과 "읽는 추출기 없음"은 저장하지 않고 로컬 UI가 `refine`으로 계산해 보여 줍니다.
+  - planner는 하나이고 수렴합니다. Attachment의 지금 상태를 보고 빠진 다음 job(identify, 또는 `extract.<id>`·`render.<id>`)만 냅니다. identify가 끝나면 그 Blob의 모든 Attachment를 다시 계획합니다.
+  - job은 Attachment를 싣지 않습니다. subject는 `blob:<sha>`입니다.
+- **child 경계:** 추출기·변환기는 `[sys.executable, -I, -m, campuslife_hub.extract.child]`로 돌고, stdin 요청 JSON과 stdout 결과 JSON으로만 Hub와 말합니다. child는 DB·네트워크·provider를 쓰지 않습니다. ZIP 계열은 `extract/safe_zip.py` 한 곳만 엽니다. 결과 매핑은 `extract/running.py`가 소유합니다(시간·메모리·출력 상한 초과 → `unsafe_input`, 재시도 없음).
+- **상한 표:** 시간·메모리·출력·블록 수·텍스트·본문·렌디션·ZIP 상한은 frozen dataclass 하나(`extract/limits.py`)입니다. 요청에 실리고 해시가 pipeline 버전에 들어갑니다. 기본값과 출처는 FILE-INGESTION §10에 있습니다.
+  - 바이트 상한은 Blob이나 그 멤버를 통째로 읽는 extract·render job에만 겁니다. identify는 파일을 통째로 메모리에 올리지 않습니다. 앞부분을 읽고, ZIP은 멤버 이름만 보며(`safe_zip`의 names_only: 경로 탈출·링크·중복 이름과 멤버 개수를 검사하고, 암호화된 멤버는 `password_required`로 끝냄. 중첩 ZIP은 열지 않음), OLE 파일은 고정 크기 조각으로 훑어 `EncryptedPackage` 표식을 찾습니다. 그래서 큰 강의 영상·ZIP·OLE 문서도 판별하고, 그 Blob을 읽는 추출기 쪽에서 상한에 걸립니다. 전체 바이트 상한은 추출기가 아카이브를 열 때, 멤버 바이트 상한과 압축 비율은 멤버를 읽을 때 겁니다(2026-11-28, #13 grilling과 PR #61 리뷰가 찾은 결함: 전에는 `input_max_bytes`, ZIP 멤버·전체 바이트, child 메모리에 막혀 identify가 `unsafe_input`으로 끝나고 그 Blob이 다시 계획되지 않았음). 형식별·추출기별 상한을 어떤 모양으로 둘지는 정하지 않았습니다(#13). OLE 디렉터리 섹터를 읽는 판별은 #6의 `cfb` 관문이 맡습니다.
+  - 이 변경으로 판별 결과가 바뀌는 입력이 있지만 `sniff.VERSION`은 올리지 않았습니다. 전에 판별에 실패하던 입력만 바뀐 것은 아닙니다. `mimetype` 멤버를 공백·줄바꿈으로 256바이트 넘게 채운 HWPX는 전에 HWPX였고 이제 ZIP입니다. 그런 파일은 사람이 일부러 만들지 않으면 생기지 않고 첫 배포 전이라 다시 판별할 Blob이 없으므로 버전을 그대로 둡니다.
+- **상한 표·판별기가 바뀐 뒤의 상태:** 지금 identify pipeline으로 판별된 것이 없으면, 로컬 UI는 마지막으로 성공한 판별(`blob_media`)로 그때의 job과 실패 사유를 보여 주고 "처리 규칙이 바뀌었으니 다시 처리하면 새 규칙으로 읽는다"는 사실을 더합니다. 자동으로 다시 계획하지는 않습니다(결정 5). 판별은 그대로이고 읽는 쪽만 바뀐 경우(새 추출기나 새 버전이 생겨, `refine`이 고른 추출기에 지금 pipeline의 job이 하나도 없음)에도 그 추출기마다 "이 Hub는 이제 이 추출기로 읽을 수 있으니 다시 처리하면 읽는다"는 사실을 더하고, 역시 자동으로 계획하지 않습니다. 처리 규칙이 바뀌었다는 사실이 있으면 그것 하나만 보입니다. 재처리 한 번이 둘 다 풀기 때문입니다.
+- **재처리는 nonce입니다(결정 5).** `campuslife-hub reprocess --capture <id> | --all`과 로컬 UI 버튼이 `capture.ingest`를 params `reprocess: <nonce>`로 다시 넣습니다(#8의 nonce 관례).
+  - planner는 같은 nonce를 identify·extract·render job params에 넣습니다. job_key가 새로 생기므로 다시 돌고, 한 번의 재처리 안에서는 key가 같으므로 여러 Capture가 가진 같은 파일은 한 번만 읽습니다.
+  - 재처리 중인 Blob은 그 nonce의 identify가 끝난 뒤에야 판별된 것으로 봅니다.
+  - nonce는 추출기·변환기에도, 본문 `extractor.params`에도 가지 않습니다. 그래서 같은 추출기 버전이면 block id가 같습니다. 추출기는 `reprocess`라는 param을 가질 수 없습니다.
+  - 원본 Blob은 읽기만 합니다. 업그레이드 때 자동으로 다시 계획하지 않습니다.
+- **Blob이 없어지면 끝난 job의 key를 풉니다(PR2 결정).** Blob 행을 지우는 trigger가 그 Blob을 읽은 끝난 job의 `job_key`를 `released:<id>`로 바꿉니다. 행은 처리 이력으로 남고, 같은 바이트가 다시 오면 처리합니다. 풀린 job은 다시 시도할 수 없습니다. 재처리의 nonce job도 같은 trigger를 탑니다.
+- **로컬 UI:** Capture 화면이 파일마다 판별 형식과 필요한 job의 상태·`outcome_code`·실패 사유, 그리고 `refine`이 찾은 사실을 보여 줍니다(S13). 가져오기 폼은 LectureSession을 고르면 `/api/import`와 같은 `about` links를 넘깁니다(결정 9, FILE-INGESTION §2).
+
+**결과:**
+- 계약은 `schemas/artifact/body.json`·`extraction.json`·`identify.json`과 `HARNESS.md`의 "Artifact 본문"에 있습니다.
+- 코드는 `services/agent/src/campuslife_hub/extract/`(framework, running, child, sniff, formats, safe_zip, limits, bodies, text, extractors, fakes), `media.py`, `migrations/0009_blob_media.sql`·`0010_released_jobs.sql`, `ingest.py`(재처리), `pipelines.py`(composition root)에 있습니다.
+- 운영 방법은 `services/agent/README.md`, 형식·상한은 FILE-INGESTION, 엔터티는 DOMAIN-MODEL이 적습니다.
+- 범위 밖: 형식별 추출기와 형식별 Locator(#6·#7·#13), LibreOffice 변환기(O4), `supersedes` 제안·`processing_summary`·`current`(#8), AnnotationLayer pin(#17).
 
 ---
 

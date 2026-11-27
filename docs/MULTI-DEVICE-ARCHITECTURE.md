@@ -75,7 +75,7 @@ Hub에는 반쯤 도착한 Capture가 없습니다.
 - 클라이언트는 다음 두 경우를 확인합니다.
   - `epoch`가 바뀌면(Hub 복원·이전) 캐시를 버리고 `since=0`부터 다시 받습니다. ACK를 받았지만 Hub에 없는 Capture는 다시 올리고, 미전송 Mutation은 다시 보냅니다. *(D24로 대체됨: 응답의 epoch을 비교하지 않고, 기준 epoch 요청 헤더에 대한 409 `epoch_changed`가 유일한 트리거입니다. 클라이언트 규칙 본문은 #18 PR7)*
   - `hub_id`가 pairing 때와 다르면 동기화를 중단합니다.
-- 피드에 넣지 않는 것: ContentBlock, ProcessingJob 상세, FTS. 노트 본문은 Artifact Blob으로 필요할 때 받습니다.
+- 피드에 넣지 않는 것: ProcessingJob 상세, FTS. ContentBlock은 extraction Artifact의 본문이라 따로 오지 않고(D26), 노트 본문과 함께 Artifact Blob으로 필요할 때 받습니다.
 
 ### 3.3 Mutation과 충돌 (D18)
 
