@@ -15,6 +15,10 @@ CONTRACT_VERSION = 1
 """The contract version this package describes: the Hub's contract_version in GET /v1/hub (E18)."""
 MIN_CONTRACT_VERSION = 1
 """The oldest client contract version the Hub accepts; a request below it gets 400 contract_too_old (E18)."""
+SENT_RETENTION_DAYS = 60
+"""Days a client keeps a Mutation after the Hub acknowledged it, to send again in order when the Hub answers 409
+epoch_changed (D24). Shorter than the Hub's 90 days of Mutation results, so a kept Mutation's first result is still
+there and a resend of one the restored Hub holds gets duplicate. A capture.commit is kept while its originals are."""
 
 
 def contract_root() -> Path:
@@ -45,6 +49,7 @@ __all__ = [
     "ContractError",
     "Rule",
     "RuleViolation",
+    "SENT_RETENTION_DAYS",
     "SchemaViolation",
     "Violation",
     "bundled_contract",
