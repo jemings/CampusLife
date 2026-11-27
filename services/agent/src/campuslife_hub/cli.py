@@ -42,7 +42,7 @@ from .backup import DEFAULT_KEEP, DEFAULT_WARN_AFTER, BackupRefused, BackupSetti
 from .core import UnsafeDataRoot, open_core, open_core_readonly, safe_data_root
 from .data_root import Layout, default_data_root
 from .db import NotInitialized, SchemaMismatch, StartupRefused
-from .devices import DEFAULT_DORMANT_AFTER, DeviceSettings
+from .devices import DEFAULT_DORMANT_AFTER, MAX_DORMANT_AFTER, DeviceSettings
 from .host import DEFAULT_ADMIN_PORT, DEFAULT_SYNC_PORT, HostConfig, PortTaken
 from .listing import list_captures
 from .local_import import UnimportableFile, import_files
@@ -81,6 +81,10 @@ def _at_least_one(text: str) -> int:
 
 def _port(text: str) -> int:
     return _whole_number(text, 0, 65535, "a port (0 to 65535)")
+
+
+def _dormant_days(text: str) -> int:
+    return _whole_number(text, 1, MAX_DORMANT_AFTER.days, f"a whole number from 1 to {MAX_DORMANT_AFTER.days}")
 
 
 def _hub_url(text: str) -> str:
@@ -150,7 +154,7 @@ def _serve_options(parser: argparse.ArgumentParser, *, defaults: bool) -> argpar
         help="the hub_url a pairing offer hands out, as tailscale-check prints it; without it no device can be added",
     )
     parser.add_argument(
-        "--dormant-after-days", type=_at_least_one, default=DEFAULT_DORMANT_AFTER.days if defaults else None,
+        "--dormant-after-days", type=_dormant_days, default=DEFAULT_DORMANT_AFTER.days if defaults else None,
         help=f"a device unseen for longer than this many days is dormant until approved (default {DEFAULT_DORMANT_AFTER.days})",
     )
     return parser

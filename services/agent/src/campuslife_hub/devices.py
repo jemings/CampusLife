@@ -86,6 +86,8 @@ class ClientPlatform(enum.StrEnum):
 HUB_DEVICE_NAME = "CampusLife Hub"
 HUB_PLATFORM = "windows_hub"
 DEFAULT_DORMANT_AFTER = timedelta(days=90)
+MAX_DORMANT_AFTER = timedelta(days=36500)
+"""A longer period puts now - dormant_after before year 1, where datetime overflows and every authentication fails."""
 OFFER_LIFETIME = timedelta(minutes=5)
 PAIR_FAILURES_ALLOWED = 10
 PAIR_FAILURE_WINDOW = timedelta(minutes=10)
