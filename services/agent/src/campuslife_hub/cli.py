@@ -32,6 +32,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import sqlite3
 import sys
 import uuid
@@ -250,12 +251,19 @@ async def _backup(root: Path, target: Path, keep: int | None) -> None:
         raise CommandFailed(f"{len(report['missing'])} Blobs were missing from the Hub and are not in the backup; run `campuslife-hub fsck`")
 
 
+def _shell_word(text: str) -> str:
+    """text as one word of a command a person pastes into PowerShell, cmd or a POSIX shell."""
+    return f'"{text}"' if re.search(r"[\s&|<>^%!();,'`$#]", text) else text
+
+
 async def _restore(root: Path, source: Path, generation: str | None) -> None:
     restored = await backup.restore(source, root, generation=generation)
     print(f"restored generation {restored.generation}, taken {restored.taken_at}, into {restored.root}")
     print(f"epoch {restored.epoch}")
-    print("Every device must be approved again with `campuslife-hub approve <id>` before it syncs.")
-    print("Do not approve a device that was lost; revoke it with `campuslife-hub revoke <id>`.")
+    if restored.devices:
+        command = f"campuslife-hub --root {_shell_word(str(restored.root))}"
+        print(f"Every device must be approved again with `{command} approve <id>` before it syncs.")
+        print(f"Do not approve a device that was lost; revoke it with `{command} revoke <id>`.")
     print(f"Purges made after {restored.taken_at} are undone: purge those files again.")
     for device in restored.devices:
         print(f"device {device.id} {device.platform} {device.name} paired {device.paired_at} dormant")
