@@ -5,6 +5,7 @@
   "description": "A course taken in a term. Open.",
   "type": "object",
   "properties": {
+    "term_id": { "description": "id of the term Item the course is taken in.", "$ref": "../../common/uuid.json" },
     "instructor": { "type": "string", "minLength": 1 },
     "room": { "type": "string", "minLength": 1 },
     "credits": { "type": "number", "minimum": 0, "maximum": 99 },
