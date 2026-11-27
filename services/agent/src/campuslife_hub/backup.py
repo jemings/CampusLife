@@ -59,8 +59,11 @@ BLOBS = "blobs"
 SNAPSHOT = "campuslife.sqlite3"
 MANIFEST = "manifest.json"
 PARTIAL = ".part"
-GENERATION_FILES = (SNAPSHOT, SNAPSHOT + PARTIAL, SNAPSHOT + PARTIAL + "-journal", MANIFEST, MANIFEST + PARTIAL)
-"""Every file a backup writes in a generation's folder."""
+GENERATION_FILES = tuple(
+    [SNAPSHOT, *(SNAPSHOT + PARTIAL + suffix for suffix in ("", "-journal", "-wal", "-shm")), MANIFEST, MANIFEST + PARTIAL]
+)
+"""Every file a backup writes in a generation's folder. The snapshot copy takes the live database's WAL mode until it
+turns to DELETE, so a backup that stopped before then leaves -wal and -shm beside it."""
 GENERATION_FORMAT = "%Y%m%dT%H%M%S%fZ"
 GENERATION_NAME = re.compile(r"\d{8}T\d{12}Z")
 SHA256 = re.compile(r"[0-9a-f]{64}")
