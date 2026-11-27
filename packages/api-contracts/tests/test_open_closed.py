@@ -6,7 +6,7 @@ those shapes accept extra members. capture.commit is input and refuses them.
 
 import pytest
 
-from campuslife_contracts import SchemaViolation, bundled_contract, contract_root
+from campuslife_contracts import Rule, RuleViolation, SchemaViolation, bundled_contract, contract_root
 from campuslife_contracts.contract import schema_uri
 from campuslife_contracts.dialect import ContractValidator
 from campuslife_contracts.errors import violations_from
@@ -285,3 +285,22 @@ def test_an_open_union_names_its_known_branches_as_examples(schema_id, name):
     document = schema(schema_id)
     known = document["$defs"]["known"]
     assert document["properties"][name]["examples"] == known["properties"][name]["enum"] == list(known["discriminator"]["mapping"])
+
+
+KNOWN_RELATION_TYPES = ["about", "supersedes", "rendition_of", "evidence", "tagged", "conflicts_with"]
+LOCATOR = {"v": 1, "kind": "document", "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"}
+
+
+def test_the_known_relation_types_are_the_ones_listed_here():
+    assert sorted(schema("relation/relation")["properties"]["type"]["examples"]) == sorted(KNOWN_RELATION_TYPES)
+
+
+@pytest.mark.parametrize("relation_type", [name for name in KNOWN_RELATION_TYPES if name != "evidence"])
+def test_a_known_relation_type_other_than_evidence_refuses_locators(relation_type):
+    relation = next(
+        read_strict(c.path) for c in CASES
+        if c.kind is FixtureKind.VALID and c.schema_id == "relation/relation" and read_strict(c.path)["type"] == relation_type
+    )
+    assert CONTRACT.validate("relation/relation", {**relation, "locators": [LOCATOR]}) == [
+        RuleViolation("/locators", Rule.LOCATOR_ANCHOR)
+    ]
