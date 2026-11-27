@@ -84,13 +84,16 @@ uv run campuslife-hub autostart unregister
 | `backup --to <폴더>` | 백업 세대 하나를 씀(`--keep N`) |
 | `restore --from <폴더>` | 빈 data root에 백업 세대를 복원(`--generation NAME`) |
 | `fsck` | 모든 Blob의 해시를 다시 계산하고 누락·손상·고아 Blob을 보고 |
-| `status` | 도는 Hub의 job 수, runner 재시작, 마지막 백업과 경고 |
+| `status` | 도는 Hub의 job 수, runner 재시작, 마지막 백업과 경고, 장치에 주는 `public_url` |
 | `stop` | 도는 Hub를 멈춤 |
 | `ls` | Capture와 Attachment 목록 |
 | `autostart xml\|register\|unregister` | 로그온 자동 시작 작업 |
+| `devices` | pairing한 장치 목록(id, 플랫폼, 상태, pairing 시각, 마지막 접속, 이름) |
+| `revoke <id>` | 장치를 revoke(되돌릴 수 없음). 다음 요청부터 `device_revoked`이고 끝나지 않은 업로드를 지움 |
+| `approve <id>` | dormant 장치를 다시 승인. 같은 id와 토큰으로 이어서 동기화함 |
 | `tailscale-check` | `tailscale serve`가 sync 리스너만 노출하는지 확인하고 기대 `hub_url`을 출력(`--sync-port`, `--admin-port`, `--public-url`) |
 
-Hub가 도는 동안 `init`·`import`·`backup`은 그 Hub의 admin API를 거치고, Hub가 없으면 직접 data root를 잠그고 씁니다(E11). `restore`는 빈 data root를 잠그고 채우므로 그 root에서 도는 Hub가 없어야 합니다. `open`·`status`·`stop`은 도는 Hub가 있어야 합니다. `ls`·`fsck`는 잠그지 않고 읽기만 합니다(SQLite가 `-wal`·`-shm` 파일을 만들 수는 있음). `tailscale-check`는 data root를 쓰지 않습니다.
+Hub가 도는 동안 `init`·`import`·`backup`·`devices`·`revoke`·`approve`는 그 Hub의 admin API를 거치고, Hub가 없으면 직접 data root를 잠그고 씁니다(E11). `restore`는 빈 data root를 잠그고 채우므로 그 root에서 도는 Hub가 없어야 합니다. `open`·`status`·`stop`은 도는 Hub가 있어야 합니다. `ls`·`fsck`는 잠그지 않고 읽기만 합니다(SQLite가 `-wal`·`-shm` 파일을 만들 수는 있음). `tailscale-check`는 data root에 쓰지 않습니다. `--public-url`을 주지 않으면 그 root에서 도는 Hub에게 `public_url`을 묻습니다.
 
 CLI 요청은 600초를 기다립니다. 그보다 오래 걸리는 큰 첫 백업이나 큰 import는 CLI가 시간 초과로 끝나도 Hub가 계속 처리합니다. 백업은 `status`의 `backup last`로, import는 `ls`로 끝났는지 확인합니다. 시간 초과 뒤 import를 다시 하면 같은 파일의 Capture가 둘 생깁니다.
 
@@ -112,7 +115,9 @@ uv run campuslife-hub tailscale-check
    - Funnel이 꺼져 있습니다. Funnel은 Hub를 인터넷에 엽니다.
    - tailscale이 로그인되어 있고 MagicDNS 이름이 있습니다.
 5. 모두 맞으면 `hub_url https://<이름>.<tailnet>.ts.net`과 `ok`를 출력합니다. 하나라도 틀리면 `problem:` 줄을 출력하고 0이 아닌 코드로 끝납니다. 포트를 바꿨으면 `--sync-port`, `--admin-port`를 같은 값으로 줍니다.
-   - pairing QR에 들어가는 `hub_url`은 `serve --public-url`의 값입니다(#19). `tailscale-check --public-url <URL>`을 주면, 그 값이 MagicDNS 이름과 다를 때 `warning:`을 출력합니다. 두 명령 모두 `hub_url`이 아닌 값(`http://`, 대문자 호스트, 경로나 끝의 `/`)과 `:443`을 붙인 값을 거부하고, 비교는 글자 그대로 합니다.
+   - pairing QR에 들어가는 `hub_url`은 `serve --public-url`의 값입니다(D23). `tailscale-check`는 그 값을 출력하고(`public_url …`), MagicDNS 이름과 다르면 `warning:`을 출력합니다. 노트북의 Tailscale 이름을 바꾼 뒤 옛 주소를 주고 있는 Hub를 이것으로 찾습니다.
+   - 비교할 값은 `--public-url`을 주면 그 값이고, 아니면 그 data root에서 도는 Hub의 값입니다. Hub가 `--public-url` 없이 돌고 있으면 장치를 추가할 수 없다는 `warning:`과 줄 값을 출력합니다. 도는 Hub가 없으면 비교하지 않습니다. serve 전에 확인하려면 `--public-url`을 줍니다.
+   - 두 명령 모두 `hub_url`이 아닌 값(`http://`, 대문자 호스트, 경로나 끝의 `/`)과 `:443`을 붙인 값을 거부하고, 비교는 글자 그대로 합니다.
    - 두 JSON의 모양은 tailscale 소스에서 읽은 것이라, 실제 tailnet에서는 #39가 확인합니다.
 6. 연결 확인: pairing한 장치의 토큰이 없는 요청은 sync 리스너가 400이나 401로 거절합니다. 그래도 응답에 `CampusLife-Hub-Id` 헤더가 있으면 serve를 거쳐 Hub까지 닿은 것입니다. Hub가 꺼져 있으면 serve가 이 헤더 없는 502로 답합니다.
 
@@ -121,7 +126,16 @@ uv run campuslife-hub tailscale-check
 
 ### 장치 (D6, D23)
 
-- 장치는 sync 리스너의 `POST /v1/pair`로 pairing하고, 받은 토큰으로 모든 요청을 인증합니다. Hub는 토큰과 pairing secret의 SHA-256만 저장하고 로그에서 가립니다.
+장치는 로컬 UI의 **Devices**에서 관리합니다. 같은 일을 CLI `devices`·`revoke <id>`·`approve <id>`로도 합니다.
+
+1. `serve`를 `--public-url https://<이름>.<tailnet>.ts.net`(`tailscale-check`가 출력하는 `hub_url`)과 함께 돌립니다. 작업으로 띄운다면 `autostart register --public-url …`로 다시 등록합니다. 이 값이 없으면 Devices 화면은 장치 추가 대신 설정 방법을 보여 줍니다.
+2. Devices에서 **Add a device**를 누르면 QR과 수동 코드(`xxxx-xxxx-…`, 소문자 hex 4자 8묶음)가 뜹니다. 5분 동안 한 번만 쓸 수 있고, 새 코드를 만들면 이전 코드는 끝납니다. 앱으로 QR을 찍거나, 카메라 없이 `hub_url`과 수동 코드를 입력합니다.
+3. 목록은 이름 옆에 장치 id 앞 8자와 pairing 시각을 보여 줍니다. 이름이 같아 보이는 장치는 이것으로 가립니다. 마지막 접속, 마지막 거부, 장치가 보낸 마지막 상태도 보입니다.
+4. 분실한 장치는 **Revoke**합니다(되돌릴 수 없음). 그 장치의 다음 요청은 401 `device_revoked`이고 끝나지 않은 업로드는 지워집니다. 다른 장치와 데이터는 그대로입니다. 그 기기를 다시 쓰려면 새 장치로 pairing합니다.
+5. dormant 장치는 **Approve**로 다시 승인합니다. 같은 id와 토큰으로 cursor에서 이어 동기화합니다. **손에 있는 장치만 승인합니다.** 분실한 장치를 승인하면 그 기기가 쥔 토큰으로 다시 동기화하므로, 분실한 장치는 revoke합니다.
+
+- 장치는 sync 리스너의 `POST /v1/pair`로 pairing하고, 받은 토큰으로 모든 요청을 인증합니다. Hub는 토큰과 pairing secret의 SHA-256만 저장하고 로그에서 가립니다. secret은 Add a device의 응답 본문에만 있고 URL에는 없습니다.
+- pair가 응답을 잃은 뒤 같은 코드를 다시 보내면 재사용으로 판정되어 거부되고, 그 코드로 등록된 장치도 revoke됩니다. 앱은 pair를 자동으로 다시 시도하지 않으니, 실패하면 새 코드를 만들어 다시 추가합니다.
 - 틀린 secret이 10분에 10번 오면 그 뒤 pairing 시도는 `Retry-After`가 붙은 401입니다. 이 횟수는 메모리에만 있어 Hub를 다시 시작하면 지워집니다.
 - 90일(`serve --dormant-after-days`, 1–36500일) 동안 인증하지 않은 장치는 dormant가 되어 재승인할 때까지 401 `device_dormant`를 받습니다. 인증할 때와 1시간마다 하는 정리 때 판정합니다.
 - 장치가 보내는 상태(heartbeat)는 마지막 하나만 남깁니다.
@@ -146,7 +160,8 @@ uv run campuslife-hub --root D:\CampusLife-restored restore --from E:\CampusLife
 
 - 비어 있거나 없는 data root에만 복원합니다. 기본으로 가장 최근에 끝난 세대를 고릅니다. 복원한 root를 계속 쓰려면 `campuslife-hub --root D:\CampusLife-restored autostart register`로 작업을 다시 등록합니다.
 - 복원하면 새 `epoch`를 발급합니다. 클라이언트는 `since=0`부터 다시 받고, Hub에 없는 Capture를 다시 올립니다(D3).
-- **active였던 클라이언트 장치가 모두 dormant가 되어 다시 승인해야 합니다.** revoked 장치는 revoked로 남습니다. 분실했거나 revoke한 장치는 승인하지 않습니다. 재승인은 #19의 흐름입니다.
+- **active였던 클라이언트 장치가 모두 dormant가 되어 다시 승인해야 합니다.** 출력이 그 장치들을 `device <id> <플랫폼> <이름> paired <시각> dormant`로 적습니다. 복원한 root로 Hub를 띄운 뒤, 손에 있는 장치는 `campuslife-hub --root <복원한 root> approve <id>`로 승인하고, 분실한 장치는 `revoke <id>`로 revoke합니다. 로컬 UI의 Devices에서도 됩니다. revoked 장치는 revoked로 남고 승인할 수 없습니다.
+- 백업 뒤에 pairing한 장치는 복원한 Hub가 모르므로(401 `unauthorized`) 다시 pairing합니다.
 - **백업 뒤에 한 purge는 복원으로 되돌려집니다.** 출력이 알려 주는 시각 뒤에 purge한 파일은 다시 purge합니다.
 - 세대의 Blob이 하나라도 드라이브에 없거나 손상됐으면 복원 전체를 거부합니다(부분 복원은 조용한 데이터 손실이라 그런 옵션은 없습니다). `--generation`으로 다른 세대를 고르거나 다른 백업 드라이브를 씁니다. 원래 Hub가 남아 있으면 `fsck`로 그 Blob을 확인하고 새 백업을 만듭니다.
 - 복원이 DB를 놓은 뒤 끝나기 전에 끊기면(전원 차단 등) 그 세대의 백업 기록과 `backed_up_at`이 빠집니다. 데이터는 잃지 않고, 다음 백업이 `backed_up_at`을 다시 찍습니다.
@@ -165,5 +180,8 @@ uv run campuslife-hub --root D:\CampusLife-restored restore --from E:\CampusLife
 | 끝나지 않은 업로드 세션 | 마지막으로 열거나 chunk를 받은 지 7일. 그사이 다른 장치가 같은 Blob을 올렸으면 다시 열 때 바로 끝남 |
 | Mutation 결과(`applied_mutations`) | 90일. 그보다 오래된 재전송은 create·patch는 다시 판정되어 해가 없고, delete·restore·Relation create는 다시 적용됨(수용) |
 | 백업 세대 | 드라이브마다 최근 N개(기본 5) |
+| `audit_log`(pairing·revoke·재승인·dormant 전환·토큰 재발급 기록) | 무기한, 지우지 않음(append-only). 토큰·secret은 담지 않음. 백업에 함께 들어감 |
+| 장치 토큰 해시 | revoke된 장치도 남김(그 토큰에 `device_revoked`로 답하기 위해). 재발급으로 끝난 토큰은 새 토큰이 처음 성공할 때, 쓰이지 않은 새 토큰은 다시 재발급할 때 지움 |
+| pairing secret 해시 | 쓴 것은 남김(Hub를 다시 시작해도 재사용을 잡기 위해). 쓰지 않은 것은 새 코드를 만들 때 지움 |
 | 로그 `logs\hub.log` | 지금 파일과 이전 파일 5개(`hub.log.1`…`.5`), 각 5 MiB, 최대 30 MiB. 비밀 값과 강의 본문은 가림(E19) |
 | `staging\`의 쓰다 만 파일 | 다음 기동 때 지움 |
