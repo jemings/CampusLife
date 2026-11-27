@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/artifact/body.json",
+  "title": "Artifact body",
+  "description": "The envelope a structured Artifact body shares (D13, #5 decision 8): ordered blocks, each with the Locators it rests on. The content Blob of an Artifact whose type has a body schema holds it as JSON, its bytes canonical_json(body) so the same body is the same Blob, and that schema narrows it (extraction: artifact/extraction); later types extend it by adding members. The Hub writes it; open: clients ignore members they do not know.",
+  "type": "object",
+  "required": ["v", "blocks"],
+  "properties": {
+    "v": { "description": "Version of the body shape; this contract defines 1, and a newer Hub may send a higher one.", "$ref": "../common/int64.json", "minimum": 1 },
+    "blocks": { "description": "In order: a block's position is its ordinal, from 0.", "type": "array", "items": { "$ref": "#/$defs/block" } }
+  },
+  "$defs": {
+    "block": {
+      "type": "object",
+      "required": ["id", "block_type", "refs"],
+      "properties": {
+        "id": { "description": "Derived by the Hub, the same for the same input, and unique within the body; the body schema says how (extraction: rule block_id, which also makes it unique; #8 adds the check for its types). An LLM cites a block only by this id, and the Hub turns the id into the block's refs (D13).", "$ref": "../common/sha256.json" },
+        "block_type": {
+          "description": "Known types are the examples; a newer Hub may send others, which a client shows by their text.",
+          "type": "string",
+          "pattern": "^[a-z][a-z_]*$",
+          "examples": ["heading", "paragraph"],
+          "x-open": true
+        },
+        "text": { "description": "The block's text; absent for a block that has none.", "type": "string" },
+        "payload": { "description": "Structured content whose shape the block_type names; no known type defines one yet.", "type": "object" },
+        "refs": { "description": "Where in the originals the block rests; empty for a block with no evidence, which a client shows as unsupported.", "type": "array", "items": { "$ref": "../locator/locator.json" } }
+      }
+    }
+  }
+}

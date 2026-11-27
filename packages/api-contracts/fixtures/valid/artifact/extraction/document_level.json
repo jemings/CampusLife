@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "extractor": {
+    "id": "hwpx",
+    "version": "0.2.1"
+  },
+  "blocks": [
+    {
+      "id": "ee99a0378c12352015aa6bd9066c886e0fd1066d1adad2eb6ef95f2563d208dc",
+      "block_type": "paragraph",
+      "text": "본문",
+      "refs": [
+        {
+          "v": 1,
+          "kind": "document",
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+        }
+      ]
+    }
+  ]
+}

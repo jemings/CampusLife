@@ -1,12 +1,15 @@
 """Contract rules bound to a place in a schema through an x- keyword (E6).
 
 A rule judges only values that already fit their own schema shape, so one
-defect yields one violation.
+defect yields one violation. A rule reports a violation or says nothing: on a
+value of a shape it does not expect, even one its schema lets through, it
+stays silent and does not raise.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import hashlib
 import re
 import unicodedata
 from datetime import date
@@ -17,6 +20,7 @@ from typing import NamedTuple
 from jsonschema import ValidationError
 
 from .ecma import ecma_search
+from .jsonio import canonical_json
 from .set_rules import set_owner, set_type
 from .violations import Rule
 
@@ -289,6 +293,47 @@ def _box_extent(validator, enabled, instance, schema):
         yield ValidationError(f"box {instance!r} reaches past the unit square")
 
 
+def _fitting_blocks(validator, schema, instance) -> Iterator[tuple[int, dict]]:
+    """(ordinal, block) for each block that fits its own schema, when the source blob and the extractor do."""
+    if not isinstance(instance, dict) or not all(name in instance for name in ("blob", "extractor", "blocks")):
+        return
+    if not _members_fit(validator, schema, instance, ["blob", "extractor"]):
+        return
+    if not (isinstance(instance["blob"], str) and isinstance(instance["extractor"], dict) and isinstance(instance["blocks"], list)):
+        return
+    block_schema = schema.get("properties", {}).get("blocks", {}).get("items", True)
+    for ordinal, block in enumerate(instance["blocks"]):
+        if isinstance(block, dict) and _fits(validator, block, block_schema):
+            yield ordinal, block
+
+
+def _block_id(validator, enabled, instance, schema):
+    """A block's id is sha256(canonical_json([blob, extractor id, extractor version, ordinal])), the ordinal its index."""
+    for ordinal, block in _fitting_blocks(validator, schema, instance):
+        extractor = instance["extractor"]
+        derived = [instance["blob"], extractor.get("id"), extractor.get("version"), ordinal]
+        if not isinstance(block.get("id"), str) or not all(isinstance(part, str) for part in derived[:3]):
+            continue
+        if block["id"] != hashlib.sha256(canonical_json(derived)).hexdigest():
+            yield ValidationError(f"block {ordinal}'s id is not derived from its blob, extractor and ordinal",
+                                  path=["blocks", ordinal, "id"])
+
+
+def _block_anchor(validator, enabled, instance, schema):
+    """Every ref of an extracted block names the blob it was extracted from, whatever its kind, and none is in a
+    recording."""
+    for ordinal, block in _fitting_blocks(validator, schema, instance):
+        refs = block.get("refs")
+        for index, ref in enumerate(refs if isinstance(refs, list) else []):
+            if not isinstance(ref, dict):
+                continue
+            at = ["blocks", ordinal, "refs", index]
+            if ref.get("blob") != instance["blob"]:
+                yield ValidationError("the ref does not name the extracted blob", path=[*at, "blob"])
+            elif "capture" in ref:
+                yield ValidationError("an extracted block is not in a recording", path=[*at, "capture"])
+
+
 class RuleKeyword(NamedTuple):
     rule: Rule
     check: Callable[..., Iterator[ValidationError]]
@@ -311,6 +356,8 @@ RULE_KEYWORDS = {
     "x-chunk-index": RuleKeyword(Rule.CHUNK_INDEX, _chunk_index),
     "x-int64-text": RuleKeyword(Rule.INT64_TEXT, _int64_text),
     "x-byte-range": RuleKeyword(Rule.BYTE_RANGE, _byte_range),
+    "x-block-id": RuleKeyword(Rule.BLOCK_ID, _block_id),
+    "x-block-anchor": RuleKeyword(Rule.BLOCK_ANCHOR, _block_anchor),
     "x-set-owner": RuleKeyword(Rule.OWNER, set_owner),
     "x-set-type": RuleKeyword(Rule.SET_TYPE, set_type),
 }

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/artifact/artifact.json",
   "title": "Artifact",
-  "description": "An immutable derived result (D9): a transcript, OCR text, summary, rendition or overlay. Rerunning a job makes a new Artifact; the Hub owns which one is current per (subject_ref, artifact_type). It can be rerun from the recorded inputs, but the result may differ, so it is backed up. The body is the content Blob; its structure (blocks and refs) arrives with #8 (E20). Its effective cloud_policy is min of its inputs, computed at each provider call and not stored (D8). The Hub writes every column. Open: clients ignore members they do not know.",
+  "description": "An immutable derived result (D9): a transcript, OCR text, summary, rendition or overlay. Rerunning a job makes a new Artifact; the Hub owns which one is current per (subject_ref, artifact_type). It can be rerun from the recorded inputs, but the result may differ, so it is backed up. The body is the content Blob: a text body (extraction; #8's types later) is JSON in the artifact/body envelope, narrowed by its type's body schema, and a rendition's is the rendered PDF itself, with no envelope; artifact_type, subject_ref (blob:<original>) and pipeline_version say what it renders. Its effective cloud_policy is min of its inputs, computed at each provider call and not stored (D8). The Hub writes every column. Open: clients ignore members they do not know.",
   "type": "object",
   "required": ["id", "artifact_type", "subject_ref", "job_key", "pipeline_version", "input_hashes", "content_blob", "created_at"],
   "properties": {
@@ -11,7 +11,7 @@
       "description": "Known types are the examples; a newer Hub may send others, which a client keeps but does not interpret.",
       "type": "string",
       "pattern": "^[a-z][a-z_]*$",
-      "examples": ["transcript", "ocr", "summary", "rendition", "overlay"],
+      "examples": ["transcript", "ocr", "summary", "rendition", "overlay", "identify", "extraction"],
       "x-open": true,
       "x-owner": "hub"
     },
@@ -29,7 +29,7 @@
       "items": { "$ref": "../common/sha256.json" },
       "x-owner": "hub"
     },
-    "content_blob": { "description": "The Artifact's body.", "$ref": "../common/sha256.json", "x-owner": "hub" },
+    "content_blob": { "description": "The Artifact's body: for extraction, JSON in artifact/extraction, its bytes canonical_json(body); for a rendition, the rendered PDF Blob itself, the Blob annotations are pinned to (D12).", "$ref": "../common/sha256.json", "x-owner": "hub" },
     "created_at": { "$ref": "../common/instant.json", "x-owner": "hub" }
   },
   "$defs": {
