@@ -1,0 +1,18 @@
+[
+  {
+    "path": "/blocks/0/id",
+    "rule": "block_id"
+  },
+  {
+    "path": "/blocks/1/id",
+    "rule": "block_id"
+  },
+  {
+    "path": "/blocks/2/id",
+    "rule": "block_id"
+  },
+  {
+    "path": "/blocks/3/id",
+    "rule": "block_id"
+  }
+]

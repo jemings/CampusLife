@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/artifact/extraction.json",
+  "title": "Extraction body",
+  "description": "The body of an extraction Artifact (#5 decision 1): what one extractor version read from one Blob, as ordered ContentBlocks. The Artifact's subject_ref is blob:<blob>. Every block id is derived from the blob, the extractor and the block's ordinal (rule block_id), and every ref lies in that blob (rule block_anchor): the Hub builds both itself and does not take them from the extractor. Open, as artifact/body.",
+  "$ref": "body.json",
+  "type": "object",
+  "required": ["v", "blob", "extractor", "blocks"],
+  "properties": {
+    "blob": { "description": "The Blob the blocks were read from.", "$ref": "../common/sha256.json" },
+    "extractor": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "description": "The extractor; its jobs are extract.<id>.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64 },
+        "version": { "description": "The extractor's version; a new version reads a Blob again into a new Artifact with new block ids. No - or +, which separate it in the pipeline version.", "type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z._]*$", "maxLength": 64 }
+      }
+    },
+    "blocks": {
+      "items": {
+        "$ref": "body.json#/$defs/block",
+        "properties": { "refs": { "description": "At least one: a block whose finer place is unknown cites the document.", "minItems": 1 } }
+      }
+    },
+    "warnings": {
+      "description": "What the extractor could not read, or read only in part; absent when there is nothing to say.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/warning" }
+    }
+  },
+  "x-block-id": true,
+  "x-block-anchor": true,
+  "$defs": {
+    "warning": {
+      "type": "object",
+      "required": ["code"],
+      "properties": {
+        "code": {
+          "description": "no_text_layer: pages without text, left to OCR; limit_reached: reading stopped at a limit, the rest is missing; replaced_characters: bytes that were not text in the detected encoding were replaced. Known codes are the examples; a newer Hub may send others.",
+          "type": "string",
+          "pattern": "^[a-z][a-z_]*$",
+          "examples": ["no_text_layer", "limit_reached", "replaced_characters"],
+          "x-open": true
+        }
+      }
+    }
+  }
+}

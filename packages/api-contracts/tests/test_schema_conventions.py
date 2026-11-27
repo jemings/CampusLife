@@ -141,6 +141,8 @@ def test_open_enums_name_their_known_values():
 
 OPEN_ENUMS = {
     "artifact/artifact#/properties/artifact_type",
+    "artifact/body#/$defs/block/properties/block_type",
+    "artifact/extraction#/$defs/warning/properties/code",
     "capture/attachment#/properties/role",
     "capture/origin#/properties/type",
     "common/error#/properties/code",
