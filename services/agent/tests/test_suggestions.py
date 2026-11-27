@@ -198,15 +198,18 @@ async def test_proposed_text_is_kept_with_lf_line_ends_and_accepted_as_it_is(db,
     artifact_id, _ = await grounds(db, blob_store, tmp_path)
     item_id, create = created_item()
     await apply(db, device, create)
-    created = await propose(db, artifact_id, proposal={**ASSIGNMENT, "body": f"1주차{line_break}2주차"})
-    patching = await propose(db, artifact_id, "patch_item", {"entity": "item", "id": item_id, "set": {"body": {"from_hash": None, "to": f"a{line_break}b"}}},
-                             fingerprint=OTHER_FINGERPRINT)
+    title = f"제목{line_break}둘째 줄"
+    created = await propose(db, artifact_id, proposal={**ASSIGNMENT, "title": title, "body": f"1주차{line_break}2주차"})
+    patch_set = {"body": {"from_hash": None, "to": f"a{line_break}b"}, "title": {"from": create["data"]["title"], "to": title}}
+    patching = await propose(db, artifact_id, "patch_item", {"entity": "item", "id": item_id, "set": patch_set}, fingerprint=OTHER_FINGERPRINT)
 
     results = [await decide(db, device, accepting(each)) for each in (created, patching)]
 
     assert (created["proposed"]["body"], patching["proposed"]["set"]["body"]["to"]) == ("1주차\n2주차", "a\nb")
-    assert results == [{"result": "applied"}, {"result": "applied", "applied_fields": ["body"]}]
-    assert sorted(item["body"] for item in rows(await feed(db), "item").values()) == ["1주차\n2주차", "a\nb"]
+    assert (created["proposed"]["title"], patching["proposed"]["set"]["title"]["to"]) == (title, title)
+    assert results == [{"result": "applied"}, {"result": "applied", "applied_fields": ["body", "title"]}]
+    items = rows(await feed(db), "item").values()
+    assert sorted((item["body"], item["title"]) for item in items) == [("1주차\n2주차", title), ("a\nb", title)]
 
 
 @pytest.mark.parametrize(
