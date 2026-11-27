@@ -130,11 +130,16 @@ def _job_status(job: Job, redactor: Redactor) -> str:
     return escape(said)
 
 
+def _not_identified(identify_jobs: Sequence[Job]) -> str:
+    """"yet" only while identify has still to run: one that failed or was cancelled waits for a retry or a reprocess."""
+    return "not identified yet" if all(job.state in CANCELLABLE for job in identify_jobs) else "not identified"
+
+
 def _file_status(statuses: Sequence[FileStatus], redactor: Redactor) -> str:
     """Where an Attachment's processing stands: its media type and jobs on one line, and what refine found under it."""
     lines = []
     for status in statuses:
-        parts = [escape(status.detected_mime or "not identified yet"), *(_job_status(job, redactor) for job in status.jobs)]
+        parts = [escape(status.detected_mime or _not_identified(status.jobs)), *(_job_status(job, redactor) for job in status.jobs)]
         lines.append(f"<small>{' · '.join(parts)}</small>")
         lines += [f'<small class="fact">{escape(fact)}</small>' for fact in status.facts]
     return "".join(f"<br>{line}" for line in lines)

@@ -47,6 +47,7 @@ IDENTIFIER_ID = "identify"
 PLANNED_ROLES = frozenset({"file", "text", "web_snapshot"})
 """S2: audio_segment and photo are #8's."""
 PLANNER = "files"
+RULES_CHANGED = "the Hub's processing rules changed since this file was read; reprocess it to read it under the new ones"
 HANDLER_SLACK = timedelta(seconds=60)
 """S5: a handler's time is the child's and this, for reading the Blob and storing the body."""
 
@@ -129,7 +130,9 @@ class Files:
 
     def status(self, snap: Snapshot, attachment_id: str) -> FileStatus | None:
         """Where the Attachment stands: the latest identify job of its Blob and, once identified, the latest job of
-        each reader refine picks, with what refine found that no job holds (the PR2 decision on identify's input)."""
+        each reader refine picks, with what refine found that no job holds (the PR2 decision on identify's input).
+        A Blob last identified under other rules (another identify pipeline) is shown as that reading left it, with
+        RULES_CHANGED: nothing replans it until the user reprocesses (decision 5)."""
         attachment = store.get(snap, EntityRef(Entity.ATTACHMENT, attachment_id))
         if attachment is None or attachment["role"] not in PLANNED_ROLES:
             return None
@@ -138,11 +141,13 @@ class Files:
         for job in jobs.of_subject(snap, f"blob:{sha256}"):
             latest[job.job_type, bodies.canonical_json(reading(job.params)).decode()] = job
         identified = latest.get((IDENTIFY, "{}"))
-        found = self._identified(snap, sha256, None)
+        found = media.get(snap, sha256)
         if found is None:
             return FileStatus(None, (), (identified,) if identified else ())
         refined = refine(found.media_type, attachment.get("original_filename"), attachment.get("declared_mime"), self.readers)
         facts = []
+        if found.pipeline_version != self.identify_pipeline.version:
+            facts.append(RULES_CHANGED)
         if refined.mismatch:
             facts.append(f"its name or declared type says another kind of file than its bytes, which are {found.media_type}")
         if not refined.jobs:
