@@ -12,6 +12,7 @@ from campuslife_hub.clock import instant
 from campuslife_hub.job_runner import HANDLER_TIMEOUT, RETRY_DELAYS, STOP_GRACE, JobContext, JobRegistry, JobRunner, UnknownJobType
 from campuslife_hub.jobs import MAX_ATTEMPTS, Blocked, Failed, JobSpec, JobState, OutcomeCode, Pipeline, Succeeded
 from test_capture_commit import blob_store
+from waiting import until
 
 __all__ = ["blob_store"]
 
@@ -235,13 +236,6 @@ async def test_a_handler_past_its_time_is_stopped_and_its_job_waits_to_run_again
     assert (await job(db, second)).state is JobState.SUCCEEDED
 
 
-async def until(condition, within_s=10.0):
-    deadline = time.monotonic() + within_s
-    while not await condition():
-        assert time.monotonic() < deadline, "the condition did not come about in time"
-        await asyncio.sleep(0.02)
-
-
 def stubborn():
     """A handler that swallows every cancellation until released, with the ids of the jobs it started."""
     started, released = [], asyncio.Event()
@@ -379,13 +373,14 @@ async def test_cancelling_a_handler_that_ignores_it_still_ends_its_job_cancelled
 
 
 async def test_a_runner_stopped_while_a_cancel_waits_for_the_handler_stops_and_the_cancel_still_lands(db, registry, runner):
-    started = asyncio.Event()
+    started, cancel_reached_handler = asyncio.Event(), asyncio.Event()
 
     async def run(job, context):
         started.set()
         try:
             await asyncio.sleep(60)
         except asyncio.CancelledError:
+            cancel_reached_handler.set()
             await asyncio.sleep(0.3)
             raise
 
@@ -394,7 +389,7 @@ async def test_a_runner_stopped_while_a_cancel_waits_for_the_handler_stops_and_t
     running = asyncio.create_task(runner.run_due())
     await asyncio.wait_for(started.wait(), 10)
     cancelling = asyncio.create_task(runner.cancel(queued.id))
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(cancel_reached_handler.wait(), 10)
 
     running.cancel()
 
@@ -568,7 +563,11 @@ async def test_a_wake_that_comes_while_the_runner_looks_makes_it_look_again(db, 
     runner.run_due = woken_while_looking
     stop = asyncio.Event()
     serving = asyncio.create_task(runner.run_forever(stop, idle_s=30))
-    await asyncio.sleep(0.3)
+
+    async def looked_twice():
+        return len(looks) >= 2
+
+    await until(looked_twice)
     stop.set()
     await asyncio.wait_for(serving, 5)
 
