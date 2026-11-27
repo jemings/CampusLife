@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
-from extract_harness import hub_with
+from extract_harness import TEST_LIMITS, hub_with
 from test_capture_commit import blob_store, device
 
 import malicious_files as make
@@ -387,3 +387,24 @@ def test_a_hub_without_console_streams_still_reads_its_childs_result(tmp_path):
 
     assert finished.returncode == 0, finished.stderr
     assert out.read_text(encoding="utf-8") == '{"status": "ok", "media_type": "text/plain"}'
+
+
+async def test_a_blob_larger_than_the_input_limit_is_identified_and_only_its_extract_is_unsafe(db, device, blob_store, tmp_path):
+    limits = Limits(**{**TEST_LIMITS.to_json(), "input_max_bytes": 1 << 20})
+    reader = fake("echo", {"text/plain": {}, "application/octet-stream": {}})
+    hub = hub_with(db, blob_store, device, tmp_path, reader, base=(), limits=limits)
+    large = tmp_path / "lecture.bin"
+    with large.open("wb") as handle:
+        handle.write(b"synthetic lecture recording\n")
+        handle.truncate(limits.input_max_bytes + 1)
+
+    capture = await hub.capture(("lecture.bin", large))
+    await hub.settle()
+
+    sha256 = capture["attachments"][0]["blob_sha256"]
+    [identified] = await hub.jobs(IDENTIFY)
+    assert (identified.state, identified.outcome_code) == (JobState.SUCCEEDED, None)
+    assert (await hub.media(sha256)) is not None
+    [extracted] = await hub.jobs("extract.fake_echo")
+    assert (extracted.state, extracted.outcome_code) == (JobState.FAILED, OutcomeCode.UNSAFE_INPUT)
+    assert str(limits.input_max_bytes) in extracted.error
