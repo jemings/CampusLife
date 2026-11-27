@@ -24,6 +24,7 @@ def test_a_plain_archive_opens_and_its_members_read_back(tmp_path):
     ("case", "status"),
     [
         (make.traversal, Status.UNSAFE_INPUT),
+        (make.backslash_traversal, Status.UNSAFE_INPUT),
         (make.absolute, Status.UNSAFE_INPUT),
         (make.drive_letter, Status.UNSAFE_INPUT),
         (make.symlink, Status.UNSAFE_INPUT),

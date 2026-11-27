@@ -52,6 +52,11 @@ def traversal(path: Path) -> Path:
     return _zip(path, [("../../outside.txt", b"escaped")])
 
 
+def backslash_traversal(path: Path) -> Path:
+    """A member that climbs out with Windows separators, which zipfile leaves alone on POSIX."""
+    return _zip(path, [("notes\\..\\..\\outside.txt", b"escaped")])
+
+
 def absolute(path: Path) -> Path:
     return _zip(path, [("/etc/outside.txt", b"escaped")])
 
