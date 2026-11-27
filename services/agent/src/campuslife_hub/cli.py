@@ -297,10 +297,14 @@ def _run(arguments: argparse.Namespace, root: Path) -> None:
 
 
 def _leave_in_the_log(root: Path, said: str) -> None:
-    """Without stderr, as under pythonw, the data root's log is where the reason a command failed can still be read; a
-    log that cannot be written leaves it nowhere."""
+    """Without stderr, as under pythonw, the data root's log is where the reason a command failed can still be read.
+    Only a root that holds a Hub gets one: a log would make a root init must create, or restore must find empty, hold
+    something. A root without a Hub, or a log that cannot be written, leaves the reason nowhere."""
+    layout = Layout(root)
+    if not layout.database.is_file():
+        return
     try:
-        handler = file_handler(Layout(root).logs / host.LOG_FILE, Redactor())
+        handler = file_handler(layout.logs / host.LOG_FILE, Redactor())
     except OSError:
         return
     try:
