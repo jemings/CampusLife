@@ -13,11 +13,12 @@ agp = "9.3.3"
 kotlin = "2.4.21"
 ksp = "2.3.14"
 
-# compileSdk 36 caps these: Compose 1.12 (BOM 2026.08.00) and later need compileSdk 37.
+# Compose 1.12 (BOM 2026.08.00) and later need compileSdk 37.
 composeBom = "2026.06.01"
+
 activityCompose = "1.13.0"
 room = "2.8.5"
-work = "2.11.2"
+work = "2.12.0"
 
 junit = "4.13.2"
 robolectric = "4.18.1"
