@@ -12,8 +12,12 @@ enum class CloudPolicy {
     ;
 
     companion object {
-        fun resolve(explicit: CloudPolicy?, courseDefault: CloudPolicy?, globalDefault: CloudPolicy): CloudPolicy = TODO()
+        /** The explicit policy, else the course's default_cloud_policy, else the global default (A6); an explicit one may be looser. */
+        fun resolve(explicit: CloudPolicy?, courseDefault: CloudPolicy?, globalDefault: CloudPolicy): CloudPolicy =
+            explicit ?: courseDefault ?: globalDefault
 
-        fun effective(policies: Iterable<CloudPolicy>): CloudPolicy = TODO()
+        /** The most restrictive policy over every input of a provider call (D8). */
+        fun effective(policies: Iterable<CloudPolicy>): CloudPolicy =
+            requireNotNull(policies.minOrNull()) { "a provider call has at least one input" }
     }
 }
