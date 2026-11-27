@@ -786,6 +786,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 근거: 비교할 것은 장치가 실제로 받는 값입니다. 인자만 받으면 사용자가 같은 URL을 두 번 적어야 하고, 틀려도 알 수 없습니다. 노트북의 Tailscale 이름이 바뀐 뒤 QR이 옛 주소를 주는 것과, `--public-url` 없이 도는 Hub를 같은 명령 한 번으로 잡습니다.
   - 버린 안: 인자로만 비교(위 이유), Task Scheduler 작업 인자 읽기(Windows 전용이고, 작업 없이 띄운 serve는 못 봄).
   - 단점: `tailscale-check`가 Hub가 돌 때 data root의 admin 토큰을 읽습니다.
+  - Hub에게 묻다가 Hub가 없다는 것 밖의 이유(admin 토큰을 읽을 수 없음, 응답 없음, 거절)로 실패하면 `warning:` 한 줄로 알리고 비교 없이 노출 검사를 계속합니다. exit 코드는 노출 검사가 정합니다(2026-11-28, PR #51 리뷰, 오케스트레이터 결정). 이 명령의 본업인 admin 포트 노출 검사가 부수 질의에 막히면 안 되기 때문입니다.
 - **#4와의 경계 (#19 결정 5):** #4의 바깥 래퍼가 봉투를 소유하고, `security: []`가 아닌 모든 경로에서 `authenticate`를 부릅니다(fail-closed, 공개 경로는 `POST /v1/pair`뿐).
   - #19는 `devices.authenticate(core, bearer, *, now, redactor, dormant_after)`와 `sync_devices.DeviceSync`를 냅니다. `DeviceSync`는 요청마다 시계를 읽는 `authenticate`와 라우터(`POST /v1/pair`, `/v1/devices/me/token`, `/v1/devices/me/status`)를 갖습니다. 둘은 시계 하나와 프로세스당 `PairingLimiter` 하나를 함께 씁니다(PR #46·#49 리뷰).
   - 라우트는 `device_of(request)`로 DeviceId만 압니다.
@@ -826,7 +827,9 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 관리 표면:
     - `device_admin.py`의 라우터를 admin `create_app`이 늘 포함하고, 페이지 틀은 `admin_page.page`입니다.
     - admin API는 `GET /api/devices`와 `POST /api/devices/{id}/revoke|approve`입니다. 응답은 `{id, state, changed}`이고, 모르는 id는 404, Hub 자신이나 revoked의 승인은 409입니다.
-    - CLI `devices | revoke <id> | approve <id>`는 Hub가 돌면 admin API를 거치고, 아니면 lock을 잡고 직접 합니다. 장치는 전체 id로만 지정합니다.
+    - CLI `devices | revoke <id> | approve <id>`는 Hub가 돌면 admin API를 거치고, 아니면 lock을 잡고 직접 합니다. 장치는 전체 id로만 지정합니다. `approve`는 승인 전 플랫폼·이름·마지막 접속·마지막 거부를 출력합니다(결정 6, PR #51 리뷰).
+    - 복원 안내는 dormant로 만든 장치의 id와, 복원한 root를 `--root`로 넣은 승인·revoke 명령을 출력합니다. `--root` 없이 출력하면 그대로 실행했을 때 기본 data root(흔히 원래 Hub)의 장치가 바뀝니다(PR #51 리뷰). 장치가 없으면 안내를 생략합니다.
+    - admin 페이지는 `Referrer-Policy: same-origin`입니다(2026-11-28, PR #51 리뷰, 오케스트레이터 결정). `no-referrer`이면 브라우저가 같은 origin의 폼 POST에도 `Origin: null`을 보내(Fetch "append a request Origin header") Origin 검사가 로컬 UI의 모든 폼을 403으로 막습니다. #2 PR5부터 있던 결함입니다. 버린 안: `Origin: null` 허용은 sandbox iframe·`data:` 같은 다른 출처도 `null`을 보내므로 CSRF 구멍이 됩니다.
   - 화면:
     - `device_name`·`app_version`을 escape합니다.
     - 목록은 이름 옆에 장치 id 앞 8자와 pairing 시각을 보여 줍니다(PR #45). `one_line`이 ZWJ 같은 보이지 않는 문자를 막지 않아서, 같아 보이는 이름을 이것으로 가립니다. 버린 안: 패턴 확장(정상 이모지 이름이 깨짐).
