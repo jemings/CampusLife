@@ -24,7 +24,7 @@ import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonUnquotedLiteral
 import kotlinx.serialization.json.jsonPrimitive
 
 /** A java.time value written as exactly one pattern, which is also the only form it reads. */
@@ -64,12 +64,15 @@ object WallTimeSerializer : PatternSerializer<LocalTime>(
     { text, format -> LocalTime.parse(text, format) },
 )
 
-/** A JSON number kept as its decimal value; a double would turn 0.1 into a different number. */
+/**
+ * A JSON number kept as its exact decimal. It is written as an unquoted literal because a
+ * JsonPrimitive of a fraction is encoded through a double, which turns 1.50 into 1.5.
+ */
 object DecimalSerializer : KSerializer<BigDecimal> {
     override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("campuslife.decimal", PrimitiveKind.STRING)
 
     override fun serialize(encoder: Encoder, value: BigDecimal) =
-        (encoder as JsonEncoder).encodeJsonElement(JsonPrimitive(value))
+        (encoder as JsonEncoder).encodeJsonElement(JsonUnquotedLiteral(value.toString()))
 
     override fun deserialize(decoder: Decoder): BigDecimal {
         val primitive = (decoder as JsonDecoder).decodeJsonElement().jsonPrimitive
