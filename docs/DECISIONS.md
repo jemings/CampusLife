@@ -140,7 +140,7 @@
 - serve를 거친 요청은 Agent에서 출발지가 127.0.0.1로 보이므로 **출처로 권한을 판단하지 않습니다.**
 - serve는 요청에 `Tailscale-User-Login` 등 신원 헤더를 붙이고, 외부에서 넣은 같은 이름의 헤더는 지웁니다. 하지만 tag가 붙은 장치에서 온 요청에는 이 헤더가 채워지지 않습니다. 그래서 인증 근거로는 쓰지 않고 감사 기록에만 남깁니다.
 - Tailscale HTTPS 인증서를 켜면 장치 FQDN이 공개 Certificate Transparency 로그에 기록됩니다(Tailscale 공식 문서로 확인). 노트북 장치 이름에 실명이나 학교명을 쓰지 않습니다.
-- Funnel은 쓰지 않으며 꺼져 있음을 테스트로 확인합니다. Tailscale ACL은 "내 기기 → Hub:443"만 허용합니다. *(D22로 대체됨: Funnel이 꺼져 있는지는 읽기 전용 `campuslife-hub tailscale-check`가 serve 설정에서 확인합니다(#4 결정 9))*
+- Funnel은 쓰지 않으며 꺼져 있음을 테스트로 확인합니다. *(D22로 대체됨: Funnel이 꺼져 있는지는 읽기 전용 `campuslife-hub tailscale-check`가 serve 설정에서 확인합니다(#4 결정 9))* Tailscale ACL은 "내 기기 → Hub:443"만 허용합니다.
 - SFTP·FolderSync·OpenSSH는 제품과 PoC 모두에서 쓰지 않습니다. 해시와 ACK를 우회하는 두 번째 수집 경로이기 때문입니다.
 - 운영 한계로 문서화할 것:
   - Android와 iOS는 VPN을 동시에 하나만 쓰는 것으로 알고 있습니다(확인 필요). 학교 VPN을 켜면 Hub에 닿지 못할 수 있으므로, 앱이 그 사유를 표시합니다.
@@ -727,7 +727,12 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 장치마다 Mutation 배치를 하나씩 적용합니다(결정 7).
   - chunk 번호는 `0|[1-9][0-9]{0,18}`만 받습니다(결정 11).
   - 다운로드의 Range 하나, ETag `"<sha256>"`, 304, 416 `bytes */<size>`, 빈 Blob은 직접 구현합니다. 근거: Starlette `FileResponse`는 ETag가 md5이고, 범위 둘에 multipart로 답하며, 304를 내지 않습니다.
-  - `campuslife-hub tailscale-check`(결정 9)는 읽기만 합니다.
+  - `campuslife-hub tailscale-check`(결정 9)는 `tailscale serve status --json`과 `tailscale status --json`을 읽기만 하고 다음을 판정합니다.
+    - 443의 HTTPS를 serve가 종단하고, 경로 `/`로 `http://127.0.0.1:<sync 포트>`에만 보냅니다.
+    - 이 노트북의 serve 설정(foreground 세션 포함)과 그것이 내놓는 Tailscale Service(`ServeConfig.Services`) 어디서도 사이트·경로·TCP forward가 admin 포트로 가지 않습니다. loopback은 주소로 판정합니다(`localhost`, 127/8, `::1`, IPv4-mapped). Service가 그 밖에 무엇을 내놓는지는 판정하지 않습니다.
+    - Funnel이 꺼져 있습니다.
+    - tailnet이 Running이고 MagicDNS 이름이 있습니다.
+    - 하나라도 어기면 problem이고 0이 아닌 코드로 끝납니다. `--public-url`이 MagicDNS 이름과 다르면 경고만 합니다.
 - **업로드를 열 때 "이미 저장됨"(200)을 답하면 그 장치의 그 sha256 세션을 끝냅니다** (2026-11-27, PR #43 리뷰, 오케스트레이터 결정). finalize의 같은 갈래와 같습니다. 근거: 다른 장치가 먼저 올리면 내 세션과 chunk가 7일 동안 남아 공간 판정에도 셉니다.
 
 **결과:**
