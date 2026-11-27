@@ -20,6 +20,7 @@ agp = "9.3.3"
 kotlin = "2.4.21"
 ksp = "2.3.14"
 kotlinxSerialization = "1.13.0"
+kotlinxCoroutines = "1.11.0"
 
 # Compose 1.12 (BOM 2026.08.00) and later need compileSdk 37.
 composeBom = "2026.06.01"
@@ -34,6 +35,7 @@ androidxTestCore = "1.7.0"
 androidxTestExtJunit = "1.3.0"
 
 [libraries]
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-material3 = { module = "androidx.compose.material3:material3" }

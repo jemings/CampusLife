@@ -19,7 +19,7 @@
       "required": ["entity", "id", "rev", "deleted"],
       "properties": {
         "entity": {
-          "description": "Known entities are the examples; a client skips rows of entities it does not know.",
+          "description": "Known entities are the examples; a client does not interpret rows of entities it does not know, and may keep them as an opaque cache for a later version that does.",
           "type": "string",
           "pattern": "^[a-z][a-z_]*$",
           "examples": ["capture", "attachment", "item", "relation", "tag", "artifact", "suggestion", "conflict_record"],
