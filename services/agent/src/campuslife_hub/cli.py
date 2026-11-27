@@ -21,7 +21,8 @@
 While a Hub serves the data root it holds the data root's hub.lock, and init, import, backup, devices,
 revoke and approve go through its admin API (E11); otherwise they take the lock themselves. restore takes the lock of the
 empty root it fills. open, status and stop need a serving Hub. ls and fsck take no lock and write no data.
-tailscale-check only reads what the tailscale command reports and needs no data root.
+tailscale-check reads what the tailscale command reports and, unless given --public-url, the public_url of
+the Hub serving the data root, if one does.
 Every command refuses to run on a Microsoft Store Python (E21).
 """
 
@@ -148,7 +149,8 @@ def _parser() -> argparse.ArgumentParser:
     checking.add_argument("--sync-port", type=_port, default=DEFAULT_SYNC_PORT, help=f"the sync listener's port (default {DEFAULT_SYNC_PORT})")
     checking.add_argument("--admin-port", type=_port, default=DEFAULT_ADMIN_PORT, help=f"the admin listener's port (default {DEFAULT_ADMIN_PORT})")
     checking.add_argument(
-        "--public-url", metavar="URL", type=_hub_url, help="the hub_url serve is given, to compare with the tailnet's name for this machine",
+        "--public-url", metavar="URL", type=_hub_url,
+        help="the hub_url to compare with the tailnet's name for this machine (default: the one the serving Hub hands out)",
     )
     return parser
 
@@ -334,6 +336,7 @@ def _status(root: Path) -> None:
     last = status["backup"]["last"]
     said = "backup never" if last is None else f"backup last {last['finished_at']} {last['target']}"
     print(said + (" (overdue)" if status["backup"]["overdue"] else ""))
+    print(f"public_url {status['devices']['public_url'] or '- (no device can be added)'}")
 
 
 def _stop(root: Path) -> None:
@@ -350,13 +353,32 @@ async def _ls(root: Path) -> None:
             print(f"    {attachment.blob_sha256[:12]}  {attachment.cloud_policy:<13}  {attachment.original_filename or '-'}")
 
 
-def _tailscale_check(arguments: argparse.Namespace) -> None:
+def _public_url_to_compare(root: Path, given: str | None) -> tuple[str | None, str, bool]:
+    """The public_url to compare, what it is (for the output), and whether a serving Hub hands out none at all.
+
+    One given wins; otherwise it is the one the Hub serving root hands out, so the check sees what devices are given."""
+    if given is not None:
+        return given, "given", False
+    layout = _layout(root)
+    try:
+        status = admin_client.call(layout, "GET", "/api/status")
+    except HubNotServing:
+        return None, f"no Hub serves {layout.root}; give --public-url to compare one", False
+    served = status["devices"]["public_url"]
+    return served, "the serving Hub's" if served else f"the Hub serving {layout.root} was started without --public-url", served is None
+
+
+def _tailscale_check(arguments: argparse.Namespace, root: Path) -> None:
+    public_url, said, unset = _public_url_to_compare(root, arguments.public_url)
     verdict = tailscale_check.check(
-        tailscale_check.tailscale, sync_port=arguments.sync_port, admin_port=arguments.admin_port, public_url=arguments.public_url,
+        tailscale_check.tailscale, sync_port=arguments.sync_port, admin_port=arguments.admin_port, public_url=public_url,
     )
     print(f"hub_url {verdict.hub_url or '-'}")
+    print(f"public_url {public_url or '-'} ({said})")
     for warning in verdict.warnings:
         print(f"warning: {warning}")
+    if unset:
+        print(f"warning: no device can be added until serve is given --public-url {verdict.hub_url or '<the hub_url>'}")
     for problem in verdict.problems:
         print(f"problem: {problem}")
     if not verdict.ok:
@@ -422,7 +444,7 @@ def _run(arguments: argparse.Namespace, root: Path) -> None:
         case "autostart":
             _autostart(root, arguments)
         case "tailscale-check":
-            _tailscale_check(arguments)
+            _tailscale_check(arguments, root)
         case "devices":
             asyncio.run(_devices(root))
         case "revoke":
