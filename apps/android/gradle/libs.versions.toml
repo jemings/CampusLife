@@ -5,7 +5,9 @@ jdk = "21"
 jvmTarget = "17"
 # :wire, which the app runs, compiles against the Java 8 class library. Android has its core
 # (streams, java.time) by API 26, below minSdk; later JDK members come as late as API 34
-# (Stream.toList), and lint's NewApi does not read a JVM module.
+# (Stream.toList), and lint's NewApi does not read a JVM module. The release still admits all of
+# Java SE 8, so packages Android lacks or has only in part (java.awt, java.beans, javax.xml.bind,
+# java.lang.management) pass the compiler.
 wireJdkRelease = "1.8"
 
 minSdk = "31"
