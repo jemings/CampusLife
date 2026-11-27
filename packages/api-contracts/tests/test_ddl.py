@@ -9,7 +9,7 @@ DDL = Path(__file__).resolve().parents[1] / "ddl" / "client.sql"
 ROOM_COLUMN_TYPES = {"INTEGER", "TEXT", "REAL", "BLOB"}
 
 # The clauses the header of ddl/client.sql keeps out of the file.
-KEPT_OUT = re.compile(r"\b(CHECK|COLLATE|GENERATED|DEFERRABLE|DESC)\b|\bON\s+CONFLICT\b", re.IGNORECASE)
+KEPT_OUT = re.compile(r"\b(CHECK|COLLATE|GENERATED|DEFERRABLE|DESC|MATCH)\b|\bON\s+CONFLICT\b", re.IGNORECASE)
 
 
 @pytest.fixture
@@ -56,10 +56,12 @@ def test_ddl_uses_only_what_room_can_declare(db):
         assert (table, strict, without_rowid) == (table, 0, 0)
         (sql,) = db.execute("SELECT sql FROM sqlite_master WHERE name = ?", (table,)).fetchone()
         assert not KEPT_OUT.search(sql), table
-        for row in db.execute(f"PRAGMA table_info({table})"):
-            assert row[2] in ROOM_COLUMN_TYPES, (table, row[1], row[2])
-        for row in db.execute(f"PRAGMA index_list({table})"):
-            assert row[4] == 0, (table, row[1])
+        for _, column, kind, _, _, _, hidden in db.execute(f"PRAGMA table_xinfo({table})"):
+            assert (column, kind in ROOM_COLUMN_TYPES, hidden) == (column, True, 0), table
+        for _, index, _, origin, partial in db.execute(f"PRAGMA index_list({table})"):
+            assert (index, origin in {"c", "pk"}, partial) == (index, True, 0), table
+            for _, cid, _, _, _, key in db.execute(f"PRAGMA index_xinfo(`{index}`)"):
+                assert not key or cid >= 0, (table, index)
     for name, sql in db.execute("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL"):
         assert not KEPT_OUT.search(sql), name
 
