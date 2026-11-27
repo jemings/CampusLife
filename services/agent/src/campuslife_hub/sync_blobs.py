@@ -9,7 +9,12 @@
 - POST /v1/blobs/uploads/{sha}/finalize combines the chunks and stores the Blob once its sha256 and size check out.
 
 A refusal before the whole body is read leaves the rest to the server, which reads and drops it, so the connection
-stays usable (uvicorn's h11 protocol discards body data after the response).
+stays usable (uvicorn's h11 protocol discards body data after the response; #4 decision 5). A request sent with
+`Expect: 100-continue` and refused that early is the client's to settle: it sends the body it declared on that
+connection or closes it. uvicorn keeps waiting for the declared body, so a next request sent without it is read as
+that body and answered with a 400 text/plain outside the contract before the connection closes. No
+`Connection: close` is added to these refusals: a client that sent no Expect may already be writing the body, and
+closing on it risks a reset before it reads the answer.
 """
 
 from __future__ import annotations
