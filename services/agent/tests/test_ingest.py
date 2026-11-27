@@ -260,7 +260,7 @@ async def test_a_planned_job_on_a_subject_that_never_existed_keeps_out_its_plann
 
     [ingest] = await ingest_of(db, capture)
     assert (ingest.state, ingest.error) == (
-        JobState.RETRY_WAIT, f"PlanningFailed: extract: the subject {never} of a planned extract.text never was in the Hub"
+        JobState.RETRY_WAIT, f"PlanningFailed: extract: the Hub holds no {never}, the subject of a planned extract.text, and has no record of removing it"
     )
     assert await queued(db, "extract.text") == []
     assert len(await queued(db, "transcribe")) == 1
@@ -290,7 +290,7 @@ async def test_a_planned_job_whose_subject_or_input_the_hub_no_longer_holds_is_d
     assert ingest.state is JobState.SUCCEEDED
     [warned] = [record for record in caplog.records if record.name == "campuslife_hub.ingest"]
     assert (warned.levelno, warned.getMessage()) == (
-        logging.WARNING, f"dropped the planned extract.text on {subject}: the Hub no longer holds its subject or an input"
+        logging.WARNING, f"dropped the planned extract.text on {subject}: the Hub does not hold its subject or an input"
     )
 
 
