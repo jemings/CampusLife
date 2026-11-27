@@ -105,7 +105,7 @@ async def post_mutations(request: Request) -> JSONResponse:
 
 
 async def refuse_every_bearer(bearer: str | None) -> Refusal:
-    """The authenticator until Devices can pair (#19): no token names a Device, so every request but pairing is 401."""
+    """An authenticator for which no token names a Device, so every request but pairing is 401."""
     return Refusal(RefusalCode.UNAUTHORIZED)
 
 

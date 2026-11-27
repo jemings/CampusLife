@@ -139,14 +139,14 @@ async def read_capped(request: Request, cap: int) -> bytes | None:
     return bytes(body)
 
 
-async def read_json(request: Request) -> object:
-    """The body as strict JSON (UTF-8, no duplicate members), sent as application/json and at most MAX_JSON_BODY."""
+async def read_json(request: Request, *, cap: int = MAX_JSON_BODY) -> object:
+    """The body as strict JSON (UTF-8, no duplicate members), sent as application/json and at most cap bytes."""
     media = request.headers.get("content-type", "").partition(";")[0].strip().lower()
     if media != JSON_MEDIA_TYPE:
         raise SyncError(400, ErrorCode.INVALID_REQUEST, f"send the body as Content-Type: {JSON_MEDIA_TYPE}")
-    body = await read_capped(request, MAX_JSON_BODY)
+    body = await read_capped(request, cap)
     if body is None:
-        raise SyncError(400, ErrorCode.INVALID_REQUEST, f"a JSON body carries at most {MAX_JSON_BODY} bytes")
+        raise SyncError(400, ErrorCode.INVALID_REQUEST, f"this JSON body carries at most {cap} bytes")
     try:
         return loads_strict(body.decode("utf-8"))
     except (UnicodeDecodeError, NotStrictJson) as error:

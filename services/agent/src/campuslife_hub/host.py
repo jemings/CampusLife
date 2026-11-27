@@ -8,7 +8,8 @@
 - the job runner, started again after runner_restart_delay when it ends with an error, each end
   logged and counted in the status;
 - maintenance every maintenance_every: upload session expiry, Blob collection, forgetting
-  old Mutation results and finishing unfinished purges, which opening the Core also does once.
+  old Mutation results, making Devices unseen for longer than devices.dormant_after dormant and
+  finishing unfinished purges, which opening the Core also does once.
 Stopping closes the listeners, stops the runner, ends the handlers left running and leaves behind
 those that will not end. `run` then lets the process exit without waiting on them, nor on a
 thread a cancelled handler started with asyncio.to_thread, which runs on to its end: the loop's
@@ -35,12 +36,13 @@ import uvicorn
 from fastapi import APIRouter
 from starlette.types import ASGIApp
 
-from . import admin_token, purge
+from . import admin_token, devices, purge
 from .admin import Admin, create_app
 from .admin_auth import AdminAuth
 from .backup import BackupSettings
 from .core import Core, open_core, safe_data_root
 from .data_root import Layout
+from .devices import DeviceSettings
 from .job_runner import STOP_GRACE, JobContext, JobRegistry, JobRunner
 from .mutations import forget_old_results
 from .redaction import RedactingFormatter, Redactor, file_handler
@@ -71,6 +73,7 @@ class HostConfig:
     sync_keep_alive: timedelta = timedelta(seconds=120)
     """How long the sync listener keeps an idle connection open. tailscale serve reuses its connections to the Hub, and
     one the Hub closed under it fails the request serve sends on it with a 502 (#4 decision 6)."""
+    devices: DeviceSettings = DeviceSettings()
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,7 @@ class Hosted:
     core: Core
     runner: JobRunner
     redactor: Redactor
+    devices: DeviceSettings = DeviceSettings()
 
 
 type SyncAppFactory = Callable[[Hosted], ASGIApp]
@@ -167,9 +171,13 @@ async def _keep_running(runner: JobRunner, stopping: asyncio.Event, record: Runn
             await _stopped_within(stopping, config.runner_restart_delay)
 
 
-async def _maintain(core: Core, stopping: asyncio.Event, every: timedelta, clock: Callable[[], datetime]) -> None:
+async def _maintain(core: Core, stopping: asyncio.Event, every: timedelta, clock: Callable[[], datetime], dormant_after: timedelta) -> None:
     while not await _stopped_within(stopping, every):
         now = clock()
+        try:
+            await devices.mark_dormant(core, now=now, dormant_after=dormant_after)
+        except Exception:
+            log.exception("making unseen devices dormant failed; it runs again in %s", every)
         try:
             kept = await core.blobs.expire_sessions(now) + await core.blobs.collect_garbage(now)
             await forget_old_results(core.db, now)
@@ -224,11 +232,11 @@ async def serve(
         listeners = [_listener(create_app(admin, port=admin_port, routers=admin_routers), config)]
         if sync_app is not None:
             sockets.append(_bind(config.sync_port))
-            listeners.append(_listener(sync_app(Hosted(core, runner, redactor)), config, keep_alive=config.sync_keep_alive))
+            listeners.append(_listener(sync_app(Hosted(core, runner, redactor, config.devices)), config, keep_alive=config.sync_keep_alive))
         tasks = [asyncio.create_task(listener.serve(sockets=[bound])) for listener, bound in zip(listeners, sockets, strict=True)]
         tasks += [
             asyncio.create_task(_keep_running(runner, stopping, record, config)),
-            asyncio.create_task(_maintain(core, stopping, config.maintenance_every, clock)),
+            asyncio.create_task(_maintain(core, stopping, config.maintenance_every, clock, config.devices.dormant_after)),
         ]
         while not all(listener.started for listener in listeners):
             _raise_if_any_ended(tasks)

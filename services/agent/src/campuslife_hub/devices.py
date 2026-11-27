@@ -86,6 +86,8 @@ class ClientPlatform(enum.StrEnum):
 HUB_DEVICE_NAME = "CampusLife Hub"
 HUB_PLATFORM = "windows_hub"
 DEFAULT_DORMANT_AFTER = timedelta(days=90)
+MAX_DORMANT_AFTER = timedelta(days=36500)
+"""A longer period puts now - dormant_after before year 1, where datetime overflows and every authentication fails."""
 OFFER_LIFETIME = timedelta(minutes=5)
 PAIR_FAILURES_ALLOWED = 10
 PAIR_FAILURE_WINDOW = timedelta(minutes=10)
@@ -98,6 +100,20 @@ _TOKEN = json.loads((contract_root() / "schemas" / "device" / "pair_response.jso
 _ONE_LINE = json.loads((contract_root() / "schemas" / "device" / "pair_request.json").read_text(encoding="utf-8"))["$defs"]["one_line"]["pattern"]
 _NOT_ONE_LINE = re.compile("[" + _ONE_LINE.removeprefix("^[^").removesuffix("]*$") + "]")
 """A character the contract's one_line text refuses."""
+_HUB_URL = json.loads((contract_root() / "schemas" / "device" / "pairing_offer.json").read_text(encoding="utf-8"))["properties"]["hub_url"]
+
+
+def is_hub_url(text: str) -> bool:
+    """Whether text is a hub_url a pairing offer may hand out (device/pairing_offer): an https origin with no path."""
+    return len(text) <= _HUB_URL["maxLength"] and re.fullmatch(_HUB_URL["pattern"], text) is not None
+
+
+@dataclass(frozen=True)
+class DeviceSettings:
+    public_url: str | None = None
+    """The hub_url a pairing offer hands out (serve --public-url, #19 decision 4); without it there is no offer."""
+    dormant_after: timedelta = DEFAULT_DORMANT_AFTER
+    """serve --dormant-after-days."""
 
 
 class NoPublicUrl(Exception):

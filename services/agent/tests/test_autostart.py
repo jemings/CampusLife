@@ -77,14 +77,20 @@ def test_autostart_xml_prints_the_task_for_the_initialised_root_with_the_serve_o
     monkeypatch.setenv("USERDOMAIN", "LAPTOP")
     monkeypatch.setenv("USERNAME", "kim")
 
-    assert hub(root, "autostart", "xml", "--admin-port", "8800", "--sync-port", "8830", "--backup-keep", "3", "--backup-warn-days", "14") == 0
+    assert hub(
+        root, "autostart", "xml", "--admin-port", "8800", "--sync-port", "8830", "--backup-keep", "3", "--backup-warn-days", "14",
+        "--public-url", "https://campus-laptop.tail0a1b2c.ts.net", "--dormant-after-days", "30",
+    ) == 0
 
     printed = capsys.readouterr().out
     assert not printed.startswith("<?xml")
     task = read_task(printed)
     launcher = "campuslife-hubw.exe" if sys.platform == "win32" else "campuslife-hubw"
     assert value(task, "Actions/Exec/Command") == str(Path(sys.executable).with_name(launcher))
-    assert value(task, "Actions/Exec/Arguments") == f'--root "{root.resolve()}" serve --admin-port 8800 --sync-port 8830 --backup-keep 3 --backup-warn-days 14'
+    assert value(task, "Actions/Exec/Arguments") == (
+        f'--root "{root.resolve()}" serve --admin-port 8800 --sync-port 8830 --backup-keep 3 --backup-warn-days 14'
+        " --public-url https://campus-laptop.tail0a1b2c.ts.net --dormant-after-days 30"
+    )
     assert value(task, "Actions/Exec/WorkingDirectory") == str(root.resolve())
     assert value(task, "Triggers/LogonTrigger/UserId") == r"LAPTOP\kim"
 

@@ -35,11 +35,11 @@ uv run campuslife-hub open
    - 작업은 `.venv\Scripts\campuslife-hubw.exe --root <data root> serve`를 실행합니다. 콘솔 창이 없으므로 Hub의 로그와, 기동을 거부한 이유(Store Python, 더 새 DB, 맞지 않는 SQLite, 이미 도는 Hub, 쓰고 있는 포트, 동기화 폴더 등)는 `<data root>\logs\hub.log`에 남습니다. 이유가 남는 것은 data root에 Hub(`database\campuslife.sqlite3`)가 있을 때뿐입니다. Hub가 없는 root에는 파일을 만들지 않습니다. 이 파일은 5 MiB가 차면 `hub.log.1`…`hub.log.5`로 밀려나 최대 6개(30 MiB)를 둡니다.
    - 작업이 곧바로 끝났는데 `hub.log`에 이유가 없으면(data root에 Hub가 없는 경우, 로그 폴더를 쓸 수 없는 경우 등) 콘솔에서 같은 명령 `uv run campuslife-hub --root <data root> serve`를 실행해 이유를 봅니다.
    - 시간 제한 없음, 배터리 사용 중에도 시작·유지, 이미 돌고 있으면 새 시작은 무시합니다.
-   - 등록 시점의 data root와, register에 준 serve 옵션(`--admin-port`, `--sync-port`, `--backup-keep`, `--backup-warn-days`)만 작업 인자에 들어갑니다. 바꾸려면 같은 명령을 다시 실행합니다(같은 이름의 작업을 교체). 이름은 `--name`으로 바꿀 수 있습니다.
+   - 등록 시점의 data root와, register에 준 serve 옵션(`--admin-port`, `--sync-port`, `--backup-keep`, `--backup-warn-days`, `--public-url`, `--dormant-after-days`)만 작업 인자에 들어갑니다. 바꾸려면 같은 명령을 다시 실행합니다(같은 이름의 작업을 교체). 이름은 `--name`으로 바꿀 수 있습니다.
    - `uv run campuslife-hub autostart xml`은 등록할 작업 XML을 출력만 합니다(인코딩 선언 없음). `--out task.xml`을 주면 register가 schtasks에 넘기는 것과 같은 UTF-16 파일을 씁니다.
 5. `schtasks /Run`은 다음 로그온을 기다리지 않고 지금 시작합니다. 로그아웃 후 다시 로그인해도 됩니다. 기동에 몇 초가 걸리므로 `status`가 서빙하는 Hub가 없다고 하면 잠시 뒤 다시 실행합니다.
 6. `open`은 브라우저로 로컬 UI(127.0.0.1의 admin 포트, 기본 8731)를 1회용 로그인 링크로 엽니다. 이 포트는 `tailscale serve`에 노출하지 않습니다(D5).
-7. 휴대폰·태블릿이 Hub에 닿도록 [sync 리스너와 tailscale serve](#sync-리스너와-tailscale-serve-d5-d22)대로 `tailscale serve`를 한 번 설정합니다. 장치 pairing은 #19가 맡습니다.
+7. 휴대폰·태블릿이 Hub에 닿도록 [sync 리스너와 tailscale serve](#sync-리스너와-tailscale-serve-d5-d22)대로 `tailscale serve`를 한 번 설정하고, `tailscale-check`가 출력한 `hub_url`을 `autostart register --public-url <hub_url>`로 serve에 줍니다. 이 값이 없으면 장치를 추가할 수 없습니다([장치](#장치-d6-d23)).
 
 **한계(D16):** 재부팅 뒤 사용자가 로그인하기 전에는 Hub가 없습니다. 노트북이 잠자거나 꺼져 있는 동안에도 Hub는 멈추고, 각 클라이언트는 Outbox에 쌓았다가 Hub가 돌아오면 다시 보냅니다. 알림은 각 클라이언트가 로컬에서 예약하므로 Hub와 관계없이 울립니다(D19). 실기기에서의 로그온 자동 시작과 장시간 생존은 #14가 확인합니다.
 
@@ -78,7 +78,7 @@ uv run campuslife-hub autostart unregister
 | 명령 | 하는 일 |
 |---|---|
 | `init` | data root, DB, Hub 신원을 만듦 |
-| `serve` | Hub 실행(sync 리스너 `127.0.0.1:8730`, 로컬 UI·admin API `127.0.0.1:8731`, job runner, 1시간마다 정리). 보통은 작업이 실행함 |
+| `serve` | Hub 실행(sync 리스너 `127.0.0.1:8730`, 로컬 UI·admin API `127.0.0.1:8731`, job runner, 1시간마다 정리; `--public-url`, `--dormant-after-days`). 보통은 작업이 실행함 |
 | `open` | 로컬 UI를 1회용 로그인 링크로 엶 |
 | `import <파일…>` | 파일들을 Capture 하나로 가져옴(`--policy`, `--link item:<id>`) |
 | `backup --to <폴더>` | 백업 세대 하나를 씀(`--keep N`) |
@@ -112,12 +112,19 @@ uv run campuslife-hub tailscale-check
    - Funnel이 꺼져 있습니다. Funnel은 Hub를 인터넷에 엽니다.
    - tailscale이 로그인되어 있고 MagicDNS 이름이 있습니다.
 5. 모두 맞으면 `hub_url https://<이름>.<tailnet>.ts.net`과 `ok`를 출력합니다. 하나라도 틀리면 `problem:` 줄을 출력하고 0이 아닌 코드로 끝납니다. 포트를 바꿨으면 `--sync-port`, `--admin-port`를 같은 값으로 줍니다.
-   - pairing QR에 들어가는 `hub_url`은 `serve --public-url`의 값입니다(#19). `tailscale-check --public-url <URL>`을 주면, 그 값이 MagicDNS 이름과 다를 때 `warning:`을 출력합니다.
+   - pairing QR에 들어가는 `hub_url`은 `serve --public-url`의 값입니다(#19). `tailscale-check --public-url <URL>`을 주면, 그 값이 MagicDNS 이름과 다를 때 `warning:`을 출력합니다. 두 명령 모두 `hub_url`이 아닌 값(`http://`, 대문자 호스트, 경로나 끝의 `/`)과 `:443`을 붙인 값을 거부하고, 비교는 글자 그대로 합니다.
    - 두 JSON의 모양은 tailscale 소스에서 읽은 것이라, 실제 tailnet에서는 #39가 확인합니다.
-6. 연결 확인: #19가 pairing을 붙이기 전에는 sync 리스너가 모든 요청을 400이나 401로 거절합니다. 그래도 응답에 `CampusLife-Hub-Id` 헤더가 있으면 serve를 거쳐 Hub까지 닿은 것입니다. Hub가 꺼져 있으면 serve가 이 헤더 없는 502로 답합니다.
+6. 연결 확인: pairing한 장치의 토큰이 없는 요청은 sync 리스너가 400이나 401로 거절합니다. 그래도 응답에 `CampusLife-Hub-Id` 헤더가 있으면 serve를 거쳐 Hub까지 닿은 것입니다. Hub가 꺼져 있으면 serve가 이 헤더 없는 502로 답합니다.
 
 - sync 리스너는 serve가 연결을 다시 쓰도록 유휴 연결을 120초 유지합니다(admin 리스너는 uvicorn 기본값).
 - 노트북이 잠자는 동안에는 serve도 답하지 않습니다. 휴대폰에서 학교 VPN 등 다른 VPN을 켜면 Tailscale과 동시에 쓰지 못해 Hub에 닿지 못할 수 있습니다(D5).
+
+### 장치 (D6, D23)
+
+- 장치는 sync 리스너의 `POST /v1/pair`로 pairing하고, 받은 토큰으로 모든 요청을 인증합니다. Hub는 토큰과 pairing secret의 SHA-256만 저장하고 로그에서 가립니다.
+- 틀린 secret이 10분에 10번 오면 그 뒤 pairing 시도는 `Retry-After`가 붙은 401입니다. 이 횟수는 메모리에만 있어 Hub를 다시 시작하면 지워집니다.
+- 90일(`serve --dormant-after-days`, 1–36500일) 동안 인증하지 않은 장치는 dormant가 되어 재승인할 때까지 401 `device_dormant`를 받습니다. 인증할 때와 1시간마다 하는 정리 때 판정합니다.
+- 장치가 보내는 상태(heartbeat)는 마지막 하나만 남깁니다.
 
 ### 백업 (U1, U3, E20)
 
