@@ -164,6 +164,15 @@ async def test_a_path_sha_that_is_not_a_sha256_is_invalid_request(tmp_path, path
     assert (refused.status_code, refused.json()["code"]) == (400, "invalid_request")
 
 
+async def test_head_is_no_operation_of_the_download_and_names_get(tmp_path):
+    async with syncing(tmp_path) as (core, client, phone, runner):
+        await stored(core, tmp_path)
+        refused = await client.head(f"/v1/blobs/{SHA}")
+
+    assert (refused.status_code, refused.headers["allow"], refused.content) == (405, "GET", b"")
+    assert refused.headers["campuslife-hub-id"] == core.identity.hub_id
+
+
 async def test_a_download_without_a_known_token_is_unauthorized(tmp_path):
     async with syncing(tmp_path) as (core, client, phone, runner):
         await stored(core, tmp_path)

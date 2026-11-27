@@ -23,6 +23,7 @@ def test_a_response_the_document_allows_passes():
     check(answer("GET", "/v1/nowhere", 404, json={"code": "not_found", "message": "x"}))
     check(answer("PUT", "/v1/blobs/uploads/" + "ab" * 32 + "/chunks/3", 204))
     check(answer("GET", f"/v1/blobs/{SHA}", 200, headers={**OCTETS, "ETag": f'"{SHA}"'}, content=b"x"))
+    check(answer("HEAD", f"/v1/blobs/{SHA}", 405, headers={**HUB, "Content-Type": "application/json", "Allow": "GET"}))
 
 
 @pytest.mark.parametrize(
@@ -40,9 +41,14 @@ def test_a_response_the_document_allows_passes():
         answer("GET", f"/v1/blobs/{SHA}", 200, headers=OCTETS, content=b"x"),
         answer("GET", f"/v1/blobs/{SHA}", 200, headers={**OCTETS, "ETag": "md5-not-a-sha"}, content=b"x"),
         answer("GET", f"/v1/blobs/{SHA}", 200, headers={**HUB, "Content-Type": "text/plain", "Accept-Ranges": "bytes", "ETag": f'"{SHA}"'}, content=b"x"),
+        answer("HEAD", f"/v1/blobs/{SHA}", 405, headers={**HUB, "Content-Type": "application/json"}, content=b"{}"),
+        answer("HEAD", f"/v1/blobs/{SHA}", 405, headers={**HUB, "Content-Type": "text/plain"}),
+        answer("HEAD", f"/v1/blobs/{SHA}", 200, headers={**HUB, "Content-Type": "application/json"}),
+        answer("HEAD", f"/v1/blobs/{SHA}", 405, headers={"Content-Type": "application/json"}),
     ],
     ids=["no hub headers", "no epoch", "body off schema", "status not listed", "error off schema", "plain 500", "no operation 200",
-         "no operation 422", "body on 204", "required header missing", "header value off schema", "wrong media type"],
+         "no operation 422", "body on 204", "required header missing", "header value off schema", "wrong media type",
+         "HEAD with a body", "HEAD error not json", "HEAD answered 200", "HEAD without hub headers"],
 )
 def test_a_response_the_document_does_not_allow_fails(response):
     with pytest.raises(AssertionError):
