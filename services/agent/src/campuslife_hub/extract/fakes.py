@@ -105,8 +105,9 @@ def zip_walk(path: Path, params: Mapping, limits: Limits) -> Extracted:
 
 
 def pdf(path: Path, params: Mapping, limits: Limits, out: Path) -> None:
-    """A converter (kind render) writing a small PDF made of the input's bytes, as LibreOffice (O4) would one of a deck."""
-    out.write_bytes(b"%PDF-1.7\n%" + str(params.get("mark", "")).encode() + b"\n" + path.read_bytes() + b"\n%%EOF\n")
+    """A converter (kind render) writing a small PDF made of the params it was handed and the input's bytes, as
+    LibreOffice (O4) would one of a deck."""
+    out.write_bytes(b"%PDF-1.7\n%" + json.dumps(dict(params), sort_keys=True).encode() + b"\n" + path.read_bytes() + b"\n%%EOF\n")
 
 
 def not_pdf(path: Path, params: Mapping, limits: Limits, out: Path) -> None:

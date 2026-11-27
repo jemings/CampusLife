@@ -2,6 +2,7 @@
 as the content of a rendition Artifact on the original Blob, with no body and no Relation."""
 
 import hashlib
+import json
 import sys
 from datetime import timedelta
 
@@ -29,8 +30,8 @@ def converter(name="pdf", *, version="1", accepts=PLAIN):
     return fake(name, accepts, version=version, extractor_id="fake_convert", kind="render")
 
 
-def written(data, mark=""):
-    return b"%PDF-1.7\n%" + mark.encode() + b"\n" + data + b"\n%%EOF\n"
+def written(data, params=None):
+    return b"%PDF-1.7\n%" + json.dumps(params or {}, sort_keys=True).encode() + b"\n" + data + b"\n%%EOF\n"
 
 
 async def relations(db):
@@ -65,7 +66,7 @@ async def test_a_new_converter_version_leaves_the_old_rendition_and_only_the_pur
 
     old, new = await hub.artifacts("rendition")
     assert [old["pipeline_version"], new["pipeline_version"]] == [f"fake_convert-{version}+L{TEST_LIMITS.hash8()}" for version in ("1", "2")]
-    assert [old["content_blob"], new["content_blob"]] == [sha(written(SLIDES, "v1")), sha(written(SLIDES, "v2"))]
+    assert [old["content_blob"], new["content_blob"]] == [sha(written(SLIDES, {"mark": "v1"})), sha(written(SLIDES, {"mark": "v2"}))]
     assert all(blob_store.path_of(artifact["content_blob"]).is_file() for artifact in (old, new))
 
     purged = await purge.purge_blob(db, blob_store, sha(SLIDES), hooks=PurgeHooks())
@@ -142,6 +143,19 @@ async def test_a_converter_that_needs_a_conversion_blocks_its_job(db, device, bl
 
     [job] = await hub.jobs("render.fake_convert")
     assert (job.state, job.outcome_code) == (JobState.BLOCKED, OutcomeCode.NEEDS_CONVERSION)
+
+
+async def test_a_reprocess_renders_the_same_pdf_from_the_params_without_its_nonce(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path, converter(accepts={"text/plain": {"mark": "v1"}}), base=())
+    capture = await hub.capture(("slides.txt", SLIDES))
+    await hub.settle()
+
+    await hub.db.write(lambda tx: ingest.reprocess(tx, [capture["id"]]))
+    await hub.settle()
+
+    first, again = await hub.artifacts("rendition")
+    assert first["id"] != again["id"]
+    assert first["content_blob"] == again["content_blob"] == sha(written(SLIDES, {"mark": "v1"}))
 
 
 def test_a_descriptor_of_another_kind_is_refused():
