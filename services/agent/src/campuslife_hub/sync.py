@@ -7,6 +7,7 @@ request model beside them (D17).
 
 - GET /v1/hub: the Hub's identity and the contract versions it speaks and accepts (E18).
 - GET /v1/changes: one page of the changes feed above a cursor (D3).
+- POST /v1/blobs/uploads, PUT …/chunks/{i}, POST …/finalize: resumable Blob uploads (sync_blobs).
 - POST /v1/mutations: a batch of 1 to 200 Mutations, applied in order by the Mutation applier (E12). The HTTP layer
   checks only the batch around them; the applier judges each Mutation and answers rejected{schema} inside the 200.
   A Device's batches apply one at a time, so a resent batch waits for the first and gets duplicate (#4 decision 7).
@@ -25,7 +26,7 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp
 
-from . import changes, mutations
+from . import changes, mutations, sync_blobs
 from .admin import NO_TELEMETRY
 from .devices import DeviceId, Refusal, RefusalCode
 from .host import Hosted
@@ -113,7 +114,7 @@ def create_sync_app(
     app = FastAPI(
         openapi_url=None, docs_url=None, redoc_url=None, redirect_slashes=False, telemetry=NO_TELEMETRY, exception_handlers=ERROR_HANDLERS
     )
-    for added in (router, *routers):
+    for added in (router, sync_blobs.router, *routers):
         app.include_router(added)
     app.state.sync = SyncState(hosted, versions)
     return SyncEnvelope(app, identity=hosted.core.identity, authenticate=authenticate, versions=versions)
