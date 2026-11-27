@@ -76,8 +76,10 @@ def test_letters_on_both_sides_of_a_space_are_not_one_word(index):
 
 
 def test_chinese_and_japanese_runs_are_split_the_same_way():
-    assert Index({1: "情報処理の試験", 2: "データ構造"}).search("処理") == [1]
-    assert Index({1: "情報処理の試験", 2: "データ構造"}).search("ータ") == [2]
+    japanese = Index({1: "情報処理の試験", 2: "データ構造", 3: "しけんのじかん"})
+    assert japanese.search("処理") == [1]
+    assert japanese.search("ータ") == [2]
+    assert japanese.search("じかん") == [3]
 
 
 def test_the_analyzer_writes_overlapping_pairs_and_leaves_other_text_to_the_tokenizer():
@@ -136,6 +138,7 @@ def test_fts_operators_in_a_query_are_searched_as_text(operators):
     assert operators.search("과*") == []
     assert operators.search("NEAR(과제 그래프)") == []
     assert operators.search("^그래프") == [1, 2, 3]
+    assert operators.search('"그래프 NOT 과제"') == [3]
 
 
 def test_a_term_of_only_punctuation_is_scanned_for_as_written(operators):
@@ -147,8 +150,15 @@ def test_a_term_of_only_punctuation_is_scanned_for_as_written(operators):
     assert operators.search("_") == [5]
 
 
+def test_a_backslash_is_searched_for_as_written():
+    paths = Index({1: "C:\\temp 폴더", 2: "100% 완료"})
+    assert paths.search("\\") == [1]
+    assert paths.search("\\%") == []
+
+
 HOSTILE = [
     '"', '""', '"""', "'", "*", "과제*", "*과제", "NEAR(", "NEAR(과제, 2)", "NEAR(과제 그래프, 0)",
+    '"과제', '과제"', '과제" OR "그래프', '그래프"*', '""과제""',
     "body:", ":", "body:*", "{body}:과제", "-body:과제", "^", "^^", "(", ")", "((과제", "과제))",
     "AND", "OR", "NOT", "과제 AND", "AND OR NOT", "+", "-", "과제 + 그래프",
     "\x00", "과\x00제", "과제\x00", "\x1b[0m", "\ud800", "과\udfff제", "\u200b", "\ufeff과제",
