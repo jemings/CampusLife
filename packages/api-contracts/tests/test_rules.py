@@ -6,7 +6,7 @@ import unicodedata
 
 import pytest
 
-from campuslife_contracts import Rule, RuleViolation, SchemaViolation
+from campuslife_contracts import Rule, RuleViolation, SchemaViolation, rules
 
 NFC = "강의 자료.pdf"
 NFD = unicodedata.normalize("NFD", NFC)
@@ -581,6 +581,18 @@ def test_block_id_is_derived_from_blob_extractor_and_ordinal(make_contract, body
 )
 def test_block_anchor_ties_every_ref_to_the_extracted_blob(make_contract, refs, expected):
     assert make_contract({"t/x": EXTRACTED}).validate("t/x", extracted(block(0, *refs))) == expected
+
+
+def test_block_rules_check_a_blocks_own_schema_only_for_a_block_they_would_report(make_contract, monkeypatch):
+    checked = []
+    fits = rules._fits
+    monkeypatch.setattr(rules, "_fits", lambda validator, value, schema: checked.append(value) or fits(validator, value, schema))
+    contract = make_contract({"t/x": EXTRACTED})
+
+    assert contract.validate("t/x", extracted(block(0), block(1, {"blob": SOURCE}, {"blob": SOURCE}))) == []
+    assert checked == []
+    contract.validate("t/x", extracted(block(1), block(1, {"blob": OTHER_BLOB})))
+    assert len(checked) == 2
 
 
 def test_block_anchor_leaves_refs_alone_when_the_blob_is_malformed(make_contract):
