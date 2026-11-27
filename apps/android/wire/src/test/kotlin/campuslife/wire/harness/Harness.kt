@@ -84,8 +84,6 @@ private fun jsonFiles(dir: Path): List<Path> =
         }
     }
 
-private fun codecFor(schemaId: String): Codec<*> = codecs[schemaId] ?: error("no Kotlin model for $schemaId")
-
 @Serializable
 private class ResolveVector(
     val explicit: CloudPolicy?,

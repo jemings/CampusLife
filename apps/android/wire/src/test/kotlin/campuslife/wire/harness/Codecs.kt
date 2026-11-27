@@ -57,17 +57,19 @@ class Codec<T>(private val serializer: KSerializer<T>, private val view: (T) -> 
 /** A shape the app passes along without reading it (#3 decision 3): Artifacts, Suggestions, Locators, headers. */
 private val kept = Codec(JsonObject.serializer())
 
+private val keptGroups = setOf("artifact", "suggestion", "locator")
+
+/** The model for a schema_id: a typed one, or [kept] for the shapes decision 3 leaves unread; anything else has none. */
+fun codecFor(schemaId: String): Codec<*> =
+    typed[schemaId]
+        ?: kept.takeIf { schemaId.substringBefore('/') in keptGroups || schemaId.endsWith("_headers") }
+        ?: error("no Kotlin model for $schemaId")
+
 /**
- * Every schema_id with valid or forward fixtures, and the Kotlin model that reads it (#3 decision 3).
- * The views put JSON the models keep (Item fields, changes rows) through the typed reading the app uses.
+ * Every typed schema_id and the Kotlin model that reads it (#3 decision 3). The views put JSON the
+ * models keep (Item fields, changes rows) through the typed reading the app uses.
  */
-val codecs: Map<String, Codec<*>> = mapOf(
-    "artifact/artifact" to kept,
-    "artifact/body" to kept,
-    "artifact/extraction" to kept,
-    "blob/download_request_headers" to kept,
-    "blob/download_response_headers" to kept,
-    "blob/range_not_satisfiable_headers" to kept,
+private val typed: Map<String, Codec<*>> = mapOf(
     "blob/stored" to Codec(StoredBlob.serializer()),
     "blob/upload_request" to Codec(UploadRequest.serializer()),
     "blob/upload_session" to Codec(UploadSession.serializer()),
@@ -88,7 +90,6 @@ val codecs: Map<String, Codec<*>> = mapOf(
     "common/sha256" to Codec(String.serializer()),
     "common/tz" to Codec(String.serializer()),
     "common/uuid" to Codec(String.serializer()),
-    "device/pair_failure_headers" to kept,
     "device/pair_request" to Codec(PairRequest.serializer()),
     "device/pair_response" to Codec(PairResponse.serializer()),
     "device/pairing_offer" to Codec(PairingOffer.serializer()),
@@ -102,18 +103,14 @@ val codecs: Map<String, Codec<*>> = mapOf(
     "item/fields/task" to Codec(TaskFields.serializer()),
     "item/fields/term" to Codec(TermFields.serializer()),
     "item/item" to Codec(Item.serializer(), ::typedItem),
-    "locator/locator" to kept,
     "mutation/batch_request" to Codec(MutationBatch.serializer()) { it.copy(mutations = it.mutations.map(::typedMutation)) },
     "mutation/batch_response" to Codec(MutationResults.serializer()),
     "mutation/mutation" to Codec(MutationSerializer, ::typedMutation),
     "mutation/result" to Codec(MutationResult.serializer()),
     "relation/relation" to Codec(Relation.serializer()),
-    "suggestion/suggestion" to kept,
     "sync/changes_page" to Codec(ChangesPage.serializer()) { it.copy(changes = it.changes.map(::typedChange)) },
     "sync/changes_query" to Codec(ChangesQuery.serializer()),
     "sync/hub" to Codec(HubInfo.serializer()),
-    "sync/request_headers" to kept,
-    "sync/response_headers" to kept,
     "tag/tag" to Codec(Tag.serializer()),
 )
 
