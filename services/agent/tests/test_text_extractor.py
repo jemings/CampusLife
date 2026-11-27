@@ -1,4 +1,5 @@
 import codecs
+import time
 
 import pytest
 
@@ -52,6 +53,30 @@ def test_markdown_headings_make_the_doc_path_of_the_blocks_under_them(tmp_path):
     assert [block.get("payload") for block in result.blocks if block["block_type"] == "heading"] == [{"level": 1}, {"level": 2}, {"level": 1}]
     assert all(block["refs"][0]["kind"] == "doc_path" for block in result.blocks)
     assert (result.warnings, result.partial) == ([], False)
+
+
+@pytest.mark.parametrize(
+    ("line", "heading"),
+    [
+        ("# 제목 #", "제목"), ("## 제목 ###   ", "제목"), ("# 제목#", "제목#"), ("# C# 언어", "C# 언어"),
+        ("# a ## b ##", "a ## b"), ("#\t제목\t#", "제목"), ("# #", "#"),
+    ],
+)
+def test_a_closing_sequence_of_hashes_after_a_blank_is_not_part_of_the_heading(tmp_path, line, heading):
+    assert places(extracted(tmp_path, line.encode())) == [("heading", heading, [], 0)]
+
+
+def test_a_heading_line_of_long_blanks_is_read_in_linear_time(tmp_path):
+    """The former lazy heading pattern took 1.48 s on a line of 20,000 blanks and grew with their square (review
+    measurement, local Linux), so 200,000 would take minutes; read in linear time the line takes 0.1 ms here. 1 s
+    parts the two with room for a slow CI runner."""
+    line = b"# x" + b" " * 200_000 + b"y"
+    started = time.perf_counter()
+
+    result = extracted(tmp_path, line)
+
+    assert time.perf_counter() - started < 1.0
+    assert result.blocks[0]["text"] == "x" + " " * 200_000 + "y"
 
 
 def test_plain_text_has_no_headings(tmp_path):
