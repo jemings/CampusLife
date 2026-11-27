@@ -519,7 +519,7 @@ EXTRACTED = {
     "type": "object",
     "properties": {
         "blob": HEX64,
-        "extractor": {"type": "object", "properties": {"id": {"type": "string"}, "version": {"type": "string"}}},
+        "extractor": {"type": "object", "properties": {"id": {"type": "string"}, "version": {"type": "string"}, "params": {"type": "object"}}},
         "blocks": {
             "type": "array",
             "items": {
@@ -534,12 +534,13 @@ EXTRACTED = {
 
 
 def block_id_by_hand(ordinal):
-    """sha256 of canonical_json([blob, extractor id, extractor version, ordinal]), the canonical bytes written out."""
-    return hashlib.sha256(f'["{SOURCE}","text","1",{ordinal}]'.encode()).hexdigest()
+    """sha256 of canonical_json([blob, extractor id, extractor version, extractor params, ordinal]), the canonical bytes
+    written out."""
+    return hashlib.sha256(f'["{SOURCE}","text","1",{{"syntax":"plain"}},{ordinal}]'.encode()).hexdigest()
 
 
 def extracted(*blocks, blob=SOURCE, extractor=None):
-    return {"blob": blob, "extractor": extractor or {"id": "text", "version": "1"}, "blocks": list(blocks)}
+    return {"blob": blob, "extractor": extractor or {"id": "text", "version": "1", "params": {"syntax": "plain"}}, "blocks": list(blocks)}
 
 
 def block(ordinal, *refs, id_=None):
@@ -552,14 +553,16 @@ def block(ordinal, *refs, id_=None):
         (extracted(block(0), block(1)), []),
         (extracted(block(1), block(0)),
          [RuleViolation("/blocks/0/id", Rule.BLOCK_ID), RuleViolation("/blocks/1/id", Rule.BLOCK_ID)]),
-        (extracted(block(0), extractor={"id": "text", "version": "2"}), [RuleViolation("/blocks/0/id", Rule.BLOCK_ID)]),
+        (extracted(block(0), extractor={"id": "text", "version": "2", "params": {"syntax": "plain"}}), [RuleViolation("/blocks/0/id", Rule.BLOCK_ID)]),
+        (extracted(block(0), extractor={"id": "text", "version": "1", "params": {"syntax": "markdown"}}), [RuleViolation("/blocks/0/id", Rule.BLOCK_ID)]),
+        (extracted(block(0), extractor={"id": "text", "version": "1", "params": {}}), [RuleViolation("/blocks/0/id", Rule.BLOCK_ID)]),
         (extracted(block(0), blob=OTHER_BLOB, extractor=None) | {"blocks": [block(0, {"blob": OTHER_BLOB})]},
          [RuleViolation("/blocks/0/id", Rule.BLOCK_ID)]),
         (extracted(block(0, id_="AB" * 32)), [SchemaViolation("/blocks/0/id", "pattern")]),
         (extracted(block(0, {"blob": SOURCE, "page": 0}, id_="ab" * 32)), [SchemaViolation("/blocks/0/refs/0/page", "minimum")]),
         (extracted(block(0, id_="ab" * 32), blob="AB" * 32), [SchemaViolation("/blob", "pattern")]),
     ],
-    ids=["in-order", "swapped", "other-version", "other-blob", "malformed-id", "malformed-block", "malformed-blob"],
+    ids=["in-order", "swapped", "other-version", "other-params", "no-params", "other-blob", "malformed-id", "malformed-block", "malformed-blob"],
 )
 def test_block_id_is_derived_from_blob_extractor_and_ordinal(make_contract, body, expected):
     assert make_contract({"t/x": EXTRACTED}).validate("t/x", body) == expected
@@ -600,8 +603,9 @@ UNTYPED = {
         {"blob": 7, "extractor": {"id": "text", "version": "1"}, "blocks": [block(0)]},
         {"blob": SOURCE, "extractor": {"id": "text", "version": "1"}, "blocks": {"0": block(0)}},
         {"blob": SOURCE, "extractor": {"id": "text", "version": "1"}, "blocks": ["x", {"id": 1, "refs": "x"}]},
+        {"blob": SOURCE, "extractor": {"id": "text", "version": "1", "params": "plain"}, "blocks": [block(0, id_="ab" * 32)]},
     ],
-    ids=["extractor-string", "blob-number", "blocks-object", "blocks-of-other-shapes"],
+    ids=["extractor-string", "blob-number", "blocks-object", "blocks-of-other-shapes", "params-string"],
 )
 def test_block_rules_stay_silent_on_shapes_their_schema_lets_through(make_contract, body):
     assert make_contract({"t/x": UNTYPED}).validate("t/x", body) == []

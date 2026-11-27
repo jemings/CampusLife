@@ -212,6 +212,8 @@ def test_a_proposal_names_the_members_of_the_input_it_mirrors():
 
 CLOSED_VALUE_TYPES = ("common/local_date", "common/local_time_rule")
 FREE_FORM_IN_FEED = {("suggestion/suggestion", ("proposed", "set"))}
+HASHED = {("artifact/extraction", ("extractor", "params"))}
+"""Open objects a rule hashes: a member added there is another value, which the block ids follow (rule block_id)."""
 OPEN_SAMPLES = [
     (f"{c.schema_id}/{c.name}", c.schema_id, read_strict(c.path))
     for c in CASES if c.kind is FixtureKind.VALID and c.schema_id in OPEN
@@ -225,9 +227,9 @@ def node_at(sample, at):
 
 
 def closed_inside(schema_id, sample, at):
-    """A closed value type (D20) or a map whose names are columns, inside an open shape."""
+    """A closed value type (D20), a map whose names are columns, or an object a rule hashes, inside an open shape."""
     names_only = tuple(part for part in at if isinstance(part, str))
-    if any(names_only[-len(path):] == path and schema_id == owner for owner, path in FREE_FORM_IN_FEED):
+    if any(names_only[-len(path):] == path and schema_id == owner for owner, path in FREE_FORM_IN_FEED | HASHED):
         return True
     return any(CONTRACT.validate(value_type, node_at(sample, at)) == [] for value_type in CLOSED_VALUE_TYPES)
 
