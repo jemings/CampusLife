@@ -1,7 +1,9 @@
 """Contract rules bound to a place in a schema through an x- keyword (E6).
 
 A rule judges only values that already fit their own schema shape, so one
-defect yields one violation.
+defect yields one violation. A rule reports a violation or says nothing: on a
+value of a shape it does not expect, even one its schema lets through, it
+stays silent and does not raise.
 """
 
 from __future__ import annotations
@@ -295,7 +297,9 @@ def _fitting_blocks(validator, schema, instance) -> Iterator[tuple[int, dict]]:
     """(ordinal, block) for each block that fits its own schema, when the source blob and the extractor do."""
     if not isinstance(instance, dict) or not all(name in instance for name in ("blob", "extractor", "blocks")):
         return
-    if not _members_fit(validator, schema, instance, ["blob", "extractor"]) or not isinstance(instance["blocks"], list):
+    if not _members_fit(validator, schema, instance, ["blob", "extractor"]):
+        return
+    if not (isinstance(instance["blob"], str) and isinstance(instance["extractor"], dict) and isinstance(instance["blocks"], list)):
         return
     block_schema = schema.get("properties", {}).get("blocks", {}).get("items", True)
     for ordinal, block in enumerate(instance["blocks"]):
@@ -319,7 +323,8 @@ def _block_anchor(validator, enabled, instance, schema):
     """Every ref of an extracted block is in the blob it was extracted from; a ref of a kind with neither a blob nor
     a capture can only be of a kind this contract does not know, and is left alone."""
     for ordinal, block in _fitting_blocks(validator, schema, instance):
-        for index, ref in enumerate(block.get("refs", [])):
+        refs = block.get("refs")
+        for index, ref in enumerate(refs if isinstance(refs, list) else []):
             if not isinstance(ref, dict):
                 continue
             at = ["blocks", ordinal, "refs", index]
