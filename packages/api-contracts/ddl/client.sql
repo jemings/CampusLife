@@ -3,8 +3,10 @@
 -- store (#16) follows the same file.
 --
 -- The file keeps to column types, NOT NULL, primary keys, foreign keys and plain indexes, which every
--- client store declares alike and the PRAGMAs the Room comparison reads show: no CHECK, COLLATE,
--- GENERATED, DEFERRABLE, ON CONFLICT, DESC, STRICT, WITHOUT ROWID, partial index, trigger or view.
+-- client store declares alike: no CHECK, COLLATE, generated column, DEFERRABLE, MATCH, ON CONFLICT,
+-- inline UNIQUE, DESC, expression or partial index, STRICT, WITHOUT ROWID, trigger or view.
+-- tests/test_ddl.py holds this file to that list; the Room comparison holds the PRAGMAs of both and
+-- Room's own statements to it.
 -- The allowed values of the state columns are listed here because no constraint can hold them.
 -- Times are epoch milliseconds (*_ms); JSON columns hold the text exactly as received or made.
 
