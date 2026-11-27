@@ -9,7 +9,7 @@
     "app_version": { "$ref": "pair_request.json#/properties/app_version" },
     "pending_upload_count": { "description": "Captures not yet acknowledged.", "$ref": "../common/int64.json#/$defs/non_negative" },
     "pending_mutation_count": { "description": "Mutations waiting in the Outbox.", "$ref": "../common/int64.json#/$defs/non_negative" },
-    "rejected_mutation_count": { "description": "Mutations in the client's rejected list: refused by the Hub (a rejected result) and moved aside for the user to see. The Hub counts open ConflictRecords itself (D1, D24).", "$ref": "../common/int64.json#/$defs/non_negative" },
+    "rejected_mutation_count": { "description": "Mutations in the client's rejected list, moved aside for the user to see: refused by the Hub (a rejected result), or a capture.commit given up on after repeated retry{missing_blobs} because its originals are gone (D24). The Hub counts open ConflictRecords itself (D1, D24).", "$ref": "../common/int64.json#/$defs/non_negative" },
     "last_successful_sync_at": { "$ref": "../common/instant.json" },
     "last_error": { "description": "The last sync error as the client shows it, on one line.", "$ref": "pair_request.json#/$defs/one_line", "minLength": 1, "maxLength": 1000 },
     "retry_after": { "description": "When the client will try again.", "$ref": "../common/instant.json" },
