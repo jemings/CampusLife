@@ -48,9 +48,9 @@ interface OutboxDao {
 
     @Query(
         """
-        SELECT id, data AS json, 0 AS seq, NULL AS state FROM entity_cache WHERE entity = 'item'
+        SELECT id, data AS json, 0 AS seq, NULL AS state, NULL AS result FROM entity_cache WHERE entity = 'item'
         UNION ALL
-        SELECT entity_id AS id, body AS json, seq, state FROM mutation_outbox
+        SELECT entity_id AS id, body AS json, seq, state, result FROM mutation_outbox
             WHERE entity = 'item' AND state IN ('held', 'pending', 'acked', 'pulling')
         ORDER BY seq, id
         """,
@@ -59,7 +59,7 @@ interface OutboxDao {
 }
 
 /** A cached item row (state null) or one of the outbox rows laid over it, in the order they apply. */
-data class ItemLayer(val id: String, val json: String, val seq: Long, val state: String?)
+data class ItemLayer(val id: String, val json: String, val seq: Long, val state: String?, val result: String?)
 
 @Dao
 interface CacheDao {

@@ -10,6 +10,8 @@ import campuslife.wire.DismissSuggestion
 import campuslife.wire.EntityName
 import campuslife.wire.MutableEntity
 import campuslife.wire.Mutation
+import campuslife.wire.MutationOutcome
+import campuslife.wire.MutationResult
 import campuslife.wire.MutationSerializer
 import campuslife.wire.Patch
 import campuslife.wire.Restore
@@ -39,6 +41,10 @@ internal fun CampusLifeDatabase.promoteHeldCommits() {
         outbox().move(row.seq, TransferState.of(row.state).after(OutboxEvent.BLOBS_STORED).column)
     }
 }
+
+/** The result that decided a Mutation: for a duplicate, the one its first sending got. */
+internal fun MutationResult.decided(): MutationResult =
+    if (result == MutationOutcome.DUPLICATE) original ?: this else this
 
 private fun target(mutation: Mutation): Pair<String, String> = when (mutation) {
     is CommitCapture -> EntityName.CAPTURE.value to mutation.capture.id

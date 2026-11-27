@@ -6,6 +6,7 @@ import campuslife.wire.ItemData
 import campuslife.wire.ItemFields
 import campuslife.wire.ItemKind
 import campuslife.wire.MutableEntity
+import campuslife.wire.MutationResult
 import campuslife.wire.MutationSerializer
 import campuslife.wire.Patch
 import campuslife.wire.Restore
@@ -81,19 +82,24 @@ class UserData(private val db: CampusLifeDatabase) {
     fun observeItems(): Flow<List<ItemView>> = db.outbox().observeItemLayers().map { layers ->
         layers.groupBy { it.id }.mapNotNull { (id, rows) ->
             val base = rows.firstOrNull { it.state == null }?.json
-            val shown = fold(base, rows.mapNotNull { row -> row.state?.let { Layer(row.json, it) } })
+            val shown = fold(base, rows.mapNotNull { row -> row.state?.let { Layer(row.json, it, row.result) } })
             shown?.takeUnless { it.deleted }?.let { ItemView(id, ItemKind(it.row.getValue("kind").jsonPrimitive.content), it.row, it.pending) }
         }
     }
 
-    private class Layer(val body: String, val state: String)
+    /** One outbox row laid over the cache; [result] is the answer that ended its sending, if any. */
+    private class Layer(val body: String, val state: String, val result: String?) {
+        /** The keys of a partly applied patch the Hub kept its own value for: the cache shows those. */
+        fun conflicted(): List<String> =
+            result?.let { wireJson.decodeFromString(MutationResult.serializer(), it).decided().conflictedFields }.orEmpty()
+    }
 
     private class Shown(val row: JsonObject, val deleted: Boolean, val pending: Boolean)
 
     private fun requireShown(ref: EntityRef): Shown {
         val entity = ref.entity.wireName()
         val base = db.cache().get(entity, ref.id)?.data
-        val shown = fold(base, db.outbox().overlayOf(entity, ref.id).map { Layer(it.body, it.state) })
+        val shown = fold(base, db.outbox().overlayOf(entity, ref.id).map { Layer(it.body, it.state, it.result) })
         return requireNotNull(shown?.takeUnless { it.deleted }) { "$entity ${ref.id} is not shown" }
     }
 
@@ -107,7 +113,7 @@ class UserData(private val db: CampusLifeDatabase) {
                     row = created(mutation)
                     deleted = false
                 }
-                is Patch -> row = row?.let { overlay(it, mutation.set) }
+                is Patch -> row = row?.let { overlay(it, mutation.set - layer.conflicted().toSet()) }
                 is Delete -> deleted = true
                 is Restore -> deleted = false
                 else -> Unit

@@ -50,10 +50,11 @@ class SyncStore(
 
     private fun answer(result: MutationResult) {
         val row = db.outbox().byMutationId(result.mutationId) ?: return
-        val outcome = if (result.result == MutationOutcome.DUPLICATE) result.original?.result else result.result
-        val event = when (outcome) {
+        val decided = result.decided()
+        val event = when (decided.result) {
             MutationOutcome.APPLIED -> OutboxEvent.APPLIED
-            MutationOutcome.CONFLICT -> OutboxEvent.CONFLICTED
+            MutationOutcome.CONFLICT ->
+                if (decided.appliedFields.isNullOrEmpty()) OutboxEvent.CONFLICTED else OutboxEvent.PARTLY_APPLIED
             MutationOutcome.REJECTED -> OutboxEvent.REFUSED
             MutationOutcome.RETRY -> missingBlobsEvent(row, result.missingBlobs.orEmpty())
             else -> null
@@ -74,7 +75,8 @@ class SyncStore(
                 missing.filterNot(files::has).forEach(db.blobs()::remove)
                 db.outbox().end(row.seq, to.column, encode(result), null)
             }
-            OutboxEvent.APPLIED, OutboxEvent.CONFLICTED -> db.outbox().end(row.seq, to.column, encode(result), clock.millis())
+            OutboxEvent.APPLIED, OutboxEvent.CONFLICTED, OutboxEvent.PARTLY_APPLIED ->
+                db.outbox().end(row.seq, to.column, encode(result), clock.millis())
             else -> db.outbox().end(row.seq, to.column, encode(result), null)
         }
     }

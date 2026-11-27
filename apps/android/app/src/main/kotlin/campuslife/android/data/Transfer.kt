@@ -79,6 +79,7 @@ val TRANSITIONS: Map<Pair<TransferState, TransferEvent>, TransferState> = mapOf(
     (STORED to BlobEvent.HUB_LOST_BLOB) to WAITING,
     (PENDING to OutboxEvent.APPLIED) to ACKED,
     (PENDING to OutboxEvent.CONFLICTED) to SETTLED,
+    (PENDING to OutboxEvent.PARTLY_APPLIED) to ACKED,
     (PENDING to OutboxEvent.REFUSED) to REJECTED,
     (PENDING to OutboxEvent.BLOBS_MISSING) to HELD,
     (PENDING to OutboxEvent.BLOBS_GONE) to REJECTED,
