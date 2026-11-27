@@ -47,7 +47,9 @@ uv run campuslife-contracts compare fixtures/valid <out>
 ```
 
 - `fixtures/valid` 아래 모든 `*.json`에 대해 `<out>`의 같은 상대 경로 파일을 읽어 JSON 값으로 비교합니다. `<out>`에만 있는 파일은 무시합니다.
-- 같음의 정의는 `campuslife_contracts.canonical_json(value) -> bytes`입니다: 멤버를 코드 포인트 순으로 정렬하고 공백 없이 UTF-8로 쓰며, 숫자는 십진 값 기준 정규형(`1`과 `1.0`, `0`과 `-0`이 같음), 문자열은 코드 포인트 그대로, 없음과 `null`은 다릅니다. 두 파일의 정규 바이트가 같으면 통과이고, 다르면 비교기가 다른 위치를 찾아 보고합니다. Hub도 같은 함수로 `id_reuse`의 "같은 내용"을 판정합니다.
+- 같음의 정의는 `campuslife_contracts.canonical_json(value) -> bytes`입니다: 멤버를 코드 포인트 순으로 정렬하고 공백 없이 UTF-8로 쓰며, 숫자는 십진 값 기준 정규형(`1`과 `1.0`, `0`과 `-0`이 같음. 단 아래 정수 자리 검사가 따로 있음), 문자열은 코드 포인트 그대로, 없음과 `null`은 다릅니다. 두 파일의 정규 바이트가 같으면 통과이고, 다르면 비교기가 다른 위치를 찾아 보고합니다. Hub도 같은 함수로 `id_reuse`의 "같은 내용"을 판정합니다.
+- 값이 모두 같으면 비교기는 출력을 그 파일의 스키마(`fixtures/valid/<schema_id>/`의 `<schema_id>`)로도 검사합니다. 스키마가 `type: integer`로 둔 자리(`x-int64-text` 문자열 제외)는 `0.0`·`1E0`·`1.0e0`처럼 소수점이나 지수를 쓰면 같은 값이어도 불일치입니다. Hub가 그런 요청을 `invalid_request`로 거부하기 때문입니다. `type: number` 자리(`credits: 2.5`, `box`)는 어떤 표기든 값만 봅니다. 이 검사는 `<out>`의 비교 대상이 contract의 `fixtures/valid`일 때만 켜집니다.
+  - `item/item/course.json#/rev: integer place written as 1.7e1; write it without fraction or exponent`
 - 종료 코드: `0` 모두 같음, `1` 불일치 있음(깨졌거나 너무 깊이 중첩된 **출력** 파일 포함), `2` 사용법 오류(디렉터리 없음, `fixtures/valid`에 `*.json`이 하나도 없음, 깨졌거나 너무 깊이 중첩된 **golden** 파일).
 - 불일치는 표준 출력에 한 줄씩 나옵니다.
   - `common/instant/utc_millis.json: missing output`
