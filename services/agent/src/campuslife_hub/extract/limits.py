@@ -27,8 +27,9 @@ generated Korean and English Markdown, generated ZIPs), not on users' files:
   measures them.
 
 identify does not read a Blob whole into memory: it reads the head, a ZIP's member names (safe_zip names_only, so
-only zip_max_members and zip_max_depth bind it there), and an OLE file in chunks. The byte bounds bind the jobs that
-read a Blob or its members whole.
+only zip_max_members binds it there; it opens no archive inside one), and an OLE file in chunks. The byte bounds bind
+the jobs that read a Blob or its members: the total when an extractor opens an archive, a member's size and ratio
+when it reads the member.
 """
 
 from __future__ import annotations

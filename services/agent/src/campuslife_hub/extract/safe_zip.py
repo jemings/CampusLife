@@ -2,8 +2,8 @@
 
 Opening checks every member the central directory lists before anything is read: its path stays inside the
 archive, it is no link, it is not encrypted, and its declared size and compression ratio keep within the limits
-table, as do the member count and their total size. Opened for its names only (identify), the sizes wait until a
-member is read. Reading a member is zipfile's: it stops at the size the member
+table, as do the member count and their total size. Opened for its names only (identify), the total is not checked
+and a member's size and ratio wait until it is read. Reading a member is zipfile's: it stops at the size the member
 declares, so a header that lies about it cannot make a reader inflate more, and bytes that then fail the member's CRC
 end the job as corrupt. zipfile cuts a member name at its first NUL, so a NUL never reaches the path check. An archive
 inside an archive opens one level deeper, up to zip_max_depth. Only this module imports zipfile

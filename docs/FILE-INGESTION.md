@@ -163,7 +163,7 @@ locator를 추출할 수 없으면 파일명/문서 단위 근거로 표시하�
 
 한 강의 세션의 파일 일부가 실패해도 성공한 파일의 분석은 진행합니다. 화면의 요약 상태는 Hub가 job을 집계한 `processing_summary`이며 따로 저장하지 않습니다.
 
-Windows 로컬 UI는 파일마다 그 파일에 필요한 job(Blob의 identify, 판별 결과로 고른 extract·render)의 최근 상태와 `outcome_code`, 실패 이유를 보여 줍니다. 이름과 바이트의 불일치, "읽는 추출기 없음"은 저장하지 않고 화면을 그릴 때 계산합니다.
+Windows 로컬 UI는 파일마다 그 파일에 필요한 job(Blob의 identify, 판별 결과로 고른 extract·render)의 최근 상태와 `outcome_code`, 실패 이유를 보여 줍니다. 이름과 바이트의 불일치, "읽는 추출기 없음", 처리 규칙이 바뀌었거나 새 추출기·새 버전이 이 파일을 읽을 수 있다는 사실은 저장하지 않고 화면을 그릴 때 계산합니다.
 
 **재처리:** `reprocess`는 `capture.ingest`를 nonce와 함께 다시 넣고, 그 nonce가 identify·extract·render job params에 들어가 다시 돕니다. 원본 Blob은 바꾸지 않고, 같은 추출기 버전이면 block id가 같습니다. 추출기를 올려도 자동으로 다시 처리하지 않으므로, 새 버전으로 읽히고 싶은 Capture는 재처리합니다(D26).
 
@@ -191,7 +191,7 @@ Windows 로컬 UI는 파일마다 그 파일에 필요한 job(Blob의 identify, 
 | `zip_max_ratio` (멤버 하나의 압축 해제 비율) | 200 | 0으로 채운 64 MiB의 deflate 비율 1,029(zip bomb)와, 한 문단을 140번 반복한 1 MiB Markdown의 비율 3.8 사이 |
 | `zip_max_depth` (ZIP 안의 ZIP) | 2 | 바깥 ZIP과 그 안 한 단계 |
 
-identify는 Blob을 통째로 메모리에 올리지 않으므로 파일 크기와 상관없이 판별합니다. 앞부분을 읽고, ZIP은 멤버 이름만 보고(이름 안전성, 멤버 개수, 중첩 깊이만 검사), OLE 파일은 1 MiB 조각으로 훑어 암호화 표식을 찾습니다. 바이트 상한(`input_max_bytes`, ZIP 멤버·전체 바이트, 압축 비율)은 Blob이나 멤버를 읽는 extract·render job에 걸립니다(D26).
+identify는 Blob을 통째로 메모리에 올리지 않으므로 파일 크기와 상관없이 판별합니다. 앞부분을 읽고, ZIP은 멤버 이름만 보고(경로 탈출·링크·중복 이름과 멤버 개수를 검사하고, 암호화된 멤버는 `password_required`로 끝냄. 중첩 ZIP은 열지 않음), OLE 파일은 1 MiB 조각으로 훑어 암호화 표식을 찾습니다. 바이트 상한은 extract·render job에 걸립니다. `input_max_bytes`는 Blob을 읽을 때, ZIP 전체 바이트는 추출기가 아카이브를 열 때, ZIP 멤버 바이트와 압축 비율은 멤버를 읽을 때 겁니다(D26).
 
 측정은 모두 로컬(Linux, CPython 3.12, 2026-11-28)에서 시험이 만든 합성 입력(한국어·영어 Markdown, ZIP)으로 했고, 사용자 파일이나 운영 데이터가 아닙니다. 수치와 측정 방법은 `limits.py` docstring에 있습니다.
 - 손상/암호화/DRM 자료는 우회하지 않습니다.
