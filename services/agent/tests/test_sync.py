@@ -4,83 +4,15 @@ POST /v1/mutations. Every response a test gets has passed sync_contract.check ag
 import asyncio
 import json
 import uuid
-from contextlib import asynccontextmanager
 
-import httpx
 from campuslife_contracts import CONTRACT_VERSION, MIN_CONTRACT_VERSION, contract_root
 from conftest import contract_fixture
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
-from sync_contract import checked
+from sync_client import TOKEN, request_with, syncing
 
 from campuslife_hub import jobs
-from campuslife_hub.clock import now_instant
-from campuslife_hub.core import open_core
-from campuslife_hub.devices import DeviceId, Refusal, RefusalCode
-from campuslife_hub.host import Hosted
-from campuslife_hub.redaction import Redactor
-from campuslife_hub.sync import create_sync_app
-
-TOKEN = "phone-token-" + "x" * 40
-CONTRACT = {"CampusLife-Contract": str(CONTRACT_VERSION)}
-
-
-class Waking:
-    """The job runner as the sync app sees it: something to wake once a commit leaves jobs to run."""
-
-    def __init__(self):
-        self.wakes = 0
-
-    def wake(self):
-        self.wakes += 1
-
-
-def admitting(device):
-    """An authenticator for tests: TOKEN is the device, every other bearer is refused as unknown."""
-
-    async def authenticate(bearer):
-        return device if bearer == TOKEN else Refusal(RefusalCode.UNAUTHORIZED)
-
-    return authenticate
-
-
-async def add_phone(core) -> DeviceId:
-    device = str(uuid.uuid4())
-    await core.db.write(
-        lambda tx: tx.execute(
-            "INSERT INTO devices (id, platform, device_name, app_version, state, created_at) VALUES (?, 'android', 'phone', '0.1.0', 'active', ?)",
-            (device, now_instant()),
-        )
-    )
-    return DeviceId(device)
-
-
-def client_of(app, headers=None):
-    return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://hub.tailnet.test",
-        headers={**CONTRACT, "Authorization": f"Bearer {TOKEN}", **(headers or {})},
-        event_hooks={"response": [checked]},
-    )
-
-
-def request_with(client, method, path, replaced):
-    """A request with the client's headers, each header named in replaced sent once per value given instead."""
-    kept = [(name, value) for name, value in client.headers.multi_items() if name.lower() not in replaced]
-    added = [(name, value) for name, values in replaced.items() for value in values]
-    return httpx.Request(method, client.base_url.join(path), headers=[*kept, *added])
-
-
-@asynccontextmanager
-async def syncing(tmp_path, *, authenticate=None, routers=(), **options):
-    """The sync app over a new Hub with one paired phone, a client that sends its token, and the runner it wakes."""
-    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
-        phone = await add_phone(core)
-        runner = Waking()
-        app = create_sync_app(Hosted(core, runner, Redactor()), authenticate or admitting(phone), routers, **options)
-        async with client_of(app) as client:
-            yield core, client, phone, runner
-
+from campuslife_hub.devices import Refusal, RefusalCode
 
 async def test_get_hub_reports_the_identity_and_the_contract_versions_with_the_hub_headers(tmp_path):
     async with syncing(tmp_path) as (core, client, phone, runner):
