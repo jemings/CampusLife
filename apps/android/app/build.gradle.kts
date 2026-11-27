@@ -47,6 +47,7 @@ tasks.withType<Test>().configureEach {
 
 dependencies {
     implementation(project(":wire"))
+    implementation(libs.kotlinx.coroutines.core)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.material3)
