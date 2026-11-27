@@ -8,8 +8,9 @@ One transaction removes:
   kept row still names stays, since those bytes stay;
 - every Relation with an end at what it removes;
 - the fork Notes the user chose to remove with them.
-A fork Note it does not remove stays, marked with evidence_purged_at. Jobs still to run on what it
-removes end cancelled. Each removed row leaves its tombstone (E5).
+A fork Note it does not remove stays, marked with evidence_purged_at, and so does one created later
+from an Artifact it removed. Jobs still to run on what it removes end cancelled. Each removed row
+leaves its tombstone (E5).
 
 The purge's journal row commits with those deletions. What lives outside the database goes after the
 commit: each registered hook drops what it keeps (an index, #9), and the Blob files are removed. A purge
@@ -295,6 +296,15 @@ async def purge_blob(db: Database, blobs: BlobStore, sha256: str, *, delete_note
     journal_id, target, marked, cancelled = await db.write(lambda tx: _purge(tx, sha256, chosen))
     finish = await _finish(db, blobs, hooks, journal_id, target)
     return Purged(journal_id, finish.failed_hooks, finish.kept, target, marked, cancelled)
+
+
+def purged_at(runner: Tx | Snapshot, artifact_id: str) -> str | None:
+    """When a purge removed the Artifact; None when none did. Only a purge removes an Artifact, so this is when its
+    tombstone was written."""
+    (registered_at,) = runner.execute(
+        "SELECT min(registered_at) FROM purge_journal WHERE EXISTS (SELECT 1 FROM json_each(target, '$.artifacts') WHERE value = ?)", (artifact_id,)
+    ).fetchone()
+    return registered_at
 
 
 async def finish_unfinished(db: Database, blobs: BlobStore, hooks: PurgeHooks = HOOKS) -> list[Finish]:

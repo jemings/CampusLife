@@ -11,7 +11,7 @@ from collections.abc import Iterable
 
 from campuslife_contracts import contract_root, text_hash, validate
 
-from . import conflict_stash, refs, store
+from . import conflict_stash, purge, refs, store
 from .clock import now_instant
 from .created import earlier_create, remember_create
 from .db import Tx
@@ -48,11 +48,16 @@ def _is_canonical_text(text: object) -> bool:
 
 
 def create_item(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
+    """A Note forked from an Artifact a purge removed, written offline before the purge reached the client, arrives
+    marked as the purge would have marked it (U2)."""
     if data["kind"] not in ITEM_KINDS:
         return Rejected(Reason.SCHEMA)
     if not all(_is_canonical_text(data.get(column)) for column in TEXT_COLUMNS[Entity.ITEM]):
         return Rejected(Reason.NOT_CANONICAL)
-    return _create_once(tx, ref, data, {"id": ref.id, "schema_version": SCHEMA_VERSION, **data})
+    row = {"id": ref.id, "schema_version": SCHEMA_VERSION, **data}
+    forked_from = data["fields"].get("forked_from_artifact") if data["kind"] == "note" else None
+    purged = forked_from and purge.purged_at(tx, forked_from)
+    return _create_once(tx, ref, data, {**row, "evidence_purged_at": purged} if purged else row)
 
 
 def _create_once(tx: Tx, ref: EntityRef, data: dict, row: dict) -> Outcome:
