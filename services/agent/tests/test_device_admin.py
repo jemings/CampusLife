@@ -123,3 +123,124 @@ async def test_the_device_api_takes_only_requests_signed_with_the_admin_token(tm
 
         assert [answer.status_code for answer in answers] == [401, 401]
         assert await state_of(admin, phone.device_id) == DeviceState.ACTIVE
+
+
+async def test_the_device_page_shows_each_name_escaped_beside_the_start_of_its_id_and_when_it_paired(tmp_path):
+    """Two names that look alike are told apart by the id and pairing time beside them (one_line lets ZWJ through)."""
+    async with hub(tmp_path, clock=Clock(), **WITH_URL) as (client, admin):
+        await log_in(client)
+        tricky = await paired(admin, "<script>alert(1)</script>")
+        same, other = await paired(admin, "Fold8"), await paired(admin, "Fold‍8")
+        shown = (await client.get("/devices")).text
+
+    assert "<script>alert" not in shown and "&lt;script&gt;alert(1)&lt;/script&gt;" in shown
+    assert all(f"<code>{device.device_id[:8]}</code>" in shown for device in (tricky, same, other))
+    assert "paired 2026-03-02T00:30:00.000Z" in shown
+    assert f"<code>{admin.core.hub_device[:8]}</code>" not in shown
+    assert '<a href="/devices">Devices</a>' in shown
+
+
+async def test_each_device_on_the_page_offers_only_the_changes_its_state_allows(tmp_path):
+    async with hub(tmp_path, **WITH_URL) as (client, admin):
+        await log_in(client)
+        dormant = await paired(admin)
+        await made_dormant(admin, dormant.device_id)
+        active, revoked = await paired(admin), await paired(admin)
+        await devices.revoke(admin.core, revoked.device_id, now=admin.clock())
+        shown = (await client.get("/devices")).text
+
+    links = set(re.findall(r'href="/devices/([0-9a-f-]+)/(revoke|approve)"', shown))
+    assert links == {(dormant.device_id, "revoke"), (dormant.device_id, "approve"), (active.device_id, "revoke")}
+    assert "approve only a device you have in hand" in shown
+
+
+def offer_json(admin, secret):
+    return json.dumps({"hub_url": PUBLIC_URL, "hub_id": admin.core.identity.hub_id, "secret": secret}, separators=(",", ":"))
+
+
+async def test_adding_a_device_shows_the_pairing_offer_as_a_qr_code_and_a_manual_code_that_pair(tmp_path):
+    async with hub(tmp_path, clock=Clock(), **WITH_URL) as (client, admin):
+        await log_in(client)
+        listed = (await client.get("/devices")).text
+        offered = await client.post("/devices/pairing-offer", headers=ORIGIN)
+        code = MANUAL_CODE.search(offered.text).group(1)
+        secret = code.replace("-", "")
+        request = PairRequest(secret, ClientPlatform.IPADOS, "iPad", "0.1.0")
+        answer = await devices.pair(admin.core, request, now=admin.clock(), limiter=PairingLimiter(), redactor=admin.redactor)
+
+    assert 'action="/devices/pairing-offer"' in listed
+    assert offered.status_code == 200
+    assert segno.make(offer_json(admin, secret), error="m", micro=False).svg_inline(scale=5, dark="#000", light="#fff") in offered.text
+    assert f"<code>{PUBLIC_URL}</code>" in offered.text and "2026-03-02T00:35:00.000Z" in offered.text
+    assert "style=" not in offered.text and "<script" not in offered.text
+    assert offered.headers["cache-control"] == "no-store"
+    assert isinstance(answer, devices.Paired)
+
+
+async def test_a_pairing_offer_is_made_only_by_a_request_from_the_local_ui_itself(tmp_path):
+    async with hub(tmp_path, **WITH_URL) as (client, admin):
+        await log_in(client)
+        refused = await client.post("/devices/pairing-offer")
+        offers = await admin.core.db.read(lambda snap: snap.execute("SELECT count(*) FROM pairing_secrets").fetchone()[0])
+
+    assert (refused.status_code, offers) == (403, 0)
+
+
+async def test_without_a_public_url_adding_a_device_says_how_to_set_one_and_makes_no_offer(tmp_path):
+    async with hub(tmp_path) as (client, admin):
+        await log_in(client)
+        listed = (await client.get("/devices")).text
+        refused = await client.post("/devices/pairing-offer", headers=ORIGIN)
+        offers = await admin.core.db.read(lambda snap: snap.execute("SELECT count(*) FROM pairing_secrets").fetchone()[0])
+
+    assert 'action="/devices/pairing-offer"' not in listed
+    assert "--public-url" in listed and "tailscale-check" in listed
+    assert (refused.status_code, "--public-url" in refused.text, offers) == (409, True, 0)
+
+
+async def test_revoking_from_the_local_ui_asks_first_then_revokes_that_device_only(tmp_path):
+    async with hub(tmp_path, **WITH_URL) as (client, admin):
+        await log_in(client)
+        phone, kept = await paired(admin, "<b>Fold8</b>"), await paired(admin, "iPad", ClientPlatform.IPADOS)
+
+        asked = await client.get(f"/devices/{phone.device_id}/revoke")
+        assert await state_of(admin, phone.device_id) == DeviceState.ACTIVE
+        done = await client.post(f"/devices/{phone.device_id}/revoke", headers=ORIGIN)
+
+        assert (asked.status_code, done.status_code) == (200, 200)
+        assert "&lt;b&gt;Fold8&lt;/b&gt;" in asked.text and f'action="/devices/{phone.device_id}/revoke"' in asked.text
+        assert "cannot be undone" in asked.text
+        assert (await state_of(admin, phone.device_id), await state_of(admin, kept.device_id)) == (DeviceState.REVOKED, DeviceState.ACTIVE)
+
+
+async def test_approving_from_the_local_ui_shows_when_the_device_was_last_seen_and_refused_and_warns(tmp_path):
+    clock = Clock()
+    async with hub(tmp_path, clock=clock, **WITH_URL) as (client, admin):
+        phone = await paired(admin)
+        assert await devices.authenticate(admin.core, phone.token, now=clock(), redactor=admin.redactor) == phone.device_id
+        clock.now += timedelta(days=91)
+        assert (await devices.authenticate(admin.core, phone.token, now=clock(), redactor=admin.redactor)).code == "device_dormant"
+        await log_in(client)
+
+        asked = await client.get(f"/devices/{phone.device_id}/approve")
+        done = await client.post(f"/devices/{phone.device_id}/approve", headers=ORIGIN)
+
+        assert "last seen 2026-03-02T00:30:00.000Z" in asked.text and "last refused 2026-06-01T00:30:00.000Z" in asked.text
+        assert "a lost device approved here syncs again" in asked.text
+        assert done.status_code == 200
+        assert await state_of(admin, phone.device_id) == DeviceState.ACTIVE
+
+
+@pytest.mark.parametrize("action", ["revoke", "approve"])
+async def test_the_local_ui_says_when_a_device_cannot_be_changed(tmp_path, action):
+    async with hub(tmp_path, **WITH_URL) as (client, admin):
+        await log_in(client)
+        revoked = await paired(admin)
+        await devices.revoke(admin.core, revoked.device_id, now=admin.clock())
+        unknown = "0f8fad5b-d9cb-469f-a165-70867728950e"
+        answers = [
+            await client.get(f"/devices/{unknown}/{action}"), await client.post(f"/devices/{unknown}/{action}", headers=ORIGIN),
+            await client.get(f"/devices/{admin.core.hub_device}/{action}"), await client.post(f"/devices/{revoked.device_id}/{action}", headers=ORIGIN),
+        ]
+
+    assert [answer.status_code for answer in answers] == [404, 404, 404, 409]
