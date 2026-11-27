@@ -89,6 +89,40 @@ def test_every_spelling_of_a_loopback_address_is_named_the_admin_port(target):
     assert any(ADMIN_MAPPED in problem for problem in judged(serve).problems)
 
 
+def with_service(service):
+    """GOOD, plus a Tailscale Service (ServeConfig.Services, tailscale ipn/serve.go) configured as given."""
+    return {**GOOD, "Services": {"svc:campuslife": service}}
+
+
+@pytest.mark.parametrize(
+    "service",
+    [
+        {"TCP": {"443": {"HTTPS": True}}, "Web": {"campuslife.tail1234.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8731"}}}}},
+        {"TCP": {"8731": {"TCPForward": "127.0.0.1:8731"}}},
+    ],
+    ids=["a site to admin", "a TCP forward to admin"],
+)
+def test_a_tailscale_service_reaching_the_admin_port_is_a_problem(service):
+    verdict = judged(with_service(service))
+
+    assert not verdict.ok
+    assert any(ADMIN_MAPPED in problem for problem in verdict.problems)
+
+
+def test_a_tailscale_service_offering_the_sync_listener_is_left_alone():
+    service = {"TCP": {"443": {"HTTPS": True}}, "Web": {"campuslife.tail1234.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8730"}}}}}
+
+    verdict = judged(with_service(service))
+
+    assert (verdict.problems, verdict.warnings) == ((), ())
+
+
+def test_a_tailscale_service_does_not_stand_in_for_the_machines_own_443():
+    service = {"TCP": {"443": {"HTTPS": True}}, "Web": {"campuslife.tail1234.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8730"}}}}}
+
+    assert not judged({"Services": {"svc:campuslife": service}}).ok
+
+
 @pytest.mark.parametrize("target", ["http://192.168.0.10:8731", "http://127.0.0.1:18731"], ids=["another machine", "another port"])
 def test_a_mapping_elsewhere_is_not_named_the_admin_port(target):
     assert not [problem for problem in judged(on_8443(proxy=target)).problems if ADMIN_MAPPED in problem]
