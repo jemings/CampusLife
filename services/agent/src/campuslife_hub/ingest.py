@@ -2,22 +2,28 @@
 
 It does nothing else there. Its handler runs later, outside that transaction, and asks every
 registered planner what to run for the Capture, so planners, which are other code, cannot
-undo an ACK by failing.
+undo an ACK by failing. A purge can remove an Attachment or a Blob while the planners run, so
+the jobs they propose are queued only if the Hub still holds their subject and inputs.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from . import jobs, store
-from .db import Snapshot
+from . import jobs, refs, store
+from .blobs import has_blob
+from .db import Snapshot, Tx
 from .jobs import Failed, Finished, Job, JobSpec, Pipeline, Succeeded
 from .store import Entity, EntityRef
 
 if TYPE_CHECKING:
-    from .job_runner import JobContext
+    from .job_runner import JobContext, JobRegistry
+
+log = logging.getLogger(__name__)
 
 INGEST = "capture.ingest"
 INGEST_PIPELINE = Pipeline("capture.ingest-1")
@@ -49,6 +55,17 @@ def _view(snap: Snapshot, capture_id: str) -> CaptureView | None:
     return CaptureView(capture, tuple(json.loads(data) for (data,) in rows))
 
 
+def _enqueue_held(tx: Tx, registry: JobRegistry, specs: Iterable[JobSpec]) -> list[JobSpec]:
+    """Queue each spec whose subject and inputs the Hub holds; the ones it does not queue."""
+    dropped = []
+    for spec in specs:
+        if refs.exists(tx, spec.subject_ref) and all(has_blob(tx, sha256) for sha256 in spec.inputs):
+            registry.enqueue(tx, spec)
+        else:
+            dropped.append(spec)
+    return dropped
+
+
 async def run_ingest(job: Job, context: JobContext) -> Finished:
     """Queue every planner's jobs. A planner that raises, or proposes a job without a handler or one that cannot be
     stored, keeps out only its own jobs and makes the ingest try again; jobs queued before come back as they are."""
@@ -66,7 +83,9 @@ async def run_ingest(job: Job, context: JobContext) -> Finished:
             failures.append(f"{name}: {type(error).__name__}: {error}")
         else:
             planned += specs
-    await context.db.write(lambda tx: [context.registry.enqueue(tx, spec) for spec in planned])
+    dropped = await context.db.write(lambda tx: _enqueue_held(tx, context.registry, planned))
+    for spec in dropped:
+        log.info("dropped the planned %s on %s: the Hub no longer holds its subject or an input", spec.job_type, spec.subject_ref)
     if failures:
         raise PlanningFailed("; ".join(failures))
     return Succeeded()
