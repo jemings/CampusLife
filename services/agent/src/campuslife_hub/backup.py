@@ -58,6 +58,14 @@ SHA256 = re.compile(r"[0-9a-f]{64}")
 WRITABLE = stat.S_IRUSR | stat.S_IWUSR
 
 
+@dataclass(frozen=True)
+class BackupSettings:
+    """U3: how many generations a backup keeps on the drive, and how long after the last one the Hub warns."""
+
+    keep: int = DEFAULT_KEEP
+    warn_after: timedelta = DEFAULT_WARN_AFTER
+
+
 class BackupRefused(Exception):
     pass
 

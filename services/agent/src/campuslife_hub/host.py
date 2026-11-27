@@ -37,6 +37,7 @@ from starlette.types import ASGIApp
 from . import admin_token, purge
 from .admin import Admin, create_app
 from .admin_auth import AdminAuth
+from .backup import BackupSettings
 from .core import Core, open_core, safe_data_root
 from .data_root import Layout
 from .job_runner import STOP_GRACE, JobContext, JobRegistry, JobRunner
@@ -57,6 +58,7 @@ class HostConfig:
     admin_port: int = DEFAULT_ADMIN_PORT
     sync_port: int = DEFAULT_SYNC_PORT
     maintenance_every: timedelta = timedelta(hours=1)
+    backup: BackupSettings = BackupSettings()
     runner_restart_delay: timedelta = timedelta(seconds=10)
     runner_idle_s: float = 5.0
     stop_grace: timedelta = STOP_GRACE
@@ -200,7 +202,10 @@ async def serve(
     runner = JobRunner(JobContext(core.db, core.blobs, registry), clock=clock, stop_grace=config.stop_grace)
     record = RunnerRecord()
     stopping = asyncio.Event()
-    admin = Admin(core, runner, AdminAuth(admin_token, redactor, clock=clock), redactor, status=record.report, stop=stop.set)
+    admin = Admin(
+        core, runner, AdminAuth(admin_token, redactor, clock=clock), redactor, status=record.report, stop=stop.set,
+        backup_settings=config.backup, clock=clock,
+    )
     sockets = [_bind(config.admin_port)]
     tasks: list[asyncio.Task] = []
     listeners: list[_Listener] = []
