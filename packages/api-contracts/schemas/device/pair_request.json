@@ -2,14 +2,21 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/device/pair_request.json",
   "title": "Pair request",
-  "description": "POST /v1/pair (D6). The secret comes from the QR code or the manual code the Hub's admin screen shows; it is good once, for five minutes. Closed input.",
+  "description": "POST /v1/pair (D6). The secret comes from the pairing offer (device/pairing_offer) the Hub's admin screen shows as a QR code or a manual code; it is good once, for five minutes. Closed input.",
   "type": "object",
   "required": ["secret", "platform", "device_name", "app_version"],
   "properties": {
     "secret": { "description": "The 128-bit pairing secret as lowercase hex.", "type": "string", "pattern": "^[0-9a-f]{32}$" },
     "platform": { "description": "The device/platform values that pair: windows_hub is only the Hub's own Device row.", "enum": ["android", "ipados"] },
-    "device_name": { "description": "Shown in the Hub's device list. No control characters, line or paragraph separators (U+2028, U+2029), or bidirectional formatting characters (U+202A-U+202E, U+2066-U+2069).", "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028-\\u202e\\u2066-\\u2069]*$" },
-    "app_version": { "type": "string", "minLength": 1, "maxLength": 64 }
+    "device_name": { "description": "Shown in the Hub's device list.", "$ref": "#/$defs/one_line", "minLength": 1, "maxLength": 64 },
+    "app_version": { "description": "Shown in the Hub's device list beside the name.", "$ref": "#/$defs/one_line", "minLength": 1, "maxLength": 64 }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "one_line": {
+      "description": "Text the Hub shows as one line: no control characters, line or paragraph separators (U+2028, U+2029), or bidirectional formatting characters (U+202A-U+202E, U+2066-U+2069).",
+      "type": "string",
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028-\\u202e\\u2066-\\u2069]*$"
+    }
+  }
 }

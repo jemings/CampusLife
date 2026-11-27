@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/device/pairing_offer.json",
+  "title": "Pairing offer",
+  "description": "What the Hub's \"add device\" screen offers a new Device (D6): the QR code holds this JSON. It is good once, for five minutes. The manual code shows the same secret as eight groups of four hex digits and carries nothing else: the user types hub_url, the client drops the separators before it sends the secret in device/pair_request, and it takes hub_id from the CampusLife-Hub-Id of the pair response. Open.",
+  "type": "object",
+  "required": ["hub_url", "hub_id", "secret"],
+  "properties": {
+    "hub_url": { "description": "The Hub's origin as tailscale serve publishes it, https://<host> or https://<host>:<port> with no path: a client sends every request to hub_url followed by the path, such as /v1/pair.", "type": "string", "pattern": "^https://[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[1-9][0-9]{0,4})?$" },
+    "hub_id": { "description": "The Hub the client pairs with and keeps checking against CampusLife-Hub-Id (D3).", "$ref": "../sync/hub.json#/properties/hub_id" },
+    "secret": { "description": "Sent once as device/pair_request secret.", "$ref": "pair_request.json#/properties/secret" }
+  }
+}

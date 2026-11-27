@@ -171,3 +171,18 @@ def test_pairing_takes_the_client_platforms():
     platforms = read_strict(SCHEMAS / "device/platform.json")["enum"]
     paired = read_strict(SCHEMAS / "device/pair_request.json")["properties"]["platform"]["enum"]
     assert paired == [platform for platform in platforms if platform != "windows_hub"]
+
+
+def test_the_pairing_offer_carries_what_pairing_and_get_hub_use():
+    """The QR code's secret is the one POST /v1/pair takes, and its hub_id the one GET /v1/hub reports (D3, D6)."""
+    offer = read_strict(SCHEMAS / "device/pairing_offer.json")["properties"]
+    assert offer["secret"]["$ref"] == "pair_request.json#/properties/secret"
+    assert offer["hub_id"]["$ref"] == "../sync/hub.json#/properties/hub_id"
+
+
+def test_the_names_a_device_reports_are_one_line_text():
+    """#19 decision 1: app_version takes the rule device_name has, so neither can break the device list's lines."""
+    request = read_strict(SCHEMAS / "device/pair_request.json")["properties"]
+    status = read_strict(SCHEMAS / "device/status.json")["properties"]
+    assert request["device_name"]["$ref"] == request["app_version"]["$ref"] == "#/$defs/one_line"
+    assert status["app_version"]["$ref"] == "pair_request.json#/properties/app_version"
