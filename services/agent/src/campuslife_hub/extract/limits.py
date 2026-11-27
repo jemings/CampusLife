@@ -43,7 +43,8 @@ class Limits:
     stdout_max_bytes: int = 64 * MiB
     """What the child may print; past it the child is killed."""
     input_max_bytes: int = 256 * MiB
-    """The Blob a job reads; a larger one is not handed to a child."""
+    """The Blob an extract or render job reads whole; a larger one is not handed to its child. identify reads only
+    the head of a Blob, so it takes one of any size."""
     max_blocks: int = 20_000
     """Blocks of one body: the Hub builds and validates them off the event loop in about 16 s."""
     max_block_text_chars: int = 200_000

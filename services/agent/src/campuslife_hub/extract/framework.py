@@ -150,13 +150,17 @@ class Files:
         wanted = [latest.get((job_type, bodies.canonical_json(dict(params)).decode())) for job_type, params in refined.jobs]
         return FileStatus(refined.detected_mime, tuple(facts), tuple(job for job in (identified, *wanted) if job is not None))
 
-    async def _read(self, job: Job, context: JobContext, request: dict, made: Callable[[str, dict], tuple[bytes | Path, Callable[[Tx, str], object]]]) -> Finished:
-        """Run the child on the job's Blob and record what made builds from its answer."""
+    async def _read(
+        self, job: Job, context: JobContext, request: dict, made: Callable[[str, dict], tuple[bytes | Path, Callable[[Tx, str], object]]],
+        *, whole: bool = True,
+    ) -> Finished:
+        """Run the child on the job's Blob and record what made builds from its answer. A child that reads the whole
+        Blob (whole) is not handed one larger than input_max_bytes; identify reads only the head of it."""
         sha256 = job.inputs[0]
         size = await context.db.read(lambda snap: snap.execute("SELECT size FROM blobs WHERE sha256 = ?", (sha256,)).fetchone())
         if size is None:
             raise FileNotFoundError(f"the Hub holds no Blob {sha256}")
-        if size[0] > self.limits.input_max_bytes:
+        if whole and size[0] > self.limits.input_max_bytes:
             return unsafe(f"the Blob holds {size[0]} bytes, more than {self.limits.input_max_bytes}")
         path = context.blobs.path_of(sha256)
         if not path.is_file():
@@ -192,7 +196,7 @@ class Files:
 
             return stored, record
 
-        return await self._read(job, context, {"op": "identify"}, made)
+        return await self._read(job, context, {"op": "identify"}, made, whole=False)
 
     async def extract(self, job: Job, context: JobContext) -> Finished:
         extractor = self.extractors[job.job_type]
