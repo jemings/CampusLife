@@ -201,9 +201,13 @@ def test_a_tailnet_without_a_name_or_not_running_is_a_problem(status):
     assert not judged(GOOD, status).ok
 
 
-@pytest.mark.parametrize("public_url", [f"https://{NAME}", f"https://{NAME}/"])
-def test_a_public_url_matching_the_name_raises_no_warning(public_url):
-    assert judged(GOOD, public_url=public_url).warnings == ()
+def test_a_public_url_matching_the_name_raises_no_warning():
+    assert judged(GOOD, public_url=f"https://{NAME}").warnings == ()
+
+
+def test_a_public_url_is_compared_as_serve_would_hand_it_out():
+    """The command refuses a trailing slash (device/pairing_offer hub_url), so nothing is trimmed before comparing."""
+    assert judged(GOOD, public_url=f"https://{NAME}/").warnings != ()
 
 
 def test_a_public_url_other_than_the_name_is_a_warning_not_a_problem():

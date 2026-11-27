@@ -14,15 +14,17 @@ import threading
 import time
 import webbrowser
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 
-from campuslife_hub import admin_client, admin_token, backup, host
+from campuslife_hub import admin_client, admin_token, backup, devices, host
 from campuslife_hub.admin_auth import hub_proof
 from campuslife_hub.cli import main
 from campuslife_hub.core import open_core
 from campuslife_hub.data_root import Layout
+from campuslife_hub.devices import DeviceSettings
 from campuslife_hub.host import Hosted
 from campuslife_hub.lock import HubLock
 from campuslife_hub.redaction import Redactor
@@ -540,7 +542,7 @@ def test_serve_needs_a_free_sync_port_and_says_so_on_the_console_and_once_in_the
     assert not (root / "admin.port").exists()
 
 
-async def test_serve_puts_the_sync_listener_on_8730_beside_the_admin_listener_refusing_every_token(tmp_path, monkeypatch):
+async def test_serve_puts_the_sync_listener_on_8730_beside_the_admin_listener_and_devices_pair_with_it(tmp_path, monkeypatch):
     root = tmp_path / "CampusLife"
     await asyncio.to_thread(hub, root, "init")
     started = []
@@ -551,11 +553,50 @@ async def test_serve_puts_the_sync_listener_on_8730_beside_the_admin_listener_re
 
     [(config, sync_app)] = started
     assert (config.admin_port, config.sync_port) == (8731, 8730)
+    assert config.devices == DeviceSettings(public_url=None, dormant_after=timedelta(days=90))
     async with open_core(root, create=False, sync_roots=[]) as core:
-        app = sync_app(Hosted(core, runner=None, redactor=Redactor()))
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://hub.test") as client:
-            answer = await client.get("/v1/hub", headers={"CampusLife-Contract": "1", "Authorization": "Bearer any-token"})
-    assert (answer.status_code, answer.json()["code"]) == (401, "unauthorized")
+        redactor = Redactor()
+        app = sync_app(Hosted(core, runner=None, redactor=redactor, devices=config.devices))
+        offer = await devices.offer(core, now=datetime.now(UTC), public_url="https://campus-laptop.tail0a1b2c.ts.net", redactor=redactor)
+        contract = {"CampusLife-Contract": "1"}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://hub.test", headers=contract) as client:
+            unknown = await client.get("/v1/hub", headers={"Authorization": "Bearer any-token"})
+            paired = await client.post("/v1/pair", json={"secret": offer.secret, "platform": "ipados", "device_name": "iPad", "app_version": "0.1.0"})
+            synced = await client.get("/v1/hub", headers={"Authorization": f"Bearer {paired.json()['token']}"})
+    assert (unknown.status_code, unknown.json()["code"]) == (401, "unauthorized")
+    assert (paired.status_code, synced.status_code) == (200, 200)
+
+
+def test_serve_takes_the_public_url_and_the_dormant_period_for_devices(tmp_path, monkeypatch):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    started = []
+    monkeypatch.setattr(host, "run_hub", lambda root, config, *, sync_app: started.append(config))
+    monkeypatch.setattr(host, "run", lambda ran: None)
+
+    assert hub(root, "serve", "--public-url", "https://campus-laptop.tail0a1b2c.ts.net", "--dormant-after-days", "30") == 0
+
+    [config] = started
+    assert config.devices == DeviceSettings(public_url="https://campus-laptop.tail0a1b2c.ts.net", dormant_after=timedelta(days=30))
+
+
+@pytest.mark.parametrize("command", ["serve", "tailscale-check"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://campus-laptop.tail0a1b2c.ts.net/",
+        "https://campus-laptop.tail0a1b2c.ts.net/hub",
+        "http://campus-laptop.tail0a1b2c.ts.net",
+        "https://Campus-Laptop.tail0a1b2c.ts.net",
+    ],
+)
+def test_a_public_url_that_is_not_a_hub_url_is_refused_in_words_a_person_reads(tmp_path, capsys, command, url):
+    """The same check for both, so tailscale-check compares what serve would hand out (device/pairing_offer hub_url)."""
+    assert exit_code(tmp_path / "CampusLife", command, "--public-url", url) == 2
+
+    shown = capsys.readouterr().err
+    assert f"argument --public-url: {url!r} is not a hub_url" in shown
+    assert "https://<name>.<tailnet>.ts.net" in shown
 
 
 def test_a_serve_refused_for_want_of_a_hub_leaves_the_empty_root_empty_for_restore(tmp_path, capsys):
@@ -879,6 +920,7 @@ def exit_code(*args):
     ("--admin-port", "argument --admin-port: 'abc' is not a port (0 to 65535)"),
     ("--sync-port", "argument --sync-port: 'abc' is not a port (0 to 65535)"),
     ("--backup-keep", "argument --backup-keep: 'abc' is not a whole number of at least 1"),
+    ("--dormant-after-days", "argument --dormant-after-days: 'abc' is not a whole number of at least 1"),
 ])
 def test_a_serve_option_that_is_not_a_number_is_refused_in_words_a_person_reads(tmp_path, capsys, option, said):
     assert exit_code(tmp_path / "CampusLife", "serve", option, "abc") == 2
@@ -893,6 +935,7 @@ def test_a_serve_option_that_is_not_a_number_is_refused_in_words_a_person_reads(
     (["backup", "--to", "{root}/inside"], 1, "inside the data root"),
     (["backup", "--to", "{drive}", "--keep", "0"], 2, "at least 1"),
     (["serve", "--backup-warn-days", "0"], 2, "at least 1"),
+    (["serve", "--dormant-after-days", "0"], 2, "at least 1"),
 ])
 def test_backup_and_restore_say_why_they_refuse(tmp_path, capsys, command, code, said):
     root, drive = tmp_path / "CampusLife", tmp_path / "drive"
