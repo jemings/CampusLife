@@ -576,8 +576,9 @@ def test_block_id_is_derived_from_blob_extractor_and_ordinal(make_contract, body
         ([{"blob": SOURCE}, {"blob": OTHER_BLOB}], [RuleViolation("/blocks/0/refs/1/blob", Rule.BLOCK_ANCHOR)]),
         ([{"blob": SOURCE, "capture": "16fd2706-8baf-433b-82eb-8c7fada847da"}], [RuleViolation("/blocks/0/refs/0/capture", Rule.BLOCK_ANCHOR)]),
         ([{"blob": OTHER_BLOB, "page": 0}], [SchemaViolation("/blocks/0/refs/0/page", "minimum")]),
+        ([{"blob": SOURCE, "page": 0, "capture": "16fd2706-8baf-433b-82eb-8c7fada847da"}], [SchemaViolation("/blocks/0/refs/0/page", "minimum")]),
     ],
-    ids=["source-and-unknown-kind", "unknown-kind-without-blob", "other-blob", "capture", "malformed-ref"],
+    ids=["source-and-unknown-kind", "unknown-kind-without-blob", "other-blob", "capture", "malformed-ref", "malformed-ref-with-capture"],
 )
 def test_block_anchor_ties_every_ref_to_the_extracted_blob(make_contract, refs, expected):
     assert make_contract({"t/x": EXTRACTED}).validate("t/x", extracted(block(0, *refs))) == expected
