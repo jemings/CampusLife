@@ -5,14 +5,14 @@ import pytest
 from extract_harness import TEST_LIMITS, fresh_hub, hub_with, valid_body
 from test_capture_commit import blob_store, device, feed
 
-from campuslife_hub import purge
+from campuslife_hub import jobs, purge
 from campuslife_hub.core import open_core
-from campuslife_hub.extract import bodies, sniff
+from campuslife_hub.extract import bodies, framework, sniff
 from campuslife_hub.extract.extractors import TEXT, Extractor
 from campuslife_hub.extract.framework import IDENTIFY
 from campuslife_hub.extract.limits import Limits
 from campuslife_hub.ingest import INGEST
-from campuslife_hub.jobs import JobState, Pipeline
+from campuslife_hub.jobs import Failed, JobState, NotRetryable, Pipeline
 from campuslife_hub.purge import PurgeHooks
 
 __all__ = ["blob_store", "device"]
@@ -230,6 +230,71 @@ async def test_a_file_imported_again_after_its_purge_is_identified_and_extracted
     assert len(await hub.artifacts("extraction")) == 1
     assert [job.state for job in await hub.jobs(IDENTIFY)] == [JobState.SUCCEEDED, JobState.SUCCEEDED]
     assert [job.state for job in await hub.jobs("extract.text")] == [JobState.SUCCEEDED, JobState.SUCCEEDED]
+
+
+async def test_a_file_purged_before_its_jobs_ran_is_processed_when_imported_again(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path)
+    await hub.capture(("a.md", NOTES))
+    await hub.runner.run_one()
+    [waiting] = await hub.jobs(IDENTIFY)
+    await purge.purge_blob(db, blob_store, sha(NOTES), hooks=PurgeHooks())
+    assert (await hub.job(waiting.id)).state is JobState.CANCELLED
+
+    await hub.capture(("a.md", NOTES))
+    await hub.settle()
+
+    assert (await hub.media(sha(NOTES))).media_type == "text/plain"
+    assert len(await hub.artifacts("extraction")) == 1
+
+
+async def failing_identify_once(hub, monkeypatch):
+    """The file's identify fails once, then the file is purged; the failed job, released."""
+    real, calls = framework.run_child, []
+
+    async def flaky(job, request, limits, work):
+        calls.append(job.id)
+        return Failed("a transient failure") if len(calls) == 1 else await real(job, request, limits, work)
+
+    monkeypatch.setattr(framework, "run_child", flaky)
+    await hub.capture(("a.txt", NOTES))
+    await hub.settle()
+    [failed] = await hub.jobs(IDENTIFY)
+    assert failed.state is JobState.FAILED
+    await purge.purge_blob(hub.db, hub.blobs, sha(NOTES), hooks=PurgeHooks())
+    return failed
+
+
+async def test_a_file_whose_identify_failed_is_identified_when_imported_again_after_its_purge(db, device, blob_store, tmp_path, monkeypatch):
+    hub = hub_with(db, blob_store, device, tmp_path)
+    await failing_identify_once(hub, monkeypatch)
+
+    await hub.capture(("a.txt", NOTES))
+    await hub.settle()
+
+    assert (await hub.media(sha(NOTES))).media_type == "text/plain"
+    assert len(await hub.artifacts("extraction")) == 1
+
+
+async def test_a_failed_job_whose_blob_went_is_not_retried(db, device, blob_store, tmp_path, monkeypatch):
+    hub = hub_with(db, blob_store, device, tmp_path)
+    failed = await failing_identify_once(hub, monkeypatch)
+
+    with pytest.raises(NotRetryable):
+        await db.write(lambda tx: jobs.retry(tx, failed.id, now=hub.clock()))
+
+    assert (await hub.job(failed.id)).state is JobState.FAILED
+
+
+async def test_a_blob_that_goes_releases_every_finished_job_that_read_it_whatever_its_subject(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path)
+    capture = await hub.capture(("a.md", NOTES))
+    await hub.settle()
+
+    await purge.purge_blob(db, blob_store, sha(NOTES), hooks=PurgeHooks())
+
+    [ingest] = await hub.jobs(INGEST)
+    assert (ingest.subject_ref, ingest.job_key) == (f"capture:{capture['id']}", f"{jobs.RELEASED}{ingest.id}")
+    assert [job.job_key for job in await hub.jobs()] == [f"{jobs.RELEASED}{job.id}" for job in await hub.jobs()]
 
 
 async def test_a_blob_stored_again_after_the_collection_took_it_is_identified_again(db, device, blob_store, tmp_path):
