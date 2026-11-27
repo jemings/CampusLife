@@ -26,10 +26,11 @@ How a client signs:
   cn 64 lowercase hex digits. The Hub answers {"nonce": hn, "proof":
   MAC("campuslife-hub-proof", address, cn, hn)}; anything else means it is not this Hub.
 - request: Authorization: CampusLife <hn>.<MAC("campuslife-admin-request", address, hn, method,
-  path, query, body hash)>, where method is as sent, path is percent-decoded (the ASGI path),
-  query is the raw query string as sent, without "?" ("" when none), and body hash is the
-  lowercase hex SHA-256 of the body as sent (of b"" when none). hn signs one request, within
-  HELLO_LIFETIME.
+  path, query, body hash)>, where method is as sent, path is the request target's path
+  percent-decoded as UTF-8 (urllib.parse.unquote), query is the raw query string as sent,
+  without "?" ("" when none), and body hash is the lowercase hex SHA-256 of the body as sent
+  (of b"" when none). hn signs one request, within HELLO_LIFETIME. signed_authorization does
+  this from the request target as sent; the Hub checks a request through it too.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ import hmac
 import json
 import re
 import secrets
+import urllib.parse
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -99,9 +101,12 @@ def hub_proof(token: str, address: str, client_nonce: str, hub_nonce: str) -> st
     return _mac(token, "campuslife-hub-proof", address, client_nonce, hub_nonce)
 
 
-def signed_authorization(token: str, address: str, hub_nonce: str, method: str, path: str, query: str, body: bytes) -> str:
-    """The authorization header of one admin API request to the listener at address, under a nonce it gave in its hello."""
-    signature = _mac(token, "campuslife-admin-request", address, hub_nonce, method, path, query, hashlib.sha256(body).hexdigest())
+def signed_authorization(token: str, address: str, hub_nonce: str, method: str, target: str, body: bytes) -> str:
+    """The authorization header of one admin API request for target, its path and query as sent, to the listener at
+    address, under a nonce it gave in its hello."""
+    path, _, query = target.partition("?")
+    parts = (address, hub_nonce, method, urllib.parse.unquote(path), query, hashlib.sha256(body).hexdigest())
+    signature = _mac(token, "campuslife-admin-request", *parts)
     return f"{SIGNED_SCHEME} {hub_nonce}.{signature}"
 
 
@@ -141,14 +146,14 @@ class AdminAuth:
         self._hellos[hub_nonce] = now + HELLO_LIFETIME
         return hub_nonce, hub_proof(self._token, address, client_nonce, hub_nonce)
 
-    def is_signed(self, address: str, authorization: str, method: str, path: str, query: str, body: bytes) -> bool:
+    def is_signed(self, address: str, authorization: str, method: str, target: str, body: bytes) -> bool:
         """Whether authorization signs this request under an unused, unexpired nonce of the Hub's, which is then used."""
         scheme, _, credentials = authorization.partition(" ")
         hub_nonce, _, _ = credentials.partition(".")
         until = self._hellos.pop(hub_nonce, None)
         if scheme != SIGNED_SCHEME or until is None or until <= self._clock():
             return False
-        expected = signed_authorization(self._token, address, hub_nonce, method, path, query, body)
+        expected = signed_authorization(self._token, address, hub_nonce, method, target, body)
         return hmac.compare_digest(authorization.encode(), expected.encode())
 
     def issue_login_code(self) -> str:
@@ -204,6 +209,13 @@ def _replaying(body: bytes, receive: Receive) -> Receive:
     return replay
 
 
+def _target(scope: Scope) -> str:
+    """The request target as the client sent it: the raw path, which a server need not give, and the query."""
+    raw_path = scope.get("raw_path") or urllib.parse.quote(scope["path"]).encode("ascii")
+    query = scope.get("query_string", b"")
+    return (raw_path + b"?" + query if query else raw_path).decode("latin-1")
+
+
 async def _refuse(send: Send, status: int, reason: str, *, api: bool) -> None:
     body = json.dumps({"error": reason}).encode() if api else f"<!doctype html><title>{status}</title><p>{reason}</p>".encode()
     headers = {**PAGE_HEADERS, "content-type": "application/json" if api else "text/html; charset=utf-8", "content-length": str(len(body))}
@@ -242,8 +254,8 @@ class AdminGuard:
                 await _refuse(send, 413, "a signed request carries at most 1 MiB", api=True)
                 return
             receive = _replaying(body, receive)
-            query = scope.get("query_string", b"").decode("latin-1")
-            authorised = "signed" if self.auth.is_signed(self.address, headers["authorization"], scope["method"], path, query, body) else None
+            signed = self.auth.is_signed(self.address, headers["authorization"], scope["method"], _target(scope), body)
+            authorised = "signed" if signed else None
         elif not api:
             session = session_cookie(headers)
             authorised = "session" if session is not None and self.auth.has_session(session) else None

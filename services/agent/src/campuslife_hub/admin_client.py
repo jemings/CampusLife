@@ -116,8 +116,7 @@ def _signed_call(layout: Layout, address: str, method: str, target: str, body: o
     token = admin_token.read(layout.admin_token)
     hub_nonce = _hub_nonce(layout, address, token)
     data = b"" if body is None else json.dumps(body).encode("utf-8")
-    path, _, query = target.partition("?")
-    authorization = signed_authorization(token, address, hub_nonce, method, path, query, data)
+    authorization = signed_authorization(token, address, hub_nonce, method, target, data)
     return _exchange(f"http://{address}", method, target, data, {"authorization": authorization})
 
 

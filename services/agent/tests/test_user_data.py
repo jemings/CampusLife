@@ -6,7 +6,6 @@ from campuslife_contracts import text_hash, validate
 from campuslife_hub import mutations
 from campuslife_hub.clock import instant
 from campuslife_hub.conflict_stash import kept
-from campuslife_hub.mutations import UnsupportedOp
 from test_capture_commit import apply, blob_store, commit, device, feed, new_id, store_bytes, text_capture
 
 __all__ = ["blob_store", "device"]
@@ -753,13 +752,13 @@ async def test_a_delete_resent_after_ninety_days_deletes_again(db, device):
 
 
 ONE_PER_OP = {
-    "capture.commit": ("commit_text_only", False),
-    "create": ("create_task", False),
-    "patch": ("patch_title", False),
-    "delete": ("delete_item", False),
-    "restore": ("restore_item", False),
-    "suggestion.accept": ("suggestion_accept", True),
-    "suggestion.dismiss": ("suggestion_dismiss", True),
+    "capture.commit": "commit_text_only",
+    "create": "create_task",
+    "patch": "patch_title",
+    "delete": "delete_item",
+    "restore": "restore_item",
+    "suggestion.accept": "suggestion_accept",
+    "suggestion.dismiss": "suggestion_dismiss",
 }
 
 
@@ -767,13 +766,9 @@ def test_every_contract_op_has_a_case_below():
     assert ONE_PER_OP.keys() == mutations.CONTRACT_OPS
 
 
-@pytest.mark.parametrize(("op_name", "case", "refused"), [(name, *case) for name, case in ONE_PER_OP.items()])
-async def test_only_an_op_without_a_handler_refuses_the_batch(db, device, op_name, case, refused):
+@pytest.mark.parametrize(("op_name", "case"), ONE_PER_OP.items())
+async def test_every_contract_op_has_a_handler_that_answers_it(db, device, op_name, case):
     sent = mutation(case)
     assert sent["op"] == op_name
 
-    if refused:
-        with pytest.raises(UnsupportedOp):
-            await mutations.apply(db, [sent], device)
-    else:
-        assert (await apply(db, device, sent))[0]["mutation_id"] == sent["mutation_id"]
+    assert (await apply(db, device, sent))[0]["mutation_id"] == sent["mutation_id"]

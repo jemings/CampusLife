@@ -19,6 +19,7 @@ from .clock import instant, now_instant
 from .db import Database, Tx
 from .devices import DeviceId
 from .outcomes import Outcome, Reason, Rejected, outcome_json
+from .suggestions import accept, dismiss
 from .user_data import create, delete, patch, restore
 
 REASON_BY_RULE: dict[Rule, Reason] = {Rule.NFC: Reason.NOT_CANONICAL, Rule.OWNER: Reason.OWNER}
@@ -54,6 +55,8 @@ HANDLERS: dict[str, Handler] = {
     "patch": patch,
     "delete": delete,
     "restore": restore,
+    "suggestion.accept": accept,
+    "suggestion.dismiss": dismiss,
 }
 
 CONTRACT_OPS = frozenset(

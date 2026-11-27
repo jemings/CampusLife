@@ -41,8 +41,14 @@ SESSION_LIFETIME = timedelta(days=7)
 UNCOMMITTED_LIFETIME = timedelta(days=7)
 # A collection takes a Blob only while its row is old, and a store that lost its file to one writes a new row.
 STORE_ATTEMPTS = 2
-# Every (table, column) that refers to a Blob by sha256 (D2: Attachment now, Artifact and AnnotationLayer later).
-BLOB_REFERENCES = (("attachments", "blob_sha256"),)
+# Every (table, column) that refers to a Blob by sha256 (D2: Attachment, Artifact and a Relation's ends now,
+# AnnotationLayer later).
+BLOB_REFERENCES = (
+    ("attachments", "blob_sha256"),
+    ("artifacts", "content_blob"),
+    ("relations", "from_blob"),
+    ("relations", "to_blob"),
+)
 COLLECTABLE = "SELECT sha256 FROM blobs WHERE stored_at < ?" + "".join(
     f" AND NOT EXISTS (SELECT 1 FROM {table} WHERE {table}.{column} = blobs.sha256)" for table, column in BLOB_REFERENCES
 )
@@ -578,7 +584,7 @@ class BlobStore:
         return await asyncio.to_thread(self._unlink_once, trash) if moved else []
 
     async def collect_garbage(self, now: datetime) -> list[KeptLeftover]:
-        """Remove the Blobs no Attachment refers to whose bytes last arrived UNCOMMITTED_LIFETIME before `now` (D2).
+        """Remove the Blobs no BLOB_REFERENCES column names whose bytes last arrived UNCOMMITTED_LIFETIME before `now` (D2).
 
         The file leaves blobs/ in the same transaction as its row, so a store that found it in place
         sees it gone and stores the bytes again. Each Blob is tried once; one in use stays for the next

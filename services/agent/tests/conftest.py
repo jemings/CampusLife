@@ -41,7 +41,7 @@ class SignedAs(httpx.Auth):
             hub_nonce = answer.json()["nonce"]
             assert answer.json()["proof"] == hub_proof(self.token, address, client_nonce, hub_nonce)
             request.headers["authorization"] = signed_authorization(
-                self.token, address, hub_nonce, request.method, request.url.path, request.url.query.decode(), request.content
+                self.token, address, hub_nonce, request.method, request.url.raw_path.decode("ascii"), request.content
             )
         yield request
 

@@ -76,6 +76,11 @@ async def test_a_commit_that_is_rejected_or_waits_for_blobs_registers_no_job(db,
     assert await all_jobs(db) == []
 
 
+async def stored_rows(db):
+    """The rows the feed carries, without the revs a job sends its subject out again at."""
+    return sorted((row["entity"], row["id"], row["deleted"], row.get("data")) for row in await feed(db))
+
+
 async def test_the_ingest_job_is_registered_in_the_commit_transaction(db, device, blob_store, tmp_path, monkeypatch):
     capture = await text_capture(blob_store, tmp_path)
     mutation = commit(capture)
@@ -170,7 +175,7 @@ async def test_a_failing_planner_keeps_out_only_its_own_jobs_and_the_ingest_runs
 
     registry.plan("speech", speech)
     capture = await committed(db, device, blob_store, tmp_path)
-    after_commit = await feed(db)
+    after_commit = await stored_rows(db)
     clock = {"now": datetime.now(UTC)}
     runner = JobRunner(JobContext(db, blob_store, registry), clock=lambda: clock["now"])
 
@@ -180,7 +185,7 @@ async def test_a_failing_planner_keeps_out_only_its_own_jobs_and_the_ingest_runs
     assert (ingest.state, ingest.error) == (JobState.RETRY_WAIT, "PlanningFailed: speech: RuntimeError: no model")
     assert len(await queued(db, "extract.text")) == 1
     assert await queued(db, "transcribe") == []
-    assert await feed(db) == after_commit
+    assert await stored_rows(db) == after_commit
 
     broken["error"] = None
     clock["now"] = datetime.fromisoformat(ingest.next_attempt_at)
@@ -246,11 +251,11 @@ async def test_processing_changes_no_capture_or_attachment_row(db, device, blob_
     registry = handled("extract.text")
     registry.plan("extract", planning("extract.text"))
     await committed(db, device, blob_store, tmp_path)
-    after_commit = await feed(db)
+    after_commit = await stored_rows(db)
 
     await ran_ingest(db, blob_store, registry)
 
-    assert await feed(db) == after_commit
+    assert await stored_rows(db) == after_commit
 
 
 async def test_ingesting_a_capture_the_hub_lacks_fails(db, blob_store):

@@ -9,10 +9,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from conftest import contract_fixture
 
-from campuslife_hub import mutations
+from campuslife_hub import mutations, store
 from campuslife_hub.blobs import BlobStore, FileOps, KeptLeftover, StoredBlob, has_blob, is_sharing_violation, with_lock_retry
 from campuslife_hub.devices import ensure_hub_device
+from campuslife_hub.store import Entity, EntityRef
 
 ABC_SHA256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -346,6 +348,46 @@ async def test_putting_the_same_bytes_again_restarts_the_seven_days(tmp_path, db
     await blob_store.collect_garbage(datetime.now(UTC))
 
     assert blob_store.path_of(ABC_SHA256).read_bytes() == b"abc"
+
+
+def holders(sha256):
+    other = "blob:" + "f" * 64
+    artifact = {**contract_fixture("valid", "artifact/artifact", "ocr"), "content_blob": sha256}
+    return {
+        "artifact": (EntityRef(Entity.ARTIFACT, artifact["id"]), artifact),
+        "relation from": (EntityRef(Entity.RELATION, f"blob:{sha256}|supersedes|{other}"),
+                          {"id": f"blob:{sha256}|supersedes|{other}", "from": f"blob:{sha256}", "type": "supersedes", "to": other}),
+        "relation to": (EntityRef(Entity.RELATION, f"{other}|rendition_of|blob:{sha256}"),
+                        {"id": f"{other}|rendition_of|blob:{sha256}", "from": other, "type": "rendition_of", "to": f"blob:{sha256}"}),
+    }
+
+
+@pytest.mark.parametrize("holder", holders(ABC_SHA256))
+async def test_collection_keeps_a_blob_an_artifact_or_an_end_of_a_relation_names_and_takes_it_once_none_does(
+    tmp_path, db, blob_store, holder
+):
+    ref, row = holders(ABC_SHA256)[holder]
+    await blob_store.put_file(source(tmp_path, "a.txt", b"abc"))
+    await db.write(lambda tx: store.write(tx, ref, row))
+
+    assert await blob_store.collect_garbage(a_week_and_a_day_on()) == []
+    assert blob_store.path_of(ABC_SHA256).read_bytes() == b"abc"
+
+    await db.write(lambda tx: store.write(tx, ref, None))
+    assert await blob_store.collect_garbage(a_week_and_a_day_on()) == []
+    assert not await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+
+
+async def test_a_relation_whose_ends_only_contain_a_blob_ref_keeps_no_blob(tmp_path, db, blob_store):
+    await blob_store.put_file(source(tmp_path, "a.txt", b"abc"))
+    item = "item:7c9e6679-7425-40de-944b-e07fc1f90ae7"
+    relation_id = f"{item}|about|tag:blob:{ABC_SHA256}"
+    await db.write(lambda tx: store.write(tx, EntityRef(Entity.RELATION, relation_id),
+                                          {"id": relation_id, "from": item, "type": "about", "to": f"tag:blob:{ABC_SHA256}"}))
+
+    assert await blob_store.collect_garbage(a_week_and_a_day_on()) == []
+
+    assert not await db.read(lambda snap: has_blob(snap, ABC_SHA256))
 
 
 async def test_collection_drops_the_row_of_a_blob_whose_file_is_already_gone(tmp_path, db, blob_store):

@@ -19,8 +19,10 @@ from datetime import UTC, datetime
 
 from campuslife_contracts import canonical_json
 
+from . import store
 from .clock import instant
 from .db import Snapshot, Tx
+from .store import EntityRef
 
 
 class JobState(enum.StrEnum):
@@ -234,16 +236,25 @@ def enqueue(tx: Tx, spec: JobSpec, pipeline: Pipeline, *, now: datetime | None =
     """The job for spec under pipeline: a new pending one, or the one with its job_key as it stands."""
     stored = _stored(spec, pipeline)
     at = _now(now)
-    tx.execute(
+    inserted = tx.execute(
         f"INSERT INTO processing_jobs ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, NULL, ?, ?)"
         " ON CONFLICT (job_key) DO NOTHING",
         (
             str(uuid.uuid4()), stored.job_key, stored.job_type, stored.subject_ref, stored.inputs, stored.params,
             pipeline.version, pipeline.provider, pipeline.model, pipeline.prompt_version, JobState.PENDING.value, at, at, at,
         ),
-    )
+    ).rowcount == 1
+    if inserted:
+        _touch_subject(tx, stored.subject_ref)
     (identifier,) = tx.execute("SELECT id FROM processing_jobs WHERE job_key = ?", (stored.job_key,)).fetchone()
     return get(tx, identifier)
+
+
+def _touch_subject(tx: Tx, subject_ref: str) -> None:
+    """A job's state shows on its subject (processing_summary, E20), so the feed sends the subject out again."""
+    ref = EntityRef.parse(subject_ref)
+    if ref is not None:
+        store.touch(tx, ref)
 
 
 def _change(tx: Tx, job_id: str, state: JobState, now: datetime | None, **columns: object) -> bool:
@@ -251,11 +262,14 @@ def _change(tx: Tx, job_id: str, state: JobState, now: datetime | None, **column
     sources = sorted(TRANSITIONS[state])
     assignments = "".join(f", {name} = ?" for name in columns)
     values = [value.value if isinstance(value, enum.Enum) else value for value in columns.values()]
-    cursor = tx.execute(
-        f"UPDATE processing_jobs SET state = ?{assignments}, updated_at = ? WHERE id = ? AND state IN ({', '.join('?' for _ in sources)})",
+    changed = tx.execute(
+        f"UPDATE processing_jobs SET state = ?{assignments}, updated_at = ? WHERE id = ? AND state IN ({', '.join('?' for _ in sources)})"
+        " RETURNING subject_ref",
         (state.value, *values, _now(now), job_id, *sources),
-    )
-    return cursor.rowcount == 1
+    ).fetchall()
+    for (subject_ref,) in changed:
+        _touch_subject(tx, subject_ref)
+    return bool(changed)
 
 
 def _placeholders(values: Sequence[object]) -> str:

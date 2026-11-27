@@ -24,6 +24,8 @@ class Entity(enum.StrEnum):
     ITEM = "item"
     RELATION = "relation"
     TAG = "tag"
+    ARTIFACT = "artifact"
+    SUGGESTION = "suggestion"
 
 
 TABLES: dict[Entity, str] = {
@@ -32,6 +34,8 @@ TABLES: dict[Entity, str] = {
     Entity.ITEM: "items",
     Entity.RELATION: "relations",
     Entity.TAG: "tags",
+    Entity.ARTIFACT: "artifacts",
+    Entity.SUGGESTION: "suggestions",
 }
 
 
@@ -43,6 +47,15 @@ ROW_CARRIES_REV = frozenset({Entity.ITEM})
 class EntityRef:
     entity: Entity
     id: str
+
+    @classmethod
+    def parse(cls, entity_ref: str) -> EntityRef | None:
+        """The feed row "<entity>:<id>" (E14) names, or None for what the feed does not carry (a blob)."""
+        entity, _, identifier = entity_ref.partition(":")
+        try:
+            return cls(Entity(entity), identifier)
+        except ValueError:
+            return None
 
 
 def _next_rev(tx: Tx) -> int:
@@ -68,6 +81,13 @@ def write(tx: Tx, ref: EntityRef, data: dict | None) -> int:
         (ref.entity.value, ref.id, rev, data is None),
     )
     return rev
+
+
+def touch(tx: Tx, ref: EntityRef) -> int | None:
+    """Send a stored row out again as it is, at a new rev, so a client reads again what the Hub
+    shows beside it (an Item's processing_summary). A row not stored is left alone."""
+    data = get(tx, ref)
+    return None if data is None else write(tx, ref, data)
 
 
 def get(runner: Tx | Snapshot, ref: EntityRef) -> dict | None:

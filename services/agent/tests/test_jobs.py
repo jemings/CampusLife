@@ -4,9 +4,10 @@ from decimal import Decimal
 
 import pytest
 
-from campuslife_hub import jobs
+from campuslife_hub import jobs, store
 from campuslife_hub.clock import instant
 from campuslife_hub.jobs import Blocked, Failed, JobSpec, JobState, NotRetryable, OutcomeCode, Pipeline, Succeeded
+from campuslife_hub.store import Entity, EntityRef
 
 PDF = "a" * 64
 SLIDES = "b" * 64
@@ -323,3 +324,43 @@ async def test_jobs_a_stopped_hub_left_running_wait_again_or_fail_once_out_of_at
     assert (again.state, again.attempts, again.next_attempt_at, again.error) == (JobState.RETRY_WAIT, 1, instant(restarted), jobs.STOPPED_BY_RESTART)
     assert (out.state, out.attempts, out.next_attempt_at, out.error) == (JobState.FAILED, jobs.MAX_ATTEMPTS, None, jobs.STOPPED_BY_RESTART)
     assert [await job(db, each.id) for each in (waiting, done)] == untouched
+
+
+CAPTURE = {"id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8", "device_id": "16fd2706-8baf-433b-82eb-8c7fada847da",
+           "created_at": "2026-03-02T00:30:00.000Z", "origin": {"type": "manual"}}
+
+
+async def feed_revs(db):
+    return dict(await db.read(lambda snap: snap.execute("SELECT entity || ':' || id, rev FROM sync_index").fetchall()))
+
+
+async def test_a_job_that_is_queued_or_changes_state_sends_its_subject_out_again(db):
+    subject = f"capture:{CAPTURE['id']}"
+    await db.write(lambda tx: store.write(tx, EntityRef(Entity.CAPTURE, CAPTURE["id"]), CAPTURE))
+    spec = extraction(subject_ref=subject)
+    revs = [await feed_revs(db)]
+
+    queued = await enqueue(db, spec)
+    revs.append(await feed_revs(db))
+    await enqueue(db, spec)
+    revs.append(await feed_revs(db))
+    await claim(db)
+    revs.append(await feed_revs(db))
+    await db.write(lambda tx: jobs.finish(tx, queued.id, Succeeded(), now=NOW))
+    revs.append(await feed_revs(db))
+    await db.write(lambda tx: jobs.finish(tx, queued.id, Failed("late"), now=NOW))
+    await db.write(lambda tx: jobs.cancel(tx, queued.id, now=NOW))
+    revs.append(await feed_revs(db))
+
+    subject_revs = [each[subject] for each in revs]
+    assert subject_revs[0] < subject_revs[1] == subject_revs[2] < subject_revs[3] < subject_revs[4] == subject_revs[5]
+    assert await db.read(lambda snap: store.get(snap, EntityRef(Entity.CAPTURE, CAPTURE["id"]))) == CAPTURE
+
+
+async def test_a_job_whose_subject_the_feed_does_not_hold_changes_no_feed_row(db):
+    queued = await enqueue(db, extraction(subject_ref=f"blob:{PDF}"))
+    await claim(db)
+    await db.write(lambda tx: jobs.finish(tx, queued.id, Succeeded(), now=NOW))
+    await enqueue(db)
+
+    assert await feed_revs(db) == {}

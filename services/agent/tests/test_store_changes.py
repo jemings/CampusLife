@@ -1,3 +1,4 @@
+import pytest
 from campuslife_contracts import validate
 from conftest import contract_fixture
 
@@ -103,8 +104,54 @@ async def test_an_empty_page_keeps_the_cursor(db):
     assert (body["changes"], body["next_since"], body["has_more"]) == ([], 99, False)
 
 
-async def test_open_values_the_hub_may_carry_pass_through_the_feed(db):
-    relation = contract_fixture("forward", "relation/relation", "locators_of_unknown_kind")
-    await db.write(lambda tx: store.write(tx, EntityRef(Entity.RELATION, relation["id"]), relation))
+def with_evidence_of_an_unknown_kind():
+    suggestion = contract_fixture("valid", "suggestion/suggestion", "create_assignment")
+    return {**suggestion, "evidence": [contract_fixture("forward", "locator/locator", "kind_unknown"), *suggestion["evidence"]]}
+
+
+@pytest.mark.parametrize(
+    ("entity", "row"),
+    [
+        (Entity.RELATION, contract_fixture("forward", "relation/relation", "locators_of_unknown_kind")),
+        (Entity.ARTIFACT, contract_fixture("forward", "artifact/artifact", "unknown_type")),
+        (Entity.SUGGESTION, contract_fixture("forward", "suggestion/suggestion", "action_unknown")),
+        (Entity.SUGGESTION, with_evidence_of_an_unknown_kind()),
+    ],
+    ids=["relation locators of an unknown kind", "artifact of an unknown type", "suggestion of an unknown action",
+         "suggestion evidence of an unknown kind"],
+)
+async def test_open_values_the_hub_may_carry_pass_through_the_feed(db, entity, row):
+    await db.write(lambda tx: store.write(tx, EntityRef(entity, row["id"]), row))
     body = await page(db, 0, 10)
-    assert body["changes"][0]["data"] == relation
+    assert body["changes"][0]["data"] == row
+
+
+async def feed_rows(db):
+    return [(row["entity"], row["id"], row["rev"], row.get("data")) for row in (await page(db, 0, 500))["changes"]]
+
+
+async def test_touching_a_row_sends_it_out_again_unchanged_at_a_new_rev(db):
+    capture, item = EntityRef(Entity.CAPTURE, CAPTURE_ID), EntityRef(Entity.ITEM, ITEM_ID)
+    await db.write(lambda tx: store.write(tx, capture, capture_row()))
+    await db.write(lambda tx: store.write(tx, item, item_row()))
+
+    capture_rev = await db.write(lambda tx: store.touch(tx, capture))
+    item_rev = await db.write(lambda tx: store.touch(tx, item))
+
+    assert capture_rev < item_rev
+    assert await feed_rows(db) == [
+        ("capture", CAPTURE_ID, capture_rev, capture_row()),
+        ("item", ITEM_ID, item_rev, {**item_row(), "rev": item_rev}),
+    ]
+
+
+async def test_touching_what_is_not_stored_writes_nothing(db):
+    gone = EntityRef(Entity.CAPTURE, CAPTURE_ID)
+    await db.write(lambda tx: store.write(tx, gone, capture_row()))
+    await db.write(lambda tx: store.write(tx, gone, None))
+    before = await feed_rows(db)
+
+    touched = [await db.write(lambda tx: store.touch(tx, ref)) for ref in (gone, EntityRef(Entity.ITEM, ITEM_ID))]
+
+    assert touched == [None, None]
+    assert await feed_rows(db) == before
