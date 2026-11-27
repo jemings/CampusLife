@@ -502,7 +502,7 @@ async def read_response(reader):
     return head.split(b"\r\n")[0], await reader.readexactly(length)
 
 
-async def test_the_sync_listener_refuses_every_token_until_devices_pair_and_answers_with_the_hub_headers(tmp_path):
+async def test_a_sync_app_whose_authenticator_refuses_every_token_answers_401_with_the_hub_headers(tmp_path):
     async with serving(tmp_path, sync_app=lambda hosted: create_sync_app(hosted, refuse_every_bearer)) as (core, client, listening, stop, served):
         async with sync_client(listening) as sync:
             answers = [await sync.get("/v1/hub"), await sync.post("/v1/mutations", json=tag_batch()), await sync.get("/api/status")]
