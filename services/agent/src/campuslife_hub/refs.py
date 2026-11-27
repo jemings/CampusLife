@@ -18,7 +18,8 @@ def exists(runner: Tx | Snapshot, entity_ref: str) -> bool:
 
 
 def ever_existed(runner: Tx | Snapshot, entity_ref: str) -> bool:
-    """What exists, a tombstone, and a Blob a purge removed; not what the Hub never held."""
+    """What exists, a tombstone, and a Blob a purge removed; not what the Hub has no record of, which includes a Blob
+    the collection of unreferenced Blobs removed, as it keeps none."""
     entity, _, identifier = entity_ref.partition(":")
     if entity == "blob":
         purged = runner.execute(
