@@ -77,14 +77,14 @@ def test_autostart_xml_prints_the_task_for_the_initialised_root_with_the_serve_o
     monkeypatch.setenv("USERDOMAIN", "LAPTOP")
     monkeypatch.setenv("USERNAME", "kim")
 
-    assert hub(root, "autostart", "xml", "--admin-port", "8800", "--backup-keep", "3", "--backup-warn-days", "14") == 0
+    assert hub(root, "autostart", "xml", "--admin-port", "8800", "--sync-port", "8830", "--backup-keep", "3", "--backup-warn-days", "14") == 0
 
     printed = capsys.readouterr().out
     assert not printed.startswith("<?xml")
     task = read_task(printed)
     launcher = "campuslife-hubw.exe" if sys.platform == "win32" else "campuslife-hubw"
     assert value(task, "Actions/Exec/Command") == str(Path(sys.executable).with_name(launcher))
-    assert value(task, "Actions/Exec/Arguments") == f'--root "{root.resolve()}" serve --admin-port 8800 --backup-keep 3 --backup-warn-days 14'
+    assert value(task, "Actions/Exec/Arguments") == f'--root "{root.resolve()}" serve --admin-port 8800 --sync-port 8830 --backup-keep 3 --backup-warn-days 14'
     assert value(task, "Actions/Exec/WorkingDirectory") == str(root.resolve())
     assert value(task, "Triggers/LogonTrigger/UserId") == r"LAPTOP\kim"
 
@@ -125,10 +125,11 @@ def test_register_hands_task_scheduler_the_same_bytes_as_the_out_file_on_every_p
 
 @pytest.mark.parametrize(
     "command",
-    [["serve", "--admin-port", "65536"], ["autostart", "xml", "--admin-port", "70000"], ["autostart", "register", "--admin-port", "-1"]],
-    ids=["serve", "xml", "register"],
+    [["serve", "--admin-port", "65536"], ["autostart", "xml", "--admin-port", "70000"], ["autostart", "register", "--admin-port", "-1"],
+     ["serve", "--sync-port", "65536"], ["autostart", "xml", "--sync-port", "-1"]],
+    ids=["serve", "xml", "register", "serve sync", "xml sync"],
 )
-def test_an_admin_port_outside_0_to_65535_is_refused_before_anything_runs(tmp_path, capsys, monkeypatch, command):
+def test_a_port_outside_0_to_65535_is_refused_before_anything_runs(tmp_path, capsys, monkeypatch, command):
     root = tmp_path / "CampusLife"
     hub(root, "init")
     capsys.readouterr()
@@ -292,7 +293,7 @@ def test_autostart_register_adds_the_task_task_scheduler_reads_back_and_unregist
 def test_the_gui_script_launcher_serves_the_hub_without_a_console_until_it_is_stopped(tmp_path, capsys):
     root = tmp_path / "CampusLife"
     hub(root, "init")
-    process = subprocess.Popen([str(autostart.launcher()), "--root", str(root), "serve", "--admin-port", "0"])
+    process = subprocess.Popen([str(autostart.launcher()), "--root", str(root), "serve", "--admin-port", "0", "--sync-port", "0"])
     try:
         deadline = time.monotonic() + 30
         while not (root / "admin.port").exists():

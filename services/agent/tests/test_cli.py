@@ -15,6 +15,7 @@ import time
 import webbrowser
 from contextlib import contextmanager
 
+import httpx
 import pytest
 
 from campuslife_hub import admin_client, admin_token, backup, host
@@ -22,7 +23,9 @@ from campuslife_hub.admin_auth import hub_proof
 from campuslife_hub.cli import main
 from campuslife_hub.core import open_core
 from campuslife_hub.data_root import Layout
+from campuslife_hub.host import Hosted
 from campuslife_hub.lock import HubLock
+from campuslife_hub.redaction import Redactor
 
 
 def hub(root, *args):
@@ -252,7 +255,7 @@ def served(root):
     """A `campuslife-hub serve` process on root, its output going to a file, once its admin listener has left its port."""
     with open(root.parent / "serve.out", "wb") as output:
         process = subprocess.Popen(
-            [sys.executable, "-m", "campuslife_hub.cli", "--root", str(root), "serve", "--admin-port", "0"], stdout=output, stderr=output,
+            [sys.executable, "-m", "campuslife_hub.cli", "--root", str(root), "serve", "--admin-port", "0", "--sync-port", "0"], stdout=output, stderr=output,
         )
     deadline = time.monotonic() + 30
     while not (root / "admin.port").exists():
@@ -262,6 +265,15 @@ def served(root):
             pytest.fail(f"serve did not start: {(root.parent / 'serve.out').read_text(encoding='utf-8', errors='replace')}")
         time.sleep(0.05)
     return process
+
+
+def until_logged(path, pattern):
+    """The first group of the first line of path that matches pattern, waiting up to 30 seconds for it."""
+    deadline = time.monotonic() + 30
+    while not (found := re.search(pattern, path.read_text(encoding="utf-8", errors="replace"))):
+        assert time.monotonic() < deadline, f"{pattern!r} never appeared in {path}"
+        time.sleep(0.05)
+    return found.group(1)
 
 
 NO_CONSOLE = """
@@ -440,6 +452,13 @@ def test_while_the_hub_serves_writes_go_through_its_admin_api_and_stop_ends_it(t
         assert browser.getresponse().status == 303
         browser.close()
 
+        sync_port = int(until_logged(tmp_path / "serve.out", r"serving the sync listener on http://127\.0\.0\.1:(\d+)"))
+        sync = http.client.HTTPConnection("127.0.0.1", sync_port, timeout=30)
+        sync.request("GET", "/v1/hub", headers={"CampusLife-Contract": "1", "Authorization": "Bearer a-token-no-device-has"})
+        refused = sync.getresponse()
+        assert (refused.status, refused.getheader("CampusLife-Hub-Id"), json.loads(refused.read())["code"]) == (401, hub_id, "unauthorized")
+        sync.close()
+
         assert hub(root, "stop") == 0
         assert process.wait(timeout=30) == 0
     finally:
@@ -496,6 +515,43 @@ def test_serve_needs_an_initialised_root_and_a_free_port(tmp_path, capsys):
         taken.close()
     assert f"127.0.0.1:{port} cannot be listened on" in capsys.readouterr().err
     assert signal.getsignal(signal.SIGINT) is handlers
+
+
+def test_serve_needs_a_free_sync_port_and_says_so_on_the_console_and_once_in_the_log(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    taken = socket.socket()
+    taken.bind(("127.0.0.1", 0))
+    taken.listen()
+    port = taken.getsockname()[1]
+    capsys.readouterr()
+    try:
+        assert hub(root, "serve", "--admin-port", "0", "--sync-port", str(port)) == 1
+    finally:
+        taken.close()
+
+    shown = [line for line in capsys.readouterr().err.splitlines() if f"127.0.0.1:{port} cannot be listened on" in line]
+    logged = [line for line in (root / "logs" / "hub.log").read_text(encoding="utf-8").splitlines() if f"127.0.0.1:{port}" in line]
+    assert len(shown) == 1 and len(logged) == 1
+    assert not (root / "admin.port").exists()
+
+
+async def test_serve_puts_the_sync_listener_on_8730_beside_the_admin_listener_refusing_every_token(tmp_path, monkeypatch):
+    root = tmp_path / "CampusLife"
+    await asyncio.to_thread(hub, root, "init")
+    started = []
+    monkeypatch.setattr(host, "run_hub", lambda root, config, *, sync_app: started.append((config, sync_app)))
+    monkeypatch.setattr(host, "run", lambda ran: None)
+
+    assert await asyncio.to_thread(hub, root, "serve") == 0
+
+    [(config, sync_app)] = started
+    assert (config.admin_port, config.sync_port) == (8731, 8730)
+    async with open_core(root, create=False, sync_roots=[]) as core:
+        app = sync_app(Hosted(core, runner=None, redactor=Redactor()))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://hub.test") as client:
+            answer = await client.get("/v1/hub", headers={"CampusLife-Contract": "1", "Authorization": "Bearer any-token"})
+    assert (answer.status_code, answer.json()["code"]) == (401, "unauthorized")
 
 
 def test_a_serve_refused_for_want_of_a_hub_leaves_the_empty_root_empty_for_restore(tmp_path, capsys):
@@ -817,6 +873,7 @@ def exit_code(*args):
 
 @pytest.mark.parametrize(("option", "said"), [
     ("--admin-port", "argument --admin-port: 'abc' is not a port (0 to 65535)"),
+    ("--sync-port", "argument --sync-port: 'abc' is not a port (0 to 65535)"),
     ("--backup-keep", "argument --backup-keep: 'abc' is not a whole number of at least 1"),
 ])
 def test_a_serve_option_that_is_not_a_number_is_refused_in_words_a_person_reads(tmp_path, capsys, option, said):
