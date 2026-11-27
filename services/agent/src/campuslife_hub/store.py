@@ -24,6 +24,8 @@ class Entity(enum.StrEnum):
     ITEM = "item"
     RELATION = "relation"
     TAG = "tag"
+    ARTIFACT = "artifact"
+    SUGGESTION = "suggestion"
 
 
 TABLES: dict[Entity, str] = {
@@ -32,6 +34,8 @@ TABLES: dict[Entity, str] = {
     Entity.ITEM: "items",
     Entity.RELATION: "relations",
     Entity.TAG: "tags",
+    Entity.ARTIFACT: "artifacts",
+    Entity.SUGGESTION: "suggestions",
 }
 
 
