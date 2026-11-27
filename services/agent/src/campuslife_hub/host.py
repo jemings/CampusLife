@@ -52,6 +52,8 @@ DEFAULT_ADMIN_PORT = 8731
 LOG_FILE = "hub.log"
 LOGGED = "logged in logs/hub.log"
 """The note run_hub adds to the error it logged, so the CLI does not leave it in the log a second time."""
+FILE_ONLY = "file_only"
+"""A record run_hub keeps off the console: the CLI shows the same failure there in its own words."""
 WORK_THREAD = "campuslife-hub-work"
 
 
@@ -274,6 +276,7 @@ async def run_hub(root: Path, config: HostConfig = HostConfig(), *, registry: Jo
     if sys.stderr is not None:
         handlers.append(logging.StreamHandler())
         handlers[-1].setFormatter(RedactingFormatter(redactor, "%(levelname)s %(name)s: %(message)s"))
+        handlers[-1].addFilter(lambda record: not getattr(record, FILE_ONLY, False))
     root_logger, level = logging.getLogger(), logging.getLogger().level
     for handler in handlers:
         root_logger.addHandler(handler)
@@ -285,7 +288,7 @@ async def run_hub(root: Path, config: HostConfig = HostConfig(), *, registry: Jo
             with stop_on_signals(stop):
                 await serve(core, registry or JobRegistry(), stop, admin_token=token, redactor=redactor, config=config, sync_app=sync_app)
     except Exception as error:
-        log.error("the Hub ended: %s: %s", type(error).__name__, error)
+        log.error("the Hub ended: %s: %s", type(error).__name__, error, extra={FILE_ONLY: True})
         error.add_note(LOGGED)
         raise
     finally:
