@@ -2,10 +2,11 @@
 
 One transaction removes:
 - every Attachment of the Blob;
-- the Artifacts made from it, and from those in turn (an input Artifact counts by its content Blob,
-  artifact.input_hashes), and the Suggestions they proposed;
+- the Artifacts holding it or made from it, and from those in turn (an input Artifact counts by its
+  content Blob, artifact.input_hashes), and the Suggestions they proposed;
+- the content Blobs of those Artifacts that nothing it keeps still names; an Artifact made from bytes a
+  kept row still names stays, since those bytes stay;
 - every Relation with an end at what it removes;
-- the content Blobs of those Artifacts that nothing it keeps still names;
 - the fork Notes the user chose to remove with them.
 A fork Note it does not remove stays, marked with evidence_purged_at. Jobs still to run on what it
 removes end cancelled. Each removed row leaves its tombstone (E5).
@@ -128,22 +129,25 @@ def _ids(runner: Tx | Snapshot, sql: str, params: Sequence[object] | dict[str, o
     return {identifier for (identifier,) in runner.execute(sql, params)}
 
 
-def _made_from(runner: Tx | Snapshot, sha256: str) -> dict[str, str]:
-    """Each Artifact holding the Blob or made from it, directly or through other such Artifacts, with its content
-    Blob. An Artifact made from kept inputs stays, though its content may have the same bytes as one that goes."""
-    made: dict[str, str] = dict(runner.execute("SELECT id, content_blob FROM artifacts WHERE content_blob = ?", (sha256,)).fetchall())
-    reached = frontier = {sha256}
+def _doomed(runner: Tx | Snapshot, sha256: str, attachments: set[str]) -> tuple[set[str], set[str]]:
+    """The Artifacts that go with sha256 and the Blobs that go. An Artifact goes when it holds a Blob that goes or
+    was made from one; a content Blob goes, with sha256, once no row the purge keeps names it. The two grow together:
+    a Blob a kept Artifact names stays only until that Artifact turns out to go as well."""
+    made: dict[str, str] = {}
+    blobs: set[str] = set()
+    frontier = {sha256}
     while frontier:
-        rows = runner.execute(
-            "SELECT id, content_blob FROM artifacts"
-            " WHERE EXISTS (SELECT 1 FROM json_each(artifacts.data, '$.input_hashes') WHERE value IN (SELECT value FROM json_each(?)))",
-            (_listed(frontier),),
-        ).fetchall()
-        new = {artifact_id: content for artifact_id, content in rows if artifact_id not in made}
-        made.update(new)
-        frontier = set(new.values()) - reached
-        reached = reached | frontier
-    return made
+        blobs |= frontier
+        made.update(
+            runner.execute(
+                "SELECT id, content_blob FROM artifacts WHERE content_blob IN (SELECT value FROM json_each(:frontier))"
+                " OR EXISTS (SELECT 1 FROM json_each(artifacts.data, '$.input_hashes') WHERE value IN (SELECT value FROM json_each(:frontier)))",
+                {"frontier": _listed(frontier)},
+            ).fetchall()
+        )
+        removed = {"attachments": attachments, "artifacts": set(made)}
+        frontier = {content for content in set(made.values()) - blobs if not _named_elsewhere(runner, content, removed)}
+    return set(made), blobs
 
 
 def _named_elsewhere(runner: Tx | Snapshot, sha256: str, removed: dict[str, set[str]]) -> bool:
@@ -172,12 +176,9 @@ def _fork_notes(runner: Tx | Snapshot, artifacts: set[str]) -> list[dict]:
 def _reach(runner: Tx | Snapshot, sha256: str, items: Iterable[str]) -> tuple[PurgeTarget, list[dict]]:
     """The target of purging sha256 with the fork Notes in items, and every fork Note it reaches."""
     attachments = _ids(runner, "SELECT id FROM attachments WHERE blob_sha256 = ?", (sha256,))
-    made = _made_from(runner, sha256)
-    artifacts = set(made)
+    artifacts, blobs = _doomed(runner, sha256, attachments)
     if not (attachments or artifacts or has_blob(runner, sha256)):
         raise PurgeRefused(f"the Hub holds no Blob {sha256}")
-    removed = {"attachments": attachments, "artifacts": artifacts}
-    blobs = {sha256} | {content for content in set(made.values()) if not _named_elsewhere(runner, content, removed)}
     suggestions = _ids(runner, "SELECT id FROM suggestions WHERE source_artifact_id IN (SELECT value FROM json_each(?))", (_listed(artifacts),))
     items = set(items)
     ends = (
