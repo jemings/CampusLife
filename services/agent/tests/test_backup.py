@@ -121,6 +121,18 @@ async def test_a_later_backup_copies_only_what_the_drive_lacks_and_leaves_backed
         assert [row["data"]["blob_sha256"] for row in resent] == [second_pdf]
 
 
+async def test_a_generation_is_named_after_every_one_on_the_drive_even_when_the_clock_went_back(tmp_path):
+    target, clock = tmp_path / "drive", Clock()
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        first = await backup.back_up(core, target, keep=2, clock=clock)
+        same_tick = await backup.back_up(core, target, keep=2, clock=clock)
+        clock.advance(-timedelta(days=1))
+        went_back = await backup.back_up(core, target, keep=2, clock=clock)
+
+    assert [first.name, same_tick.name, went_back.name] == ["20260302T010000000000Z", "20260302T010000000001Z", "20260302T010000000002Z"]
+    assert backup.generations(target) == [same_tick.name, went_back.name]
+
+
 async def test_a_backup_keeps_the_newest_generations_and_only_the_blobs_they_name(tmp_path):
     target, clock = tmp_path / "drive", Clock()
     async with open_core(tmp_path / "root", create=True, sync_roots=[], purge_hooks=purge.PurgeHooks()) as core:
@@ -181,6 +193,18 @@ async def test_restoring_into_an_empty_root_keeps_the_hub_issues_a_new_epoch_and
         assert (await core.db.read(lambda snap: changes.page(snap, 0, 10)))["epoch"] == restored.epoch
     async with open_core_readonly(tmp_path / "restored", sync_roots=[]) as core:
         assert await fsck.check(core) == []
+
+
+async def test_restoring_the_same_generation_twice_gives_two_epochs(tmp_path):
+    target = tmp_path / "drive"
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        await backup.back_up(core, target, clock=Clock())
+
+    first = await backup.restore(target, tmp_path / "first", sync_roots=[])
+    second = await backup.restore(target, tmp_path / "second", sync_roots=[])
+
+    assert first.generation == second.generation
+    assert first.epoch != second.epoch
 
 
 async def test_a_restore_names_the_devices_it_knows_and_says_when_the_backup_was_taken(tmp_path):
