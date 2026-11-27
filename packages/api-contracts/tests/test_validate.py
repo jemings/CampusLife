@@ -138,7 +138,8 @@ def test_error_code_catalogue_is_exactly_the_contract_list():
     """code is open (x-open); the catalogue is its examples."""
     catalogue = [
         "invalid_request", "not_canonical", "id_reuse", "hash_mismatch", "chunk_mismatch", "incomplete",
-        "unauthorized", "device_revoked", "device_dormant", "not_found", "contract_too_old",
+        "unauthorized", "device_revoked", "device_dormant", "not_found", "contract_too_old", "hub_storage_full",
+        "internal_error",
     ]
     schema = json.loads((contract_root() / "schemas/common/error.json").read_text(encoding="utf-8"))
     assert schema["properties"]["code"]["examples"] == catalogue

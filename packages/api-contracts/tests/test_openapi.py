@@ -381,3 +381,19 @@ def test_header_names_are_the_header_schemas_property_names():
             parameter = deref(entry)
             if parameter["in"] == "header":
                 assert schema_ref(parameter["schema"]).endswith("_headers.json#/properties/" + parameter["name"])
+
+
+def test_any_operation_can_answer_500_and_a_response_without_the_hub_id_is_no_answer_from_the_hub():
+    """#4 decision 4: the status table lists no 500, yet the Hub can fail on any operation, and tailscale serve
+    answers 502 for a Hub that is down; a client backs off on both instead of treating them as a refusal."""
+    description = prose(SPEC["info"]["description"])
+    assert "Any operation can answer 500 internal_error, with the Hub headers." in description
+    assert "A response without CampusLife-Hub-Id, such as the 502 tailscale serve sends while the Hub is down" in description
+    assert "the Hub was not reached: back off and try again" in description
+
+
+def test_open_upload_says_a_hub_short_of_space_answers_hub_storage_full():
+    """#4 decision 5: a full disk is not a malformed request, so it gets a code of its own a client retries later."""
+    description = prose(SPEC["paths"]["/v1/blobs/uploads"]["post"]["description"])
+    assert "400 hub_storage_full" in description
+

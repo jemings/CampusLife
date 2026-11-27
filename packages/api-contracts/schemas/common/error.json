@@ -22,7 +22,9 @@
         "device_revoked",
         "device_dormant",
         "not_found",
-        "contract_too_old"
+        "contract_too_old",
+        "hub_storage_full",
+        "internal_error"
       ]
     },
     "message": {
