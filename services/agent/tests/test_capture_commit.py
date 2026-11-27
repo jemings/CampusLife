@@ -252,7 +252,8 @@ async def test_a_rejected_mutation_does_not_stop_the_batch(db, device, blob_stor
     assert [result["result"] for result in results] == ["rejected", "applied"]
 
 
-async def test_a_batch_with_an_op_this_hub_does_not_apply_yet_is_refused_before_anything_is_written(db, device, blob_store, tmp_path):
+async def test_a_batch_with_an_op_this_hub_does_not_apply_yet_is_refused_before_anything_is_written(db, device, blob_store, tmp_path, monkeypatch):
+    monkeypatch.delitem(mutations.HANDLERS, "suggestion.dismiss")
     good = commit(await text_capture(blob_store, tmp_path))
     dismiss = {"mutation_id": new_id(), "op": "suggestion.dismiss", "suggestion_id": ITEM_A}
 
@@ -280,7 +281,8 @@ async def test_an_op_that_is_not_a_string_is_a_schema_rejection_and_the_batch_go
     assert results[-1] == {"mutation_id": ready["mutation_id"], "result": "applied"}
 
 
-async def test_an_unapplied_contract_op_refuses_the_batch_even_when_it_breaks_the_schema(db, device, blob_store, tmp_path):
+async def test_an_unapplied_contract_op_refuses_the_batch_even_when_it_breaks_the_schema(db, device, blob_store, tmp_path, monkeypatch):
+    monkeypatch.delitem(mutations.HANDLERS, "suggestion.dismiss")
     good = commit(await text_capture(blob_store, tmp_path))
     bare_dismiss = {"mutation_id": new_id(), "op": "suggestion.dismiss"}
 
@@ -327,6 +329,7 @@ async def test_two_attachments_of_one_commit_with_the_same_id_are_rejected(db, d
 
 async def test_an_op_is_unapplied_only_while_no_handler_is_registered_for_it(db, device, monkeypatch):
     dismiss = contract_fixture("valid", "mutation/mutation", "suggestion_dismiss")
+    monkeypatch.delitem(mutations.HANDLERS, "suggestion.dismiss")
     with pytest.raises(UnsupportedOp):
         await mutations.apply(db, [dismiss], device)
 

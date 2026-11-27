@@ -1,3 +1,4 @@
+import pytest
 from campuslife_contracts import validate
 from conftest import contract_fixture
 
@@ -103,11 +104,26 @@ async def test_an_empty_page_keeps_the_cursor(db):
     assert (body["changes"], body["next_since"], body["has_more"]) == ([], 99, False)
 
 
-async def test_open_values_the_hub_may_carry_pass_through_the_feed(db):
-    relation = contract_fixture("forward", "relation/relation", "locators_of_unknown_kind")
-    await db.write(lambda tx: store.write(tx, EntityRef(Entity.RELATION, relation["id"]), relation))
+def with_evidence_of_an_unknown_kind():
+    suggestion = contract_fixture("valid", "suggestion/suggestion", "create_assignment")
+    return {**suggestion, "evidence": [contract_fixture("forward", "locator/locator", "kind_unknown"), *suggestion["evidence"]]}
+
+
+@pytest.mark.parametrize(
+    ("entity", "row"),
+    [
+        (Entity.RELATION, contract_fixture("forward", "relation/relation", "locators_of_unknown_kind")),
+        (Entity.ARTIFACT, contract_fixture("forward", "artifact/artifact", "unknown_type")),
+        (Entity.SUGGESTION, contract_fixture("forward", "suggestion/suggestion", "action_unknown")),
+        (Entity.SUGGESTION, with_evidence_of_an_unknown_kind()),
+    ],
+    ids=["relation locators of an unknown kind", "artifact of an unknown type", "suggestion of an unknown action",
+         "suggestion evidence of an unknown kind"],
+)
+async def test_open_values_the_hub_may_carry_pass_through_the_feed(db, entity, row):
+    await db.write(lambda tx: store.write(tx, EntityRef(entity, row["id"]), row))
     body = await page(db, 0, 10)
-    assert body["changes"][0]["data"] == relation
+    assert body["changes"][0]["data"] == row
 
 
 async def feed_rows(db):
