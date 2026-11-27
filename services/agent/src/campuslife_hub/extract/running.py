@@ -9,6 +9,7 @@ fails the job.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -79,7 +80,7 @@ async def run_child(job: Job, request: Mapping[str, object], limits: Limits, wor
             return Failed(error)
         raise ChildCrashed(error)
     try:
-        result = json.loads(ran.stdout)
+        result = await asyncio.to_thread(json.loads, ran.stdout)
         status = Status(result["status"])
     except (ValueError, TypeError, KeyError) as error:
         return Failed(f"the child's result is not the protocol's: {type(error).__name__}: {error}")
