@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable, Iterable
+from datetime import datetime
 
 from campuslife_contracts import contract_root, validate
 
@@ -20,7 +21,7 @@ from .db import Tx
 from .devices import DeviceId
 from .outcomes import Applied, Conflict, Outcome, Reason, Rejected
 from .store import Entity, EntityRef
-from .user_data import FIELDS_PREFIX, ITEM_DATA, could_be_created, create_item, create_relation, patch, with_value
+from .user_data import FIELDS_PREFIX, ITEM_DATA, TEXT_COLUMNS, could_be_created, create_item, create_relation, patch, with_value
 
 _KNOWN = json.loads((contract_root() / "schemas" / "suggestion" / "suggestion.json").read_text(encoding="utf-8"))["$defs"]["known"]
 
@@ -36,7 +37,39 @@ STATE_LOST = Conflict((), ("state",))
 
 
 class InvalidSuggestion(ValueError):
-    """The proposal would break the contract, is of an action this Hub cannot accept, or names no recorded Artifact."""
+    """The proposal would break the contract, is of an action this Hub cannot accept, or names an Artifact or evidence
+    the Hub does not hold."""
+
+
+def _each_once(items: Iterable[dict]) -> list[dict]:
+    kept: list[dict] = []
+    for item in items:
+        if item not in kept:
+            kept.append(item)
+    return kept
+
+
+def _lf(value: object) -> object:
+    return value.replace("\r\n", "\n").replace("\r", "\n") if isinstance(value, str) else value
+
+
+def _with_lf_text(action: str, proposed: dict) -> dict:
+    """An x-text value is kept with LF line ends (E7), and a model's text may carry CRs, so the Hub writes it with LF."""
+    text = TEXT_COLUMNS[Entity.ITEM]
+    if action == "create_item":
+        return {name: _lf(value) if name in text else value for name, value in proposed.items()}
+    if action == "patch_item":
+        return {**proposed, "set": {key: {**change, "to": _lf(change["to"])} if key in text else change for key, change in proposed["set"].items()}}
+    return proposed
+
+
+def _recorded_at(artifact: dict) -> datetime:
+    return datetime.fromisoformat(artifact["created_at"])
+
+
+def _recorded_no_earlier(tx: Tx, artifact_id: str, than: datetime) -> bool:
+    artifact = store.get(tx, EntityRef(Entity.ARTIFACT, artifact_id))
+    return artifact is not None and _recorded_at(artifact) >= than
 
 
 def propose(
@@ -44,15 +77,17 @@ def propose(
 ) -> dict | None:
     """The open Suggestion of fingerprint from the Artifact: a new one, or the one this Artifact proposed before.
 
-    None when the user already accepted or dismissed that fingerprint, from any Artifact: it does not open again.
-    An open one from another Artifact is superseded by the new one, so reprocessing leaves one open per fingerprint.
+    None when the user already accepted or dismissed that fingerprint, from any Artifact: it does not open again. None
+    too when an Artifact recorded no earlier than this one has it open, so a job run again under an older pipeline does
+    not push out a newer proposal. An open one from an older Artifact is superseded by the new one, so reprocessing
+    leaves one open per fingerprint. Repeated evidence is kept once, and x-text with LF line ends.
     """
     suggestion = {
         "id": str(uuid.uuid4()),
         "source_artifact_id": artifact_id,
         "action": action,
         "proposed": proposed,
-        "evidence": list(evidence),
+        "evidence": _each_once(evidence),
         "fingerprint": fingerprint,
         "state": "open",
     }
@@ -62,17 +97,24 @@ def propose(
     violations = validate("suggestion/suggestion", suggestion)
     if violations or action not in KNOWN_ACTIONS:
         raise InvalidSuggestion(f"this Hub cannot propose that {action}: {violations}")
-    if store.get(tx, EntityRef(Entity.ARTIFACT, artifact_id)) is None:
+    artifact = store.get(tx, EntityRef(Entity.ARTIFACT, artifact_id))
+    if artifact is None:
         raise InvalidSuggestion(f"no Artifact {artifact_id} is recorded")
+    missing = [anchor for anchor in _anchors(suggestion["evidence"]) if not refs.exists(tx, anchor)]
+    if missing:
+        raise InvalidSuggestion(f"the evidence rests on what the Hub does not hold: {missing}")
+    suggestion["proposed"] = _with_lf_text(action, proposed)
     same = [json.loads(data) for (data,) in tx.execute("SELECT data FROM suggestions WHERE fingerprint = ? ORDER BY rowid", (fingerprint,))]
     if any(row["state"] in DECIDED for row in same):
         return None
-    for row in same:
-        if row["state"] == "open" and row["source_artifact_id"] == artifact_id:
+    still_open = [row for row in same if row["state"] == "open"]
+    for row in still_open:
+        if row["source_artifact_id"] == artifact_id:
             return row
-    for row in same:
-        if row["state"] == "open":
-            store.write(tx, EntityRef(Entity.SUGGESTION, row["id"]), {**row, "state": "superseded"})
+    if any(_recorded_no_earlier(tx, row["source_artifact_id"], _recorded_at(artifact)) for row in still_open):
+        return None
+    for row in still_open:
+        store.write(tx, EntityRef(Entity.SUGGESTION, row["id"]), {**row, "state": "superseded"})
     store.write(tx, EntityRef(Entity.SUGGESTION, suggestion["id"]), suggestion)
     return suggestion
 
@@ -92,8 +134,7 @@ def _join_locators(tx: Tx, relation: dict, locators: list[dict]) -> None:
     ref = EntityRef(Entity.RELATION, relation["id"])
     stored = store.get(tx, ref)
     current = relation if stored is None else stored
-    had = current.get("locators", [])
-    joined = had + [locator for locator in locators if locator not in had]
+    joined = _each_once([*current.get("locators", []), *locators])
     updated = {**current, "locators": joined} if joined else current
     if updated != stored:
         store.write(tx, ref, updated)
@@ -142,7 +183,7 @@ def _accept_patch_item(tx: Tx, suggestion: dict, edits: dict, mutation: dict, de
     if not all(refs.exists(tx, anchor) for anchor in anchors):
         return Rejected(Reason.LINK_TARGET_MISSING)
     patched = patch(tx, item_patch, device)
-    if not isinstance(patched, Rejected):
+    if isinstance(patched, Applied) or (isinstance(patched, Conflict) and patched.applied_fields):
         _copy_evidence(tx, f"item:{proposed['id']}", anchors)
     return patched
 
