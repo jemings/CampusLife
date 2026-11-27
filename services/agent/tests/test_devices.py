@@ -76,7 +76,7 @@ UNAUTHORIZED = Refusal(RefusalCode.UNAUTHORIZED)
         pytest.param(None, id="no Authorization: Bearer"),
         pytest.param("not a token", id="characters a token never holds"),
         pytest.param("\ud800", id="text that is not even UTF-8"),
-        pytest.param("A" * 513, id="longer than a token is"),
+        pytest.param("A" * 513, id="longer than any token the Hub issues"),
         pytest.param("A" * 43, id="a token the Hub never issued"),
     ],
 )
@@ -122,6 +122,25 @@ async def test_every_authenticated_request_starts_the_dormant_period_over(tmp_pa
         b.clock.advance(days=89)
         assert await b.authenticate(paired.token) == paired.device_id
         b.clock.advance(days=89)
+        assert await b.authenticate(paired.token) == paired.device_id
+
+
+async def test_a_pending_token_replaced_while_it_was_judged_is_unauthorized(tmp_path, monkeypatch):
+    """authenticate answers from the judgment it makes again in the write, not from the read before it: here the
+    client asked for another token between the two, which ended the one being judged."""
+    async with bench(tmp_path) as b:
+        paired = await b.paired()
+        first = await b.reissue(paired.device_id)
+        read = b.core.db.read
+
+        async def read_then_reissue(fn):
+            judged = await read(fn)
+            monkeypatch.setattr(b.core.db, "read", read)
+            await b.reissue(paired.device_id)
+            return judged
+
+        monkeypatch.setattr(b.core.db, "read", read_then_reissue)
+        assert await b.authenticate(first.token) == UNAUTHORIZED
         assert await b.authenticate(paired.token) == paired.device_id
 
 
@@ -345,6 +364,15 @@ async def test_marking_dormant_turns_every_device_unseen_past_the_period_dormant
         assert await devices.mark_dormant(b.core, now=b.clock(), dormant_after=timedelta(days=90)) == []
 
 
+async def test_marking_dormant_leaves_a_device_unseen_for_exactly_the_period_active(tmp_path):
+    async with bench(tmp_path) as b:
+        paired = await b.paired()
+        b.clock.advance(days=90)
+        assert await devices.mark_dormant(b.core, now=b.clock(), dormant_after=timedelta(days=90)) == []
+        b.clock.advance(milliseconds=1)
+        assert await devices.mark_dormant(b.core, now=b.clock(), dormant_after=timedelta(days=90)) == [paired.device_id]
+
+
 async def test_marking_dormant_leaves_the_hubs_own_device_active(tmp_path):
     async with bench(tmp_path) as b:
         far_future = b.clock.advance(days=3650)
@@ -399,6 +427,17 @@ async def test_a_secret_used_twice_is_refused_and_the_device_it_paired_is_revoke
         assert revokes == [(first.device_id, {"reason": "pairing_secret_reused"})]
 
 
+async def test_a_secret_reused_after_the_next_offer_still_revokes_the_device_it_paired(tmp_path):
+    """The usual order: the phone pairs, then the user offers a secret for the tablet."""
+    async with bench(tmp_path) as b:
+        phone_offer = await b.offer()
+        phone = await b.pair(phone_offer.secret)
+        await b.offer()
+
+        assert await b.pair(phone_offer.secret) == UNAUTHORIZED
+        assert await b.authenticate(phone.token) == REVOKED
+
+
 async def test_a_used_secret_is_caught_after_the_hub_restarts(tmp_path):
     async with bench(tmp_path) as b:
         offer = await b.offer()
@@ -450,6 +489,18 @@ async def test_setting_the_wall_clock_back_does_not_stretch_the_limit(tmp_path):
         b.clock.set_wall(b.clock() - timedelta(hours=1))
 
         assert await b.pair(UNKNOWN_SECRET) == Refusal(RefusalCode.UNAUTHORIZED, retry_after=600)
+
+
+async def test_attempts_refused_without_judging_do_not_count_as_failures(tmp_path):
+    async with bench(tmp_path) as b:
+        for _ in range(10):
+            await b.pair(UNKNOWN_SECRET)
+        b.clock.advance(minutes=9)
+        for _ in range(10):
+            assert await b.pair(UNKNOWN_SECRET) == Refusal(RefusalCode.UNAUTHORIZED, retry_after=60)
+        b.clock.advance(minutes=1)
+
+        assert isinstance(await b.paired(), devices.Paired)
 
 
 async def test_failed_pairings_spread_over_more_than_ten_minutes_are_not_limited(tmp_path):
@@ -515,6 +566,16 @@ async def test_a_reissued_token_leaves_the_old_one_working_until_its_own_first_u
         assert await b.authenticate(reissued.token) == paired.device_id
         logged = [(entry.at, entry.event, entry.subject) for entry in await b.core.db.read(audit.entries) if entry.event != AuditEvent.PAIR]
         assert logged == [("2026-03-02T09:01:00.000Z", AuditEvent.REISSUE, paired.device_id), ("2026-03-02T09:02:00.000Z", AuditEvent.TOKEN_RETIRED, paired.device_id)]
+
+
+async def test_a_reissued_tokens_first_use_counts_as_being_seen(tmp_path):
+    async with bench(tmp_path) as b:
+        paired = await b.paired()
+        reissued = await b.reissue(paired.device_id)
+        b.clock.advance(days=1)
+
+        await b.authenticate(reissued.token)
+        assert (await b.device(paired.device_id)).last_seen_at == "2026-03-03T09:00:00.000Z"
 
 
 async def test_asking_again_for_a_token_issues_another_and_ends_the_unused_one(tmp_path):
