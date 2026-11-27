@@ -18,7 +18,7 @@ from . import store
 from .blobs import has_blob
 from .clock import instant, now_instant
 from .db import Snapshot, Tx
-from .jobs import Job
+from .jobs import Job, JobState
 from .store import Entity, EntityRef
 
 
@@ -32,10 +32,15 @@ def made_by(runner: Tx | Snapshot, job_key: str, artifact_type: str) -> dict | N
 
 
 def record(tx: Tx, job: Job, artifact_type: str, content_blob: str, *, now: datetime | None = None) -> dict:
-    """The job's Artifact of artifact_type: the one recorded before, or a new one holding content_blob."""
+    """The job's Artifact of artifact_type: the one recorded before, or a new one holding content_blob.
+
+    A cancelled job records nothing: a purge cancels the jobs on what it removes, and one still running then must
+    not bring back what the purge took."""
     earlier = made_by(tx, job.job_key, artifact_type)
     if earlier is not None:
         return earlier
+    if tx.execute("SELECT 1 FROM processing_jobs WHERE id = ? AND state = ?", (job.id, JobState.CANCELLED.value)).fetchone():
+        raise InvalidArtifact(f"job {job.id} was cancelled; what it made is not recorded")
     pipeline = job.pipeline
     models = {"provider": pipeline.provider, "model": pipeline.model, "prompt_version": pipeline.prompt_version}
     artifact = {
