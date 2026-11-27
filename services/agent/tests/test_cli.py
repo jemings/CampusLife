@@ -477,6 +477,20 @@ def test_serve_needs_an_initialised_root_and_a_free_port(tmp_path, capsys):
     assert signal.getsignal(signal.SIGINT) is handlers
 
 
+def test_a_serve_refused_for_want_of_a_hub_leaves_the_empty_root_empty_for_restore(tmp_path, capsys):
+    source_root, restored, drive = tmp_path / "CampusLife", tmp_path / "Restored", tmp_path / "drive"
+    hub(source_root, "init")
+    assert hub(source_root, "backup", "--to", str(drive)) == 0
+    restored.mkdir()
+    capsys.readouterr()
+
+    assert hub(restored, "serve", "--admin-port", "0") == 1
+    assert "no Hub at" in capsys.readouterr().err
+    assert list(restored.iterdir()) == []
+
+    assert hub(restored, "restore", "--from", str(drive)) == 0
+
+
 @contextmanager
 def program_on_the_port(root, *, token=None, answer=None, stall=None, hello_status=200):
     """An HTTP server on 127.0.0.1 whose port root's admin.port names, recording each request it gets. With token it
