@@ -30,11 +30,6 @@ android {
             isIncludeAndroidResources = true
         }
     }
-
-    lint {
-        textReport = true
-        textOutput = file("stdout")
-    }
 }
 
 dependencies {
