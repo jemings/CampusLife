@@ -8,12 +8,14 @@ asks plan for each Attachment of a Capture, and the end of identify asks it agai
 Blob, so a Capture that comes before, during or after the Blob's identify reaches the same jobs. Jobs carry no
 Attachment: the same Blob read by the same extractor with the same params is one job (D2).
 
-Both handlers run the child through running.run_child in work/<job id>/, which they empty before and after, and
-store the body the Hub built (bodies) as a Blob of its own, the content of the job's Artifact.
+Both handlers run the child through running.run_child in work/<job id>/, which they empty before and after. The
+Hub builds and validates the body (bodies) off the event loop, as the child's work is, and stores it as a Blob of its
+own, staged in the Blob store and never in the child's directory; that Blob is the content of the job's Artifact.
 """
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from collections.abc import Callable, Sequence
 from datetime import timedelta
@@ -106,14 +108,12 @@ class Files:
             if not isinstance(judged, Answer):
                 return judged
             try:
-                stored, record = made(sha256, judged.result)
+                stored, record = await asyncio.to_thread(made, sha256, judged.result)
             except bodies.TooLarge as error:
                 return unsafe(str(error))
             except bodies.Rejected as error:
                 return Failed(f"the child's result breaks the contract: {error}")
-            body = work / "body.json"
-            body.write_bytes(stored)
-            content = await context.blobs.put_file(body)
+            content = await context.blobs.put_bytes(stored)
             await context.db.write(lambda tx: record(tx, content.sha256))
             return Succeeded(OutcomeCode.PARTIAL if judged.partial else None)
         finally:
