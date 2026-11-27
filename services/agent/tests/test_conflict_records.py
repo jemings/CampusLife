@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from campuslife_contracts import text_hash
-from campuslife_hub import mutations, store
+from campuslife_hub import conflict_records, mutations, store
 from campuslife_hub.store import Entity, EntityRef
 from test_capture_commit import apply, blob_store, device, feed, new_id
 from test_user_data import DUE, ITEM, OTHER_ITEM, TAG, entity_with, op, outcome, p13, patch, patch_item, rows, task
@@ -185,3 +185,20 @@ async def test_a_resend_judged_again_does_not_open_a_resolved_record(db, device)
     assert again["conflict_record_ids"] == [late["mutation_id"]]
     assert await feed(db) == before
 
+
+async def test_the_strictest_cloud_policy_an_open_record_of_an_attachment_submitted_is_read_for_provider_calls(db, device, blob_store, tmp_path):
+    """D24 decision 11: while a stricter policy waits in an open record, the Hub's value may be looser than the user's
+    wish, so #8 takes the minimum of the two; a resolved record no longer asks for anything."""
+    attachment = await entity_with(db, device, blob_store, tmp_path, "attachment")
+    other = await entity_with(db, device, blob_store, tmp_path, "attachment")
+    await apply(db, device, patch("attachment", attachment, cloud_policy={"from": "local_only", "to": "cloud_allowed"}))
+    asked = [patch("attachment", attachment, cloud_policy={"from": "local_only", "to": policy}) for policy in ("local_only", "blocked")]
+    await apply(db, device, *asked)
+    settled = {"id": asked[1]["mutation_id"], "entity_ref": f"attachment:{attachment}", "resolved": {"at": "2026-03-03T09:15:00.000Z", "mutation_id": new_id()}}
+
+    before = await db.read(lambda snap: conflict_records.strictest_submitted_cloud_policy(snap, attachment))
+    await db.write(lambda tx: store.write(tx, EntityRef(Entity.CONFLICT_RECORD, settled["id"]), settled))
+    after = await db.read(lambda snap: conflict_records.strictest_submitted_cloud_policy(snap, attachment))
+    untouched = await db.read(lambda snap: conflict_records.strictest_submitted_cloud_policy(snap, other))
+
+    assert (before, after, untouched) == ("blocked", "local_only", None)
