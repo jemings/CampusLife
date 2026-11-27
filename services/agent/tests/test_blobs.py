@@ -66,6 +66,24 @@ async def test_an_unknown_blob_is_absent(db):
     assert not await db.read(lambda snap: has_blob(snap, ABC_SHA256))
 
 
+async def test_opening_a_stored_blob_gives_it_and_a_handle_on_its_bytes(tmp_path, blob_store):
+    await blob_store.put_file(source(tmp_path, "a.txt", b"abc"))
+
+    stored, handle = await blob_store.open_blob(ABC_SHA256)
+    with handle:
+        assert (stored, handle.read()) == (StoredBlob(ABC_SHA256, 3), b"abc")
+
+
+async def test_opening_a_blob_the_hub_does_not_store_or_whose_file_is_gone_gives_none(tmp_path, blob_store):
+    await blob_store.put_file(source(tmp_path, "a.txt", b"abc"))
+    final = blob_store.path_of(ABC_SHA256)
+    os.chmod(final, stat.S_IRUSR | stat.S_IWUSR)
+    final.unlink()
+
+    assert await blob_store.open_blob(ABC_SHA256) is None
+    assert await blob_store.open_blob(EMPTY_SHA256) is None
+
+
 async def test_a_missing_source_leaves_nothing_behind(tmp_path, blob_store):
     with pytest.raises(FileNotFoundError):
         await blob_store.put_file(tmp_path / "nope")
