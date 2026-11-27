@@ -104,6 +104,18 @@ async def test_once_failed_pairings_are_limited_the_refusal_says_when_to_try_aga
     assert (limited.status_code, limited.json()["code"], limited.headers["Retry-After"]) == (401, "unauthorized", "360")
 
 
+@pytest.mark.parametrize(("size", "status"), [(4096, 200), (4097, 400)])
+async def test_a_pair_body_is_read_up_to_exactly_4_kib(tmp_path, size, status):
+    async with bench(tmp_path) as b, b.sync() as client:
+        offer = await b.offer()
+        body = json.dumps(pair_body(offer.secret))
+        padded = body + " " * (size - len(body.encode()))
+
+        answer = await client.post("/v1/pair", content=padded.encode(), headers={"Content-Type": "application/json"})
+
+    assert (len(padded.encode()), answer.status_code) == (size, status)
+
+
 async def test_a_pair_body_over_4_kib_is_refused_unread(tmp_path):
     async with bench(tmp_path) as b, b.sync() as client:
         offer = await b.offer()
@@ -254,6 +266,17 @@ async def test_a_reissued_token_works_beside_the_old_one_until_its_first_use_end
         assert (await changes_with(client, reissued.json()["token"])).status_code == 200
         ended = await changes_with(client, paired["token"])
         assert (ended.status_code, ended.json()["code"]) == (401, "unauthorized")
+
+
+async def test_a_reissue_is_audited_at_the_hubs_time(tmp_path):
+    async with bench(tmp_path) as b, b.sync() as client:
+        paired = await paired_over(client, b)
+        b.clock.advance(hours=2)
+
+        assert (await reissue(client, paired["token"])).status_code == 200
+
+        logged = [(entry.at, entry.subject) for entry in await b.core.db.read(audit.entries) if entry.event == AuditEvent.REISSUE]
+        assert logged == [("2026-03-02T11:00:00.000Z", paired["device_id"])]
 
 
 async def test_asking_again_for_a_token_gives_another_and_the_unused_one_stops_working(tmp_path):
