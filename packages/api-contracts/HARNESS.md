@@ -47,13 +47,16 @@ uv run campuslife-contracts compare fixtures/valid <out>
 ```
 
 - `fixtures/valid` 아래 모든 `*.json`에 대해 `<out>`의 같은 상대 경로 파일을 읽어 JSON 값으로 비교합니다. `<out>`에만 있는 파일은 무시합니다.
-- 같음의 정의는 `campuslife_contracts.canonical_json(value) -> bytes`입니다: 멤버를 코드 포인트 순으로 정렬하고 공백 없이 UTF-8로 쓰며, 숫자는 십진 값 기준 정규형(`1`과 `1.0`, `0`과 `-0`이 같음), 문자열은 코드 포인트 그대로, 없음과 `null`은 다릅니다. 두 파일의 정규 바이트가 같으면 통과이고, 다르면 비교기가 다른 위치를 찾아 보고합니다. Hub도 같은 함수로 `id_reuse`의 "같은 내용"을 판정합니다.
+- 같음의 정의는 `campuslife_contracts.canonical_json(value) -> bytes`입니다: 멤버를 코드 포인트 순으로 정렬하고 공백 없이 UTF-8로 쓰며, 숫자는 십진 값 기준 정규형(`1`과 `1.0`, `0`과 `-0`이 같음. 단 아래 정수 자리 검사가 따로 있음), 문자열은 코드 포인트 그대로, 없음과 `null`은 다릅니다. 두 파일의 정규 바이트가 같으면 통과이고, 다르면 비교기가 다른 위치를 찾아 보고합니다. Hub도 같은 함수로 `id_reuse`의 "같은 내용"을 판정합니다.
+- 값이 모두 같으면 비교기는 출력을 Hub와 같은 판정기(`Contract.validate`)로도 검사합니다. 스키마는 `fixtures/valid/<schema_id>/`의 `<schema_id>`입니다. 소수점이나 지수로 쓴 숫자(`0.0`, `1E0`, `1.0e0`)는 `json.loads`처럼 float로, 그 밖의 숫자는 int로 넘기므로, 스키마의 `type: integer` 자리(`x-int64-text` 문자열 제외)와 규칙 키워드가 정하는 정수 자리(patch `set`의 `to`·`from` 등)에 그렇게 쓰면 같은 값이어도 불일치입니다. Hub가 그런 요청을 `invalid_request`로 거부하기 때문입니다. `type: number` 자리(`credits: 2.5`, `box`)는 어떤 표기든 값만 봅니다. `suggestion.accept`의 `edits."fields.<key>"`처럼 Hub의 applier가 Suggestion을 보고서야 타입을 정하는 자리는 contract가 판정하지 못하므로 이 검사 밖입니다.
+- 이 검사는 EXPECTED_DIR가 contract의 `fixtures/valid` 또는 그 아래 디렉터리일 때 켜집니다(심볼릭 링크와 `.`도 실제 경로로 찾습니다). 못 찾으면 꺼지고 표준 오류에 `integer spelling check off: <이유>` 한 줄을 냅니다(종료 코드는 그대로). schema 파일이 깨졌으면 종료 코드 2입니다.
 - 종료 코드: `0` 모두 같음, `1` 불일치 있음(깨졌거나 너무 깊이 중첩된 **출력** 파일 포함), `2` 사용법 오류(디렉터리 없음, `fixtures/valid`에 `*.json`이 하나도 없음, 깨졌거나 너무 깊이 중첩된 **golden** 파일).
 - 불일치는 표준 출력에 한 줄씩 나옵니다.
   - `common/instant/utc_millis.json: missing output`
   - `common/box/inner.json#/0: expected 0.1, got 0.10000000149011612`
   - `common/error/id_reuse.json#/details: unexpected member object of 0`
   - `common/error/id_reuse.json: not strict JSON: duplicate member 'code'`
+  - `item/item/course.json#/rev: violates the contract: /rev type (written as 1.7e1)`
 - 위치는 JSON Pointer(RFC 6901)입니다.
 
 ## cloud_policy vector (A6)
