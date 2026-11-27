@@ -81,7 +81,11 @@ uv run campuslife-contracts compare fixtures/valid <out>
 
 텍스트 계열 Artifact(지금은 `extraction`, 이후 #8의 type)의 `content_blob`은 `artifact/body` envelope JSON `{v, blocks:[{id, block_type, text?, payload?, refs:[Locator]}]}`입니다(D13, #5 결정 8). `artifact_type`마다 본문 스키마가 envelope을 좁히며, 지금은 `extraction`(`artifact/extraction`)이 있습니다. 하네스는 두 스키마를 다른 Hub 송신 모양처럼 왕복하고 forward를 디코드합니다.
 
-`rendition`은 envelope을 쓰지 않습니다. `content_blob`이 렌디션 PDF Blob 그 자체이고, 필기 레이어가 고정되는 Blob도 이것입니다(D12). 무엇의 렌디션인지는 `artifact_type`, `subject_ref`(`blob:<원본>`), `pipeline_version`이 말합니다. 어느 type이 JSON 본문 스키마를 갖는지는 `tests/test_schema_conventions.py`의 `ARTIFACT_BODY_SCHEMAS`가 고정합니다.
+`rendition`은 envelope을 쓰지 않습니다. `content_blob`이 렌디션 PDF Blob 그 자체이고, 필기 레이어가 고정되는 Blob도 이것입니다(D12). 무엇의 렌디션인지는 `artifact_type`, `subject_ref`(`blob:<원본>`), `pipeline_version`이 말합니다.
+
+`web_snapshot`도 envelope을 쓰지 않습니다. `content_blob`은 Hub가 `url`이 있는 Capture(subject `capture:<id>`)의 페이지를 가져와 받은 응답 본문 바이트 그대로이고, `web_snapshot` Locator가 가리키는 Blob도 이것입니다(D13). 입력 Blob이 없으므로 `input_hashes`는 빈 배열입니다. 가져온 시각은 `created_at`, 리다이렉트 뒤 최종 URL과 매개변수를 뺀 media type은 Hub 소유 멤버 `fetched{final_url, media_type}`에 있고, 200 응답만 저장하므로 상태 코드는 없습니다. `artifact_type`이 `web_snapshot`이면 `fetched`가 필수입니다. 다른 객체처럼 `fetched`도 열려 있어 모르는 멤버를 무시합니다.
+
+어느 type이 JSON 본문 스키마를 갖는지는 `tests/test_schema_conventions.py`의 `ARTIFACT_BODY_SCHEMAS`가 고정하고, 바이트 자체가 본문인 type(`rendition`, `web_snapshot`)은 `BYTES_AS_BODY`가 고정합니다.
 
 - `blocks`의 순서가 ordinal(0부터)입니다. `refs`는 블록의 근거 위치이고, 비어 있으면 근거 없는 블록으로 표시합니다. 모르는 `block_type`은 `text`만으로 표시하고 `payload`는 해석하지 않습니다.
 - 본문 Blob의 바이트는 `canonical_json(body)`입니다(비교기와 같은 함수). 그래서 같은 본문은 같은 Blob이고, 그 Blob을 입력으로 받는 job(#8)의 job_key가 흔들리지 않습니다. Hub가 쓸 때 지킵니다(#5 PR2).
