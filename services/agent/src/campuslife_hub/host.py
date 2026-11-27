@@ -41,6 +41,7 @@ from .admin_auth import AdminAuth
 from .backup import BackupSettings
 from .core import Core, open_core, safe_data_root
 from .data_root import Layout
+from .devices import DeviceSettings
 from .job_runner import STOP_GRACE, JobContext, JobRegistry, JobRunner
 from .mutations import forget_old_results
 from .redaction import RedactingFormatter, Redactor, file_handler
@@ -71,6 +72,7 @@ class HostConfig:
     sync_keep_alive: timedelta = timedelta(seconds=120)
     """How long the sync listener keeps an idle connection open. tailscale serve reuses its connections to the Hub, and
     one the Hub closed under it fails the request serve sends on it with a 502 (#4 decision 6)."""
+    devices: DeviceSettings = DeviceSettings()
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,7 @@ class Hosted:
     core: Core
     runner: JobRunner
     redactor: Redactor
+    devices: DeviceSettings = DeviceSettings()
 
 
 type SyncAppFactory = Callable[[Hosted], ASGIApp]
@@ -224,7 +227,7 @@ async def serve(
         listeners = [_listener(create_app(admin, port=admin_port, routers=admin_routers), config)]
         if sync_app is not None:
             sockets.append(_bind(config.sync_port))
-            listeners.append(_listener(sync_app(Hosted(core, runner, redactor)), config, keep_alive=config.sync_keep_alive))
+            listeners.append(_listener(sync_app(Hosted(core, runner, redactor, config.devices)), config, keep_alive=config.sync_keep_alive))
         tasks = [asyncio.create_task(listener.serve(sockets=[bound])) for listener, bound in zip(listeners, sockets, strict=True)]
         tasks += [
             asyncio.create_task(_keep_running(runner, stopping, record, config)),

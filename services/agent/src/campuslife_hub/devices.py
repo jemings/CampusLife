@@ -100,6 +100,14 @@ _NOT_ONE_LINE = re.compile("[" + _ONE_LINE.removeprefix("^[^").removesuffix("]*$
 """A character the contract's one_line text refuses."""
 
 
+@dataclass(frozen=True)
+class DeviceSettings:
+    public_url: str | None = None
+    """The hub_url a pairing offer hands out (serve --public-url, #19 decision 4); without it there is no offer."""
+    dormant_after: timedelta = DEFAULT_DORMANT_AFTER
+    """serve --dormant-after-days."""
+
+
 class NoPublicUrl(Exception):
     pass
 
