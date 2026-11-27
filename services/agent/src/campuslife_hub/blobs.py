@@ -276,6 +276,9 @@ class BlobStore:
         self._files = files
         self._chunk_size = chunk_size
         self._free_space = free_space
+        self.removals = asyncio.Lock()
+        """Held while a Blob file leaves blobs/ (collection, purge) and by a backup, which copies the files its
+        snapshot names, so none of them goes between the snapshot and the copy."""
 
     def path_of(self, sha256: str) -> Path:
         return self._blobs_dir / sha256[0:2] / sha256[2:4] / sha256
@@ -554,12 +557,13 @@ class BlobStore:
             self._files.replace(trash, final)
             os.chmod(final, READ_ONLY)
 
-    async def _collect(self, sha256: str, cutoff: str) -> list[KeptLeftover]:
+    async def _take_out(self, sha256: str, removable: Callable[[Tx], bool]) -> list[KeptLeftover]:
+        """Remove the Blob's row and file while `removable` holds in the transaction that moves the file out."""
         final = self.path_of(sha256)
         trash = self._new_staging_path()
 
         def take(tx: Tx) -> bool:
-            if tx.execute(f"{COLLECTABLE} AND sha256 = ?", (cutoff, sha256)).fetchone() is None:
+            if not removable(tx):
                 return False
             tx.execute("DELETE FROM blobs WHERE sha256 = ?", (sha256,))
             if not final.exists():
@@ -591,8 +595,20 @@ class BlobStore:
         collection.
         """
         cutoff = instant(now - UNCOMMITTED_LIFETIME)
-        candidates = await self._db.read(lambda snap: [sha256 for (sha256,) in snap.execute(COLLECTABLE, (cutoff,))])
-        kept = []
-        for sha256 in candidates:
-            kept += await self._collect(sha256, cutoff)
-        return kept
+
+        def still_collectable(sha256: str) -> Callable[[Tx], bool]:
+            return lambda tx: tx.execute(f"{COLLECTABLE} AND sha256 = ?", (cutoff, sha256)).fetchone() is not None
+
+        async with self.removals:
+            candidates = await self._db.read(lambda snap: [sha256 for (sha256,) in snap.execute(COLLECTABLE, (cutoff,))])
+            kept = []
+            for sha256 in candidates:
+                kept += await self._take_out(sha256, still_collectable(sha256))
+            return kept
+
+    async def discard(self, sha256: str) -> list[KeptLeftover]:
+        """Remove the file of a Blob whose row a purge deleted (U2); a Blob stored again since keeps its file.
+
+        Finding the file gone already is done, so a purge finished again after a crash ends the same way. The caller
+        holds `removals`."""
+        return await self._take_out(sha256, lambda tx: not has_blob(tx, sha256))
