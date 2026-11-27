@@ -41,6 +41,11 @@ class BlobFiles(private val dir: File) {
         }
     }
 
+    /** Deletes the copy of [sha256], if there is one. */
+    fun drop(sha256: String) {
+        file(sha256).delete()
+    }
+
     private companion object {
         const val BUFFER_BYTES = 64 * 1024
     }

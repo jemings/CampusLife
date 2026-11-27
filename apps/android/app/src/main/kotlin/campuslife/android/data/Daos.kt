@@ -34,6 +34,17 @@ interface OutboxDao {
     )
     fun heldWithEveryBlobStored(): List<OutboxRow>
 
+    @Query(
+        """
+        SELECT * FROM mutation_outbox WHERE state = 'held' AND EXISTS (
+            SELECT 1 FROM local_attachment a
+            WHERE a.capture_id = mutation_outbox.entity_id
+                AND NOT EXISTS (SELECT 1 FROM blob_transfer b WHERE b.sha256 = a.sha256)
+        ) ORDER BY seq
+        """,
+    )
+    fun heldWithLostBlob(): List<OutboxRow>
+
     @Query("SELECT * FROM mutation_outbox WHERE state = :state ORDER BY seq")
     fun inState(state: String): List<OutboxRow>
 
@@ -120,6 +131,20 @@ interface CaptureDao {
 
     @Query("SELECT COUNT(*) FROM local_attachment WHERE capture_id = :captureId")
     fun attachmentCount(captureId: String): Int
+
+    /** Whether a Capture still open, or whose capture.commit is held or pending, has a Blob of [sha256]. */
+    @Query(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM local_attachment a JOIN local_capture c ON c.id = a.capture_id
+            WHERE a.sha256 = :sha256 AND (c.seal = 'open' OR EXISTS (
+                SELECT 1 FROM mutation_outbox o
+                WHERE o.entity = 'capture' AND o.entity_id = c.id AND o.state IN ('held', 'pending')
+            ))
+        )
+        """,
+    )
+    fun stillNeed(sha256: String): Boolean
 
     @Query(
         """

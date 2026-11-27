@@ -35,10 +35,16 @@ internal fun CampusLifeDatabase.enqueue(mutation: Mutation, state: TransferState
     )
 }
 
-/** Moves every held capture.commit whose Blobs are all stored on to pending (decision 6). */
-internal fun CampusLifeDatabase.promoteHeldCommits() {
+/**
+ * Moves every held capture.commit on: to rejected when a Blob of it has no row left, since its copy is
+ * lost; to pending when its Blobs are all stored (decision 6).
+ */
+internal fun CampusLifeDatabase.settleHeldCommits() {
+    for (row in outbox().heldWithLostBlob()) {
+        outbox().move(row.seq, TransferState.HELD.after(OutboxEvent.BLOB_LOST).column)
+    }
     for (row in outbox().heldWithEveryBlobStored()) {
-        outbox().move(row.seq, TransferState.of(row.state).after(OutboxEvent.BLOBS_STORED).column)
+        outbox().move(row.seq, TransferState.HELD.after(OutboxEvent.BLOBS_STORED).column)
     }
 }
 

@@ -101,7 +101,7 @@ class CaptureOutbox(
         db.captures().setSeal(captureId, SEALED)
         val commit = draft.copy(attachments = attachments, timeline = timeline)
         db.enqueue(CommitCapture(UUID.randomUUID().toString(), commit), TransferState.HELD)
-        db.promoteHeldCommits()
+        db.settleHeldCommits()
     }
 
     fun observe(): Flow<List<CaptureView>> = db.captures().observeSummaries().map { rows -> rows.map(::view) }

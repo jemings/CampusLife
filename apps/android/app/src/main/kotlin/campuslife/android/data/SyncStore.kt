@@ -22,7 +22,10 @@ class SyncStore(
     fun uploads(): List<Upload> =
         db.blobs().unstored().map { Upload(it.sha256, it.size, TransferState.of(it.state), files.file(it.sha256)) }
 
-    fun onUpload(sha256: String, event: BlobEvent) = db.inTransaction { moveBlob(sha256, event) }
+    fun onUpload(sha256: String, event: BlobEvent) {
+        if (event == BlobEvent.COPY_LOST) return lose(sha256)
+        db.inTransaction { moveBlob(sha256, event) }
+    }
 
     /** The next batch of POST /v1/mutations: pending Mutations in the order they were made. */
     fun nextBatch(max: Int = MAX_BATCH): List<Outgoing> =
@@ -72,8 +75,14 @@ class SyncStore(
                 }
             }
             OutboxEvent.BLOBS_GONE -> {
-                missing.filterNot(files::has).forEach(db.blobs()::remove)
                 db.outbox().end(row.seq, to.column, encode(result), null)
+                for (sha256 in missing) {
+                    if (files.has(sha256) || db.captures().stillNeed(sha256)) {
+                        moveBlob(sha256, BlobEvent.HUB_LOST_BLOB)
+                    } else {
+                        db.blobs().remove(sha256)
+                    }
+                }
             }
             OutboxEvent.APPLIED, OutboxEvent.CONFLICTED, OutboxEvent.PARTLY_APPLIED ->
                 db.outbox().end(row.seq, to.column, encode(result), clock.millis())
@@ -92,7 +101,18 @@ class SyncStore(
         val to = TransferState.of(row.state).after(event)
         if (to.column == row.state) return
         db.blobs().move(sha256, to.column)
-        if (to == TransferState.STORED) db.promoteHeldCommits()
+        if (to == TransferState.STORED) db.settleHeldCommits()
+    }
+
+    /** The copy of a Blob the Hub does not have yet is gone or holds other bytes: the file and its row go. */
+    private fun lose(sha256: String) {
+        if (db.blobs().get(sha256)?.state.let { it == null || it == TransferState.STORED.column }) return
+        files.drop(sha256)
+        db.inTransaction {
+            if (db.blobs().get(sha256)?.state == TransferState.STORED.column) return@inTransaction
+            db.blobs().remove(sha256)
+            db.settleHeldCommits()
+        }
     }
 
     private fun moveAll(state: TransferState, event: OutboxEvent) {
