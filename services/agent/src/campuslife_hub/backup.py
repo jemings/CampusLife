@@ -53,6 +53,7 @@ BLOBS = "blobs"
 SNAPSHOT = "campuslife.sqlite3"
 MANIFEST = "manifest.json"
 PARTIAL = ".part"
+GENERATION_FORMAT = "%Y%m%dT%H%M%S%fZ"
 GENERATION_NAME = re.compile(r"\d{8}T\d{12}Z")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 WRITABLE = stat.S_IRUSR | stat.S_IWUSR
@@ -236,6 +237,18 @@ def _prune(target: Path, keep: int) -> tuple[str, ...]:
     return tuple(name for name in finished if name not in kept)
 
 
+def _new_name(target: Path, started: datetime) -> str:
+    """The generation's name: when it started, in UTC to the microsecond, and after every name on the drive, so
+    pruning by name keeps the newest even after the clock went back or two backups started within one tick."""
+    name = started.astimezone(UTC).strftime(GENERATION_FORMAT)
+    directory = target / GENERATIONS
+    taken = sorted(entry.name for entry in directory.iterdir() if GENERATION_NAME.fullmatch(entry.name)) if directory.is_dir() else []
+    if taken and name <= taken[-1]:
+        after = datetime.strptime(taken[-1], GENERATION_FORMAT).replace(tzinfo=UTC) + timedelta(microseconds=1)
+        name = after.strftime(GENERATION_FORMAT)
+    return name
+
+
 def _record(tx: Tx, name: str, target: Path, finished_at: str, held: list[str], copied: int) -> None:
     tx.execute(
         "INSERT INTO backups (generation, target, finished_at, blob_count, copied_count) VALUES (?, ?, ?, ?, ?)",
@@ -263,11 +276,9 @@ async def back_up(core: Core, target: Path, *, keep: int = DEFAULT_KEEP, clock: 
     if target.is_relative_to(core.layout.root.resolve()):
         raise BackupRefused(f"{target} is inside the data root {core.layout.root}; back up to another drive")
     started = clock()
-    name = started.astimezone(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    directory = target / GENERATIONS / name
     async with core.blobs.removals:
-        if directory.exists():
-            raise BackupRefused(f"{directory} exists already")
+        name = _new_name(target, started)
+        directory = target / GENERATIONS / name
         await asyncio.to_thread(directory.mkdir, parents=True)
         snapshot = await asyncio.to_thread(_snapshot, core.layout.database, directory / SNAPSHOT)
         copied, missing = await asyncio.to_thread(_copy_blobs, core.blobs, target / BLOBS, snapshot.blobs)
