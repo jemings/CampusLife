@@ -308,11 +308,12 @@ def _fitting_blocks(validator, schema, instance) -> Iterator[tuple[int, dict]]:
 
 
 def _block_id(validator, enabled, instance, schema):
-    """A block's id is sha256(canonical_json([blob, extractor id, extractor version, ordinal])), the ordinal its index."""
+    """A block's id is sha256(canonical_json([blob, extractor id, extractor version, extractor params, ordinal])), the
+    ordinal its index."""
     for ordinal, block in _fitting_blocks(validator, schema, instance):
         extractor = instance["extractor"]
-        derived = [instance["blob"], extractor.get("id"), extractor.get("version"), ordinal]
-        if not isinstance(block.get("id"), str) or not all(isinstance(part, str) for part in derived[:3]):
+        derived = [instance["blob"], extractor.get("id"), extractor.get("version"), extractor.get("params"), ordinal]
+        if not isinstance(block.get("id"), str) or not all(isinstance(part, str) for part in derived[:3]) or not isinstance(derived[3], dict):
             continue
         if block["id"] != hashlib.sha256(canonical_json(derived)).hexdigest():
             yield ValidationError(f"block {ordinal}'s id is not derived from its blob, extractor and ordinal",

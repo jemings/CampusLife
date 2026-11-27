@@ -3,11 +3,12 @@
   "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
   "extractor": {
     "id": "text",
-    "version": "1.0.0-rc1"
+    "version": "1.0.0-rc1",
+    "params": {}
   },
   "blocks": [
     {
-      "id": "cd2d688f3a490f90e828681f99e2343054549febce81e5892cc2e8b265296f20",
+      "id": "a5c968369316bcf234f730a76d59921011304077dc33691745453375a8d9a873",
       "block_type": "heading",
       "text": "1. 과제 안내",
       "refs": [
@@ -21,7 +22,7 @@
       ]
     },
     {
-      "id": "a69121f30ad35a7f7115cac6f5a1f5416b344df7440d08a18cc902d940ef88e9",
+      "id": "2243e0e5557dd6f4e5f3883f80ca48895d7016d15653b56fd5f75ccc546a5155",
       "block_type": "paragraph",
       "text": "보고서는 PDF로 제출합니다.",
       "refs": [
@@ -37,7 +38,7 @@
       ]
     },
     {
-      "id": "2d00db9a4368e5610fc0e35adc4064cadb7d4c04dbc0c0e7e133ca82f7491cb8",
+      "id": "c29b24a0e3876aefea2833a1d64b9f0a9f8c0c7bfd6224be804183616b893ec2",
       "block_type": "heading",
       "text": "1.1 마감",
       "refs": [
@@ -53,7 +54,7 @@
       ]
     },
     {
-      "id": "777c3216cbc12325ada7c72bb2805b7ae790b32e3e4ad8c46ef9f9015c48aacf",
+      "id": "3f3d63e7a3ecc87f58d7cd6049b09e28f64752bd5c447df9a4855753093a157d",
       "block_type": "paragraph",
       "text": "3월 14일 23:59까지입니다.",
       "refs": [

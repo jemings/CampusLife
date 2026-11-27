@@ -8,7 +8,15 @@
   "required": ["v", "blob", "identifier", "media_type", "blocks"],
   "properties": {
     "blob": { "description": "The Blob whose bytes were read.", "$ref": "../common/sha256.json" },
-    "identifier": { "description": "The identifier and its version; a new version reads a Blob again into a new Artifact.", "$ref": "extraction.json#/properties/extractor" },
+    "identifier": {
+      "description": "The identifier and its version; a new version reads a Blob again into a new Artifact. It takes no params: it reads the bytes alone.",
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "$ref": "extraction.json#/properties/extractor/properties/id" },
+        "version": { "$ref": "extraction.json#/properties/extractor/properties/version" }
+      }
+    },
     "media_type": { "description": "The media type the bytes show, application/octet-stream when they show none the identifier knows.", "$ref": "../capture/attachment.json#/$defs/mime" },
     "blocks": { "description": "Always empty.", "maxItems": 0 }
   }
