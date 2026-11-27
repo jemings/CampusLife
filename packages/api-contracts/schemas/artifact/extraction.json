@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/artifact/extraction.json",
   "title": "Extraction body",
-  "description": "The body of an extraction Artifact (#5 decision 1): what one extractor version read from one Blob, as ordered ContentBlocks. The Artifact's subject_ref is blob:<blob>. Every block id is derived from the blob, the extractor and the block's ordinal (rule block_id), and every ref lies in that blob (rule block_anchor): the Hub builds both itself and does not take them from the extractor. Open, as artifact/body.",
+  "description": "The body of an extraction Artifact (#5 decision 1): what one extractor version read from one Blob, as ordered ContentBlocks. The Artifact's subject_ref is blob:<blob>. Every block id is derived from the blob, the extractor and the block's ordinal (rule block_id), and every ref, of any kind, names that blob and no capture (rule block_anchor): the Hub builds both itself and does not take them from the extractor. Open, as artifact/body.",
   "$ref": "body.json",
   "type": "object",
   "required": ["v", "blob", "extractor", "blocks"],

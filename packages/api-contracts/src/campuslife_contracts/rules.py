@@ -320,18 +320,18 @@ def _block_id(validator, enabled, instance, schema):
 
 
 def _block_anchor(validator, enabled, instance, schema):
-    """Every ref of an extracted block is in the blob it was extracted from; a ref of a kind with neither a blob nor
-    a capture can only be of a kind this contract does not know, and is left alone."""
+    """Every ref of an extracted block names the blob it was extracted from, whatever its kind, and none is in a
+    recording."""
     for ordinal, block in _fitting_blocks(validator, schema, instance):
         refs = block.get("refs")
         for index, ref in enumerate(refs if isinstance(refs, list) else []):
             if not isinstance(ref, dict):
                 continue
             at = ["blocks", ordinal, "refs", index]
-            if isinstance(ref.get("capture"), str):
+            if ref.get("blob") != instance["blob"]:
+                yield ValidationError("the ref does not name the extracted blob", path=[*at, "blob"])
+            elif "capture" in ref:
                 yield ValidationError("an extracted block is not in a recording", path=[*at, "capture"])
-            elif isinstance(ref.get("blob"), str) and ref["blob"] != instance["blob"]:
-                yield ValidationError("the ref's blob is not the extracted blob", path=[*at, "blob"])
 
 
 class RuleKeyword(NamedTuple):
