@@ -366,6 +366,7 @@ LENGTHS = {
     "device/pair_request#/properties/app_version": {("minLength", 1), ("maxLength", 64)},
     "device/pair_request#/properties/device_name": {("minLength", 1), ("maxLength", 64)},
     "device/pair_response#/$defs/token": {("maxLength", 512)},
+    "device/pairing_offer#/properties/hub_url": {("maxLength", 267)},
     "device/status#/properties/last_error": {("minLength", 1), ("maxLength", 1000)},
     "artifact/artifact#/$defs/name": {("minLength", 1), ("maxLength", 200)},
     "artifact/artifact#/properties/input_hashes": {("minItems", 1)},
