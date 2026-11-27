@@ -26,4 +26,8 @@ interface SyncMetaDao {
 
     @Query("UPDATE meta SET cursor = :cursor WHERE id = 0")
     fun setCursor(cursor: Long): Int
+
+    /** Takes [epoch] as the base epoch and reads the feed from its start again (D24). */
+    @Query("UPDATE meta SET epoch = :epoch, cursor = 0 WHERE id = 0")
+    fun restart(epoch: String): Int
 }

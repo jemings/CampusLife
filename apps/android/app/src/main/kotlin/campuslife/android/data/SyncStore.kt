@@ -18,6 +18,38 @@ class SyncStore(
 
     data class Outgoing(val mutationId: String, val body: String)
 
+    /** What the heartbeat reports of this device (device/status). */
+    data class Backlog(
+        val pendingCaptures: Long,
+        val pendingMutations: Long,
+        val rejectedMutations: Long,
+        val cacheBytes: Long,
+        val blobBytes: Long,
+    )
+
+    /** The Hub this store syncs with, its base epoch and the feed cursor; null before the first GET /v1/hub. */
+    fun standing(): SyncMeta? = db.syncMeta().get()
+
+    /** Takes the epoch of the first GET /v1/hub as the base epoch; only [epochChanged] changes it later (D24). */
+    fun knowHub(hubId: String, epoch: String): Unit = db.inTransaction {
+        if (db.syncMeta().get() == null) db.syncMeta().put(SyncMeta(hubId = hubId, epoch = epoch, cursor = 0))
+    }
+
+    /**
+     * The Hub answered 409 epoch_changed, as after a restore (D24): the cache goes, the feed is read from 0 under
+     * [epoch], and every Mutation the Hub answered goes to it again ahead of the unsent ones, each group in its
+     * first order. The restored Hub then tells which it still has (duplicate) from those it lost.
+     */
+    fun epochChanged(epoch: String): Unit = TODO()
+
+    /** Sets a Mutation aside that makes the Hub refuse any batch it is in; the user sees it with the rejected. */
+    fun refuse(mutationId: String): Unit = TODO()
+
+    /** Forgets settled Mutations answered more than SENT_RETENTION_DAYS ago (D24). */
+    fun forgetSent(): Int = TODO()
+
+    fun backlog(): Backlog = TODO()
+
     /** Blobs the Hub does not have yet, oldest first. */
     fun uploads(): List<Upload> =
         db.blobs().unstored().map { Upload(it.sha256, it.size, TransferState.of(it.state), files.file(it.sha256)) }
