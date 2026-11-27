@@ -10,24 +10,25 @@
     {
       "id": "05284173be192262df92f6e555f27e3aabb1ea6302b0269147cba71bedfe9739",
       "block_type": "table_header",
-      "text": "이름\t중간\t기말\t합계",
+      "text": "이름\t중간\t기말\t합계\t판정",
       "refs": [
         {
           "v": 1,
           "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
           "kind": "sheet_range",
           "sheet": "성적",
-          "a1": "A1:D1"
+          "a1": "A1:E1"
         }
       ]
     },
     {
       "id": "507af2478ead4c5120e0919af9013257ccbeca29b6e2247b7261a2b9e99057ef",
       "block_type": "table_row",
-      "text": "홍길동\t90\t85\t175",
+      "text": "홍길동\t90\t85\t175\tP",
       "payload": {
         "formulas": {
-          "D2": "SUM(B2:C2)"
+          "D2": "SUM(B2:C2)",
+          "E2": "IF(AVERAGE(B2:C2)>=60,\"P\",\"F\")"
         }
       },
       "refs": [
