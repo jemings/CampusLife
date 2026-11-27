@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePath
 
-from . import jobs
+from . import jobs, purge
 from .blobs import BlobStore
 from .data_root import Allowed, DataRootVerdict, DevicePath, InsideSyncFolder, Layout, UncPath, check_data_root, detect_sync_roots
 from .db import START_THE_HUB, Database, NotInitialized, ReadOnlyDatabase, StartupRefused
@@ -40,6 +40,7 @@ class Core:
     blobs: BlobStore
     identity: HubIdentity
     hub_device: DeviceId
+    purge_hooks: purge.PurgeHooks = purge.HOOKS
 
 
 @dataclass(frozen=True)
@@ -74,11 +75,13 @@ def safe_data_root(root: Path, sync_roots: Iterable[Path] | None = None) -> Path
 
 
 @asynccontextmanager
-async def open_core(root: Path, *, create: bool, sync_roots: Iterable[Path] | None = None) -> AsyncIterator[Core]:
+async def open_core(
+    root: Path, *, create: bool, sync_roots: Iterable[Path] | None = None, purge_hooks: purge.PurgeHooks = purge.HOOKS
+) -> AsyncIterator[Core]:
     """Open the Hub at `root` under its hub.lock; with create, make it first. Making it twice changes nothing.
 
     Taking the lock removes the admin.port an earlier Hub left, so the CLI does not ask whatever holds that port
-    while this Hub opens."""
+    while this Hub opens. Opening finishes the purges a stopped Hub left unfinished (E16)."""
     layout = Layout(safe_data_root(root, sync_roots))
     if create:
         layout.root.mkdir(parents=True, exist_ok=True)
@@ -97,9 +100,13 @@ async def open_core(root: Path, *, create: bool, sync_roots: Iterable[Path] | No
             recovered = await db.write(lambda tx: jobs.recover_after_restart(tx, now=now))
             if recovered:
                 log.warning("%d jobs were running when the Hub last stopped; they wait again or failed", recovered)
+            for finish in await purge.finish_unfinished(db, blobs, purge_hooks):
+                kept += finish.kept
+                if finish.failed_hooks:
+                    log.warning("purge %s is still unfinished: hooks %s failed", finish.journal_id, ", ".join(finish.failed_hooks))
             for leftover in kept:
                 log.warning("left %s for a later clean-up: %s", leftover.path, leftover.reason)
-            yield Core(layout, db, blobs, identity, hub_device)
+            yield Core(layout, db, blobs, identity, hub_device, purge_hooks)
         finally:
             await db.close()
 

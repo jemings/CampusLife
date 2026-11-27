@@ -6,8 +6,8 @@
 - the sync listener, the FastAPI app #4 makes through sync_app, on 127.0.0.1:sync_port;
 - the job runner, started again after runner_restart_delay when it ends with an error, each end
   logged and counted in the status;
-- maintenance every maintenance_every: upload session expiry, Blob collection and forgetting
-  old Mutation results, which opening the Core also does once.
+- maintenance every maintenance_every: upload session expiry, Blob collection, forgetting
+  old Mutation results and finishing unfinished purges, which opening the Core also does once.
 Stopping closes the listeners, stops the runner, ends the handlers left running and leaves behind
 those that will not end. `run` then lets the process exit without waiting on them, nor on a
 thread a cancelled handler started with asyncio.to_thread, which runs on to its end: the loop's
@@ -34,7 +34,7 @@ import uvicorn
 from fastapi import APIRouter, FastAPI
 from starlette.types import ASGIApp
 
-from . import admin_token
+from . import admin_token, purge
 from .admin import Admin, create_app
 from .admin_auth import AdminAuth
 from .core import Core, open_core, safe_data_root
@@ -161,6 +161,8 @@ async def _maintain(core: Core, stopping: asyncio.Event, every: timedelta, clock
         try:
             kept = await core.blobs.expire_sessions(now) + await core.blobs.collect_garbage(now)
             await forget_old_results(core.db, now)
+            for finish in await purge.finish_unfinished(core.db, core.blobs, core.purge_hooks):
+                kept += finish.kept
         except Exception:
             log.exception("maintenance failed; it runs again in %s", every)
             continue
