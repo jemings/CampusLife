@@ -35,14 +35,14 @@ CampusLife는 강의 녹음, 학생 정보, 성적, 행정 문서, 개인 일정
 - Tailscale ACL/grants의 최소 권한 모델을 검토합니다.
 - 인터넷 공유기 포트 포워딩을 하지 않습니다.
 - 제품 API는 Agent가 `127.0.0.1`에만 바인딩하고 `tailscale serve`가 HTTPS를 종단합니다(D5). Windows 방화벽에 CampusLife inbound 규칙을 열지 않습니다.
-- `tailscale serve`를 거친 요청은 localhost 출처로 보이므로 출처로 권한을 판단하지 않습니다. pairing secret 발급·revoke 등 관리 기능은 serve에 노출하지 않는 별도 localhost 포트에만 둡니다.
-- serve가 붙이는 `Tailscale-User-Login` 신원 헤더는 인증 근거로 쓰지 않고 감사 기록에만 남깁니다(tag가 붙은 장치에서 온 요청에는 채워지지 않음).
+- `tailscale serve`를 거친 요청은 localhost 출처로 보이므로 출처로 권한을 판단하지 않습니다. pairing secret 발급·장치 목록·revoke·재승인 등 관리 기능은 serve에 노출하지 않는 별도 localhost 포트에만 둡니다. 장치 토큰으로는 admin 포트의 어떤 경로도 열리지 않고, sync 포트에는 장치 관리 경로가 없습니다(D23).
+- serve가 붙이는 `Tailscale-User-Login` 신원 헤더는 인증 근거로 쓰지 않고 pairing 감사 기록에만 남깁니다(tag가 붙은 장치에서 온 요청에는 채워지지 않음). 한 줄 규칙 밖 문자는 U+FFFD로 바꾸고 256자로 자릅니다.
 - Tailscale HTTPS 인증서를 켜면 장치·tailnet 이름이 공개 Certificate Transparency 로그에 남으므로 노트북 장치 이름에 실명·학교명을 쓰지 않습니다.
 - SFTP·FolderSync·OpenSSH는 쓰지 않습니다. 해시와 ACK를 우회하는 두 번째 수집 경로가 되기 때문입니다(D5).
 - 제품 API는 장치별 토큰으로 모든 요청을 인증합니다(D6).
 - 전송은 sha256 검증, 생성자 ID 멱등(D4), `capture.commit` ACK를 사용합니다.
 - API key는 Windows Credential Manager/DPAPI 등 OS 보호 저장소에 보관합니다.
-- 로그에 access token, API key, 전체 강의 텍스트를 기록하지 않습니다.
+- 로그에 access token, API key, 전체 강의 텍스트를 기록하지 않습니다. Hub는 자기가 발급한 장치 토큰과 pairing secret, 인증에 성공한 Bearer를 로그 redaction에 등록해 지웁니다.
 - 로컬 UI는 127.0.0.1 admin 포트에서 12시간짜리 HttpOnly·SameSite=Strict 세션 쿠키로 인증합니다. 쿠키는 포트를 가리지 않으므로, 같은 PC의 다른 포트에서 도는 웹 앱을 브라우저로 열면 그 앱에도 이 쿠키가 전송되고, 그 앱이 같은 이름의 쿠키를 심을 수도 있습니다(잔여 위험). Hub는 다른 앱이 남긴 형식 어긋난 쿠키가 있어도 세션을 읽지만, 쿠키를 가로챈 로컬 앱은 막지 못합니다. 신뢰하지 않는 로컬 웹 앱을 같은 브라우저로 열지 않고, 다 쓰면 로그아웃합니다.
 
 ## 데이터 무결성
@@ -65,7 +65,7 @@ CampusLife는 강의 녹음, 학생 정보, 성적, 행정 문서, 개인 일정
 - SQLite 일관성 백업
 - 원본과 DB를 같은 백업 세대에 포함
 - 최소 분기별 복원 테스트. 복원하면 Hub가 새 `epoch`를 발급하고, 클라이언트가 Hub에 없는 Capture를 다시 올립니다(D3)
-- **복원하면 active였던 클라이언트 장치가 모두 `dormant`가 되어 다시 승인해야 합니다(D21 U6).** revoked 장치는 revoked로 남습니다. 그래서 백업 뒤에 revoke한 장치도 다시 active가 되지 않습니다. 분실했거나 revoke한 장치는 승인하지 않습니다
+- **복원하면 active였던 클라이언트 장치가 모두 `dormant`가 되어 다시 승인해야 합니다(D21 U6).** 복원 안내가 장치마다 id를 적고, 손에 있는 장치만 `campuslife-hub approve <id>`(또는 로컬 UI "Devices")로 승인합니다. 분실한 장치는 승인하지 말고 `campuslife-hub revoke <id>`로 revoke합니다. 승인하면 그 장치가 쥔 토큰으로 다시 동기화하기 때문입니다. revoked 장치는 revoked로 남고 승인할 수 없습니다. 그래서 백업 뒤에 revoke한 장치도 다시 active가 되지 않습니다. 반대로 백업 뒤에 pairing한 장치는 복원된 Hub가 모르므로 다시 pairing합니다
 - **백업 뒤에 한 purge는 복원으로 되돌려집니다.** 복원 뒤에는 백업 시각 이후 purge한 파일을 다시 purge합니다(Hub의 복원 안내가 그 시각을 알려 줌)
 - 백업이 한 번도 돌지 않았으면 모바일 원본 자동 정리가 일어나지 않습니다(D14)
 - 학기 종료 시 portable export 생성
@@ -95,7 +95,8 @@ OpenAI API 공식 정책 안내에 따르면 API 입력과 출력은 명시적�
 | 위협 | 요구사항 |
 |---|---|
 | 노트북 분실/도난 | BitLocker, 계정 잠금, API key 보호 |
-| Fold8/iPad 분실 | 화면 잠금, 앱 로컬 파일 최소 노출, 장치 토큰 revoke |
+| Fold8/iPad 분실 | 화면 잠금, 앱 로컬 파일 최소 노출, 장치 revoke(되돌릴 수 없음), dormant가 된 분실 장치는 승인하지 않음 |
+| pairing 화면을 엿보거나 찍음 | QR·수동 코드는 5분·1회용, 새 코드가 이전 코드를 끝냄, 재사용되면 거부하고 처음 등록된 장치도 revoke, pair 실패 rate limit |
 | tailnet 내부 다른 장치의 접근 | Tailscale ACL/grants, 장치 토큰, admin 기능은 localhost 전용 |
 | 임의 네트워크 접근 | Tailscale 인증, 방화벽 제한, 서비스 인증 |
 | 중간에 끊긴 업로드 | checksum, temp path, ACK, retry |
@@ -109,10 +110,13 @@ OpenAI API 공식 정책 안내에 따르면 API 입력과 출력은 명시적�
 ## Multi-device Security
 
 - 각 Android/iPadOS 설치는 독립적인 Device ID와 토큰을 갖는다. Windows 로컬 UI는 localhost admin 포트를 쓰며 장치 토큰이 필요 없다.
-- 신규 장치는 Windows Hub 화면에 띄운 일회성 QR(유효 5분, 128-bit secret)로 등록한다. 화면에 띄우는 행위가 물리적 승인이므로 별도 승인 단계는 없다. 실패 시도는 rate limit을 걸고, 이미 쓴 secret이 다시 오면 그 secret으로 발급된 장치도 revoke한다.
-- 장치 토큰은 256-bit 무작위 불투명 토큰이며 Hub DB에는 해시만 저장한다. 클라이언트는 Android Keystore 기반 암호화 저장소, iPadOS Keychain에 보관한다(D6).
-- 토큰은 만료 없이 장치별로 재발급·폐기할 수 있다. 짧은 만료를 두지 않는 이유는 오프라인 복귀 후 잠김과 iPadOS 백그라운드 전송 401을 피하기 위해서다. 기본 90일 동안 접속이 없으면 `dormant`가 되어 재승인이 필요하다.
-- 분실한 iPad/Fold8을 device registry에서 revoke하면 이후 요청을 거부한다.
+- 신규 장치는 Windows Hub 로컬 UI "Devices"에 띄운 일회성 QR 또는 수동 코드(유효 5분, 128-bit secret)로 등록한다. 화면에 띄우는 행위가 물리적 승인이므로 별도 승인 단계는 없다. 실패 시도는 rate limit을 걸고(`POST /v1/pair`만, 10분에 10회), 이미 쓴 secret이 다시 오면 그 secret으로 발급된 장치도 revoke한다.
+- pairing secret은 POST 응답 본문에만 담기고 URL에 두지 않는다. admin 페이지는 `Cache-Control: no-store`이고, QR은 서버가 그린 인라인 SVG라 CSP가 막는 script나 inline style이 없다. 장치 이름과 앱 버전은 escape하고, 같아 보이는 이름은 이름 옆의 장치 id 앞 8자와 pairing 시각으로 가린다.
+- 장치 토큰은 256-bit 무작위 불투명 토큰이다. 토큰과 pairing secret은 Hub DB에 SHA-256 hex로만 저장하고, 로그와 `audit_log`에도 남기지 않는다. 클라이언트는 Android Keystore 기반 암호화 저장소, iPadOS Keychain(`AfterFirstUnlockThisDeviceOnly`, access group)에 보관한다(D6, MULTI-DEVICE §4).
+- 토큰은 만료 없이 장치별로 재발급·폐기할 수 있다. 짧은 만료를 두지 않는 이유는 오프라인 복귀 후 잠김과 iPadOS 백그라운드 전송 401을 피하기 위해서다. 재발급 중에는 새 토큰이 처음 성공할 때까지 옛 토큰이 유효하다. 기본 90일(`serve --dormant-after-days`) 동안 접속이 없으면 `dormant`가 되어 재승인이 필요하다.
+- 분실한 iPad/Fold8을 로컬 UI "Devices"나 `campuslife-hub revoke <id>`로 revoke하면 다음 요청부터 `device_revoked`로 거부하고 열린 업로드 세션을 지운다. 이미 인증된 요청은 끝까지 간다. 다른 장치와 데이터는 영향받지 않는다.
+- 재승인은 같은 device_id와 토큰을 되살리므로, 승인 화면은 마지막 접속·거부 시각을 보여 주고 "손에 있는 장치만 승인하라"고 경고한다.
+- pairing(성공·실패), revoke, 재승인, dormant 전환, 토큰 재발급과 옛 토큰 폐기는 `audit_log`에 남는다. append-only이고 Hub가 지우지 않는다(백업에 함께 들어감).
 - 로컬 cache와 offline Outbox에도 민감한 자료가 남을 수 있으므로 OS 잠금/암호화 및 앱 잠금 정책을 사용한다.
 - iPadOS background URLSession task는 인증 만료/작업 복구 상황을 고려하고 로그에 credential이나 문서 내용을 남기지 않는다.
 - Tailscale 연결 여부만으로 앱 사용자를 인증된 것으로 취급하지 않는다. Tailscale network policy와 CampusLife application auth를 함께 적용한다.
