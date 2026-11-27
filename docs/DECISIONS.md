@@ -642,7 +642,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **E13. `isolate.run`:** Windows는 ctypes Job Object(`KILL_ON_JOB_CLOSE`, 메모리 상한), POSIX는 `setrlimit`입니다. stdout도 상한(기본 16 MiB)을 넘으면 트리를 죽입니다. 근거: 메모리 상한 256 MiB인 자식이 끝없이 쓰면 Hub RSS가 1.8 GiB까지 올랐습니다(재현). 세션·Job 밖으로 나간 프로세스는 죽이지 못합니다.
 - **E14. 초기 job:** `capture.commit` 트랜잭션은 `capture.ingest` job 하나만 등록하고, 그 handler가 트랜잭션 밖에서 #5·#8의 planner로 fan-out합니다(남의 코드 실패가 ACK를 깨지 않게).
   - planner마다 spec 검사(저장 경로와 같은 직렬화)를 그 planner 안에서 합니다. 예외를 냈거나, handler가 없는 job, 저장할 수 없는 job, Hub에 한 번도 없던 subject의 job을 낸 planner는 자기 job만 빠지고 ingest는 `PlanningFailed`로 다시 시도합니다(2026-11-27, "PR #31 1차"·"PR8 첫 할 일").
-    - "한 번도 없던 subject"는 행도 tombstone도 없는 엔터티이고, Blob이면 파일도 없고 그 Blob을 지운 purge 기록도 없는 것입니다. 그런 spec을 하나라도 낸 planner는 job 전부가 빠집니다(구현자 결정, PR #38 리뷰에서 받아들임, 2026-11-27). 참조 없는 Blob 정리는 기록을 남기지 않으므로 그렇게 지운 Blob도 여기에 듭니다.
+    - "한 번도 없던 subject"는 행도 tombstone도 없는 엔터티이고, Blob이면 `blobs` 행도 없고 그 Blob을 지운 purge 기록도 없는 것입니다. 그런 spec을 하나라도 낸 planner는 job 전부가 빠집니다(구현자 결정, PR #38 리뷰에서 받아들임, 2026-11-27). 참조 없는 Blob 정리는 기록을 남기지 않으므로 그렇게 지운 Blob도 여기에 듭니다.
   - 계획하는 동안 purge가 subject(tombstone이 남음)나 입력 Blob을 지운 spec은 버리고 warning으로 남깁니다(2026-11-27, "PR #37 2차"·"PR8 첫 할 일").
 
 **오케스트레이터 결정: host와 admin** (2026-11-26 "결정", 2026-11-27 "PR #32 1차·2차"·"PR6 첫 할 일")
