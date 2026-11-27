@@ -6,22 +6,22 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-val bytecodeTarget: String = libs.versions.jvmTarget.get()
+val jdkRelease: String = libs.versions.wireJdkRelease.get()
 
 java {
-    sourceCompatibility = JavaVersion.toVersion(bytecodeTarget)
-    targetCompatibility = JavaVersion.toVersion(bytecodeTarget)
+    sourceCompatibility = JavaVersion.toVersion(jdkRelease)
+    targetCompatibility = JavaVersion.toVersion(jdkRelease)
 }
 
 kotlin {
     compilerOptions {
-        jvmTarget = JvmTarget.fromTarget(bytecodeTarget)
-        freeCompilerArgs.add("-Xjdk-release=$bytecodeTarget")
+        jvmTarget = JvmTarget.fromTarget(jdkRelease)
+        freeCompilerArgs.add("-Xjdk-release=$jdkRelease")
     }
 }
 
 tasks.withType<JavaCompile>().configureEach {
-    options.release = bytecodeTarget.toInt()
+    options.release = JavaVersion.toVersion(jdkRelease).majorVersion.toInt()
 }
 
 dependencies {
