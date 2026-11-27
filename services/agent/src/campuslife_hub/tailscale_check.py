@@ -14,6 +14,7 @@ shapes are read from tailscale's source, not from a tailnet; #39 confirms them o
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import subprocess
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -23,7 +24,6 @@ from urllib.parse import urlsplit
 type Run = Callable[[Sequence[str]], str]
 
 TIMEOUT_S = 15
-LOOPBACK_NAMES = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 class TailscaleUnavailable(Exception):
@@ -67,11 +67,23 @@ def _configs(serve: Mapping) -> Iterator[Mapping]:
         yield session
 
 
+def _is_loopback(host: str | None) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(host or "")
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return address.is_loopback
+
+
 def _reaches(target: str, port: int) -> bool:
     """Whether a proxy or TCP forward target, a URL or host:port, names a port on this machine."""
     parts = urlsplit(target if "://" in target else f"tcp://{target}")
     try:
-        return parts.hostname in LOOPBACK_NAMES and parts.port == port
+        return _is_loopback(parts.hostname) and parts.port == port
     except ValueError:
         return False
 
