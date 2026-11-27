@@ -1,0 +1,18 @@
+{
+  "mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  "op": "create",
+  "entity": "item",
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "data": {
+    "kind": "event",
+    "title": "AI 특강",
+    "fields": {
+      "category": "seminar",
+      "place": "공학관 대강당",
+      "organization_id": "9b2c1f4e-3a5d-4c6b-8e7f-1a2b3c4d5e6f",
+      "url": "https://cse.example.invalid/notice/1024",
+      "ends_at": "2026-03-20T08:00:00.000Z"
+    },
+    "starts_at": "2026-03-20T06:00:00.000Z"
+  }
+}

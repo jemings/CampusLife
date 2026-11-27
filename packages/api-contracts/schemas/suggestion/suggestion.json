@@ -32,7 +32,15 @@
       "uniqueItems": true,
       "items": { "$ref": "../common/uuid.json" },
       "x-owner": "hub"
+    },
+    "created_item_id": {
+      "description": "The Item that accepting a create_item made, written in the same transaction, so every device finds the Item a Suggestion became. Only an accepted Suggestion has it.",
+      "$ref": "../common/uuid.json",
+      "x-owner": "hub"
     }
+  },
+  "dependentSchemas": {
+    "created_item_id": { "properties": { "state": { "const": "accepted" } } }
   },
   "if": { "properties": { "action": { "$ref": "#/$defs/known/properties/action" } }, "required": ["action"] },
   "x-conflict-not-self": true,
@@ -121,7 +129,8 @@
           "schema": "../item/item.json",
           "fields": [
             "../item/fields/term.json", "../item/fields/course.json", "../item/fields/lecture_session.json",
-            "../item/fields/note.json", "../item/fields/task.json", "../item/fields/assignment.json", "../item/fields/exam.json"
+            "../item/fields/note.json", "../item/fields/task.json", "../item/fields/assignment.json", "../item/fields/exam.json",
+            "../item/fields/event.json", "../item/fields/announcement.json", "../item/fields/opportunity.json", "../item/fields/organization.json"
           ]
         }
       },

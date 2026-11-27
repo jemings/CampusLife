@@ -1,0 +1,14 @@
+{
+  "mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  "op": "create",
+  "entity": "item",
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "data": {
+    "kind": "organization",
+    "title": "컴퓨터공학과",
+    "fields": {
+      "category": "department",
+      "url": "https://cse.example.invalid/"
+    }
+  }
+}

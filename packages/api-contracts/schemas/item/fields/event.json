@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/item/fields/event.json",
+  "title": "event fields",
+  "description": "Something that takes place: a seminar, festival, special lecture or club meeting. It starts at the Item's starts_at (all_day for a whole day); when it ends waits for #10. Open.",
+  "type": "object",
+  "properties": {
+    "category": { "description": "What sort of event it is, as an open name: a client keeps any value of the pattern and offers the examples.", "type": "string", "pattern": "^[a-z][a-z_]*$", "examples": ["seminar", "festival", "special_lecture", "club_meeting"] },
+    "place": { "description": "Where it takes place, as worded by the notice.", "type": "string", "minLength": 1 },
+    "organization_id": { "description": "id of the organization Item behind it.", "$ref": "../../common/uuid.json" },
+    "url": { "description": "Where it is published, as a capture url.", "$ref": "../../capture/capture.json#/properties/url" }
+  }
+}
