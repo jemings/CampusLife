@@ -286,8 +286,11 @@ def test_the_child_runs_no_entry_point_outside_the_extractor_package(tmp_path):
         child.respond(request)
 
 
-async def test_the_event_loop_keeps_running_while_the_hub_builds_a_body_of_the_most_blocks_the_defaults_allow(db, device, blob_store, tmp_path):
-    hub = hub_with(db, blob_store, device, tmp_path, limits=Limits())
+async def test_the_event_loop_keeps_running_while_the_hub_builds_a_body_whatever_its_block_count(db, device, blob_store, tmp_path):
+    """Whether the loop stalls does not depend on the block count, since the body is built in a worker thread: 5,000
+    blocks, some 4 s of the Hub's work, show it without spending the 16 s of the default max_blocks."""
+    limits = Limits(max_blocks=5_000)
+    hub = hub_with(db, blob_store, device, tmp_path, limits=limits)
     gaps = []
 
     async def tick():
@@ -300,7 +303,7 @@ async def test_the_event_loop_keeps_running_while_the_hub_builds_a_body_of_the_m
 
     ticking = asyncio.create_task(tick())
     try:
-        await hub.capture(("many.txt", b"a\n\n" * (Limits().max_blocks + 1)))
+        await hub.capture(("many.txt", b"a\n\n" * (limits.max_blocks + 1)))
         await hub.settle()
     finally:
         ticking.cancel()
@@ -308,7 +311,7 @@ async def test_the_event_loop_keeps_running_while_the_hub_builds_a_body_of_the_m
     [job] = await hub.jobs("extract.text")
     assert (job.state, job.outcome_code) == (JobState.SUCCEEDED, OutcomeCode.PARTIAL)
     [artifact] = await hub.artifacts("extraction")
-    assert len((await hub.body(artifact))[0]["blocks"]) == Limits().max_blocks
+    assert len((await hub.body(artifact))[0]["blocks"]) == limits.max_blocks
     assert max(gaps) < 1.0
 
 
