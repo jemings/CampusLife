@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/sync/hub.json",
   "title": "Hub",
-  "description": "GET /v1/hub (E18). A client stops syncing when hub_id differs from the one it paired with, starts over from since=0 when epoch changes (D3), and refuses to talk to a Hub whose min_contract_version is above its own contract version. Open.",
+  "description": "GET /v1/hub (E18). A client stops syncing when hub_id differs from the one it paired with, takes epoch as its base epoch on its first GET /v1/hub and changes it only when it handles 409 epoch_changed (D24), and refuses to talk to a Hub whose min_contract_version is above its own contract version. Open.",
   "type": "object",
   "required": ["hub_id", "epoch", "contract_version", "min_contract_version"],
   "properties": {

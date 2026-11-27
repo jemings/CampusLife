@@ -24,7 +24,8 @@
         "not_found",
         "contract_too_old",
         "hub_storage_full",
-        "internal_error"
+        "internal_error",
+        "epoch_changed"
       ]
     },
     "message": {
@@ -32,7 +33,7 @@
       "type": "string"
     },
     "details": {
-      "description": "Code-specific data, such as missing_chunks for incomplete.",
+      "description": "Code-specific data, such as missing_chunks for incomplete and epoch for epoch_changed.",
       "type": "object"
     }
   },
@@ -40,6 +41,10 @@
     {
       "if": { "properties": { "code": { "const": "incomplete" } }, "required": ["code"] },
       "then": { "required": ["details"], "properties": { "details": { "$ref": "#/$defs/incomplete_details" } } }
+    },
+    {
+      "if": { "properties": { "code": { "const": "epoch_changed" } }, "required": ["code"] },
+      "then": { "required": ["details"], "properties": { "details": { "$ref": "#/$defs/epoch_changed_details" } } }
     }
   ],
   "$defs": {
@@ -49,6 +54,14 @@
       "required": ["missing_chunks"],
       "properties": {
         "missing_chunks": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "int64.json#/$defs/non_negative" } }
+      }
+    },
+    "epoch_changed_details": {
+      "description": "409 epoch_changed from GET /v1/changes or POST /v1/mutations (D24): the request's CampusLife-Epoch is not the Hub's. epoch is the Hub's, the one the client takes as its own once it has emptied its cache.",
+      "type": "object",
+      "required": ["epoch"],
+      "properties": {
+        "epoch": { "$ref": "../sync/hub.json#/properties/epoch" }
       }
     }
   }

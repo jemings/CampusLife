@@ -1,0 +1,9 @@
+{
+  "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  "entity_ref": "item:7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "resolved": {
+    "at": "2026-03-03T09:15:00.000Z",
+    "mutation_id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+    "how": "kept_theirs"
+  }
+}
