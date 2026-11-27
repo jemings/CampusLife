@@ -41,16 +41,27 @@ enum class BlobEvent : TransferEvent {
     SESSION_LOST,
     DEFERRED,
     HUB_LOST_BLOB,
+
+    /** This device's copy is gone, cannot be read, or no longer holds these bytes (the Hub answered hash_mismatch). */
+    COPY_LOST,
 }
 
 /** What a mutation result or a pull means for one outbox row. */
 enum class OutboxEvent : TransferEvent {
     APPLIED,
+
+    /** A conflict in which no key was written. */
     CONFLICTED,
+
+    /** A conflict in which the Hub wrote applied_fields. */
+    PARTLY_APPLIED,
     REFUSED,
     BLOBS_MISSING,
     BLOBS_GONE,
     BLOBS_STORED,
+
+    /** A Blob of a held capture.commit can no longer be uploaded from this device. */
+    BLOB_LOST,
     PULL_BEGUN,
     PULL_DONE,
 }
