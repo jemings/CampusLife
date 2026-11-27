@@ -57,8 +57,15 @@ def _finite_float(text: str) -> float:
 class FractionalSpelling(Decimal):
     """A number the text wrote with a fraction or an exponent (`1.0`, `1E0`, `2.5`).
 
-    Decimal cannot tell `1` from `1E0`, so exact_numbers readings keep the spelling in the type.
+    Decimal cannot tell `1` from `1E0`, so exact_numbers readings keep the spelling.
     """
+
+    text: str
+
+    def __new__(cls, text: str):
+        number = super().__new__(cls, text)
+        number.text = text
+        return number
 
 
 def loads_strict(text: str, *, exact_numbers: bool = False) -> object:

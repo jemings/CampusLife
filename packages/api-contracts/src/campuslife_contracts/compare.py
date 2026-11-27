@@ -10,11 +10,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-from jsonschema import Draft202012Validator, ValidationError, validators
-
-from .contract import Contract, schema_uri
-from .ecma import ecma_search
+from .contract import Contract
 from .jsonio import FractionalSpelling, NotStrictJson, canonical_json, pointer, read_strict
+from .violations import describe
 
 
 class BrokenGolden(Exception):
@@ -89,44 +87,48 @@ def differences(expected: object, actual: object) -> list[tuple[str, str]]:
     return list(_differences(expected, actual, ()))
 
 
-def _ecma_pattern(validator, pattern, instance, schema):
-    if validator.is_type(instance, "string") and not ecma_search(pattern, instance):
-        yield ValidationError(f"{instance!r} does not match {pattern!r}")
+def _as_json_loads_types(value: object) -> object:
+    """What `json.loads` would have produced: a fraction or exponent spelling is a float, any other number an int."""
+    match value:
+        case FractionalSpelling():
+            return float(value.text)
+        case Decimal():
+            return int(value)
+        case list():
+            return [_as_json_loads_types(item) for item in value]
+        case dict():
+            return {name: _as_json_loads_types(item) for name, item in value.items()}
+    return value
 
 
-def _is_decimal(checker, instance) -> bool:
-    return isinstance(instance, Decimal)
+def _value_at(value: object, at: str) -> object:
+    for token in at.split("/")[1:]:
+        name = token.replace("~1", "/").replace("~0", "~")
+        value = value[int(name)] if isinstance(value, list) else value[name]
+    return value
 
 
-def _is_unspelled_integer(checker, instance) -> bool:
-    return isinstance(instance, Decimal) and not isinstance(instance, FractionalSpelling)
-
-
-# `integer` holds only for a number written without fraction or exponent: the
-# schemas say where integers are, and the wire spelling is part of the contract.
-_SpellingValidator = validators.extend(
-    Draft202012Validator,
-    validators={"pattern": _ecma_pattern},
-    type_checker=Draft202012Validator.TYPE_CHECKER.redefine_many(
-        {"integer": _is_unspelled_integer, "number": _is_decimal}
-    ),
-)
-
-
-def _spelling_mismatches(contract: Contract, schema_id: str, actual: object) -> list[tuple[str, str]]:
-    validator = _SpellingValidator({"$ref": schema_uri(schema_id)}, registry=contract.registry)
+def _contract_mismatches(contract: Contract, schema_id: str, actual: object) -> list[tuple[str, str]]:
+    """What the Hub's judge says about the output once numbers have the types `json.loads` gives them."""
+    try:
+        violations = contract.validate(schema_id, _as_json_loads_types(actual))
+    except TypeError as error:
+        return [("", str(error))]
     found = []
-    for error in validator.iter_errors(actual):
-        at = pointer(error.absolute_path)
-        if error.validator == "type" and isinstance(error.instance, FractionalSpelling):
-            found.append((at, f"integer place written as {error.instance}; write it without fraction or exponent"))
-        else:
-            found.append((at, f"does not fit the schema: {error.message}"))
+    for violation in violations:
+        reason = f"violates the contract: {describe(violation)}"
+        if isinstance(spelled := _value_at(actual, violation.path), FractionalSpelling):
+            reason += f" (written as {spelled.text})"
+        found.append((violation.path, reason))
     return found
 
 
 def compare_file(
-    expected_path: Path, actual_path: Path, name: str, contract: Contract | None = None
+    expected_path: Path,
+    actual_path: Path,
+    name: str,
+    contract: Contract | None = None,
+    schema_id: str | None = None,
 ) -> list[Mismatch]:
     if not actual_path.is_file():
         return [Mismatch(name, "missing output")]
@@ -139,20 +141,27 @@ def compare_file(
     except NotStrictJson as error:
         return [Mismatch(name, f"not strict JSON: {error}")]
     found = differences(expected, actual)
-    schema_id = Path(name).parent.as_posix()
-    if not found and contract is not None and schema_id in contract.schema_ids:
-        found = _spelling_mismatches(contract, schema_id, actual)
+    if not found and contract is not None:
+        if schema_id not in contract.schema_ids:
+            return [Mismatch(name, f"no schema {schema_id}")]
+        found = _contract_mismatches(contract, schema_id, actual)
     return [Mismatch(name, reason, at) for at, reason in found]
 
 
-def compare_dirs(expected_dir: Path, actual_dir: Path, contract: Contract | None = None) -> list[Mismatch]:
+def compare_dirs(
+    expected_dir: Path, actual_dir: Path, contract: Contract | None = None, schema_base: str = ""
+) -> list[Mismatch]:
     """Compare every `*.json` under expected_dir with the same path under actual_dir.
 
-    With a contract, a file at `<schema_id>/<case>.json` whose values all match is also checked
-    against that schema, so an integer place written as `0.0` or `1E0` is a mismatch.
+    With a contract, a file `<schema_id>/<case>.json` whose values all match is also judged by
+    the Hub's validator, so an integer place written as `0.0` or `1E0` is a mismatch.
+    `schema_base` is expected_dir's own path below `fixtures/valid`, if it is a subdirectory.
     """
     mismatches: list[Mismatch] = []
     for expected_path in sorted(Path(expected_dir).rglob("*.json")):
-        name = expected_path.relative_to(expected_dir).as_posix()
-        mismatches += compare_file(expected_path, Path(actual_dir) / name, name, contract)
+        relative = expected_path.relative_to(expected_dir)
+        schema_id = (Path(schema_base) / relative.parent).as_posix()
+        mismatches += compare_file(
+            expected_path, Path(actual_dir) / relative, relative.as_posix(), contract, schema_id
+        )
     return mismatches
