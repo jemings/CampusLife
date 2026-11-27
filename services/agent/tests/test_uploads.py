@@ -1,6 +1,7 @@
 import asyncio
 import errno
 import hashlib
+import os
 import shutil
 import stat
 import threading
@@ -162,6 +163,17 @@ async def test_opening_a_blob_already_stored_answers_stored_and_opens_nothing(tm
     assert body("blob/stored", await store.open_upload(tablet, sha(DATA), len(DATA))) == {"sha256": sha(DATA), "size": len(DATA)}
     with pytest.raises(NoUploadSession):
         await store.put_chunk(tablet, sha(DATA), 0, chunks(DATA)[0])
+
+
+async def test_opening_a_blob_another_device_stored_meanwhile_ends_this_devices_own_upload_of_it(tmp_path, store, phone, tablet):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await put_all(store, phone, DATA, order=[0])
+    await upload(store, tablet, DATA)
+
+    assert await store.open_upload(phone, sha(DATA), len(DATA)) == StoredBlob(sha(DATA), len(DATA))
+    assert session_dirs(tmp_path) == []
+    with pytest.raises(NoUploadSession):
+        await store.put_chunk(phone, sha(DATA), 1, chunks(DATA)[1])
 
 
 async def test_opening_a_blob_already_stored_with_another_size_is_an_invalid_request(store, phone):
@@ -369,6 +381,21 @@ async def test_a_chunk_that_fails_to_move_keeps_its_error_and_leaves_no_staging_
 
     with pytest.raises(PermissionError, match="place refused"):
         await store.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])
+
+    assert staging_files(tmp_path) == []
+    assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == ()
+
+
+async def test_a_chunk_that_fails_to_be_written_keeps_its_error_and_leaves_no_staging_file(tmp_path, store, phone, monkeypatch):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+
+    def full(fd):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(os, "fsync", full)
+        with pytest.raises(OSError, match="No space left"):
+            await store.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])
 
     assert staging_files(tmp_path) == []
     assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == ()

@@ -38,7 +38,8 @@ uv run campuslife-hub open
    - 등록 시점의 data root와, register에 준 serve 옵션(`--admin-port`, `--sync-port`, `--backup-keep`, `--backup-warn-days`)만 작업 인자에 들어갑니다. 바꾸려면 같은 명령을 다시 실행합니다(같은 이름의 작업을 교체). 이름은 `--name`으로 바꿀 수 있습니다.
    - `uv run campuslife-hub autostart xml`은 등록할 작업 XML을 출력만 합니다(인코딩 선언 없음). `--out task.xml`을 주면 register가 schtasks에 넘기는 것과 같은 UTF-16 파일을 씁니다.
 5. `schtasks /Run`은 다음 로그온을 기다리지 않고 지금 시작합니다. 로그아웃 후 다시 로그인해도 됩니다. 기동에 몇 초가 걸리므로 `status`가 서빙하는 Hub가 없다고 하면 잠시 뒤 다시 실행합니다.
-6. `open`은 브라우저로 로컬 UI(127.0.0.1의 admin 포트, 기본 8731)를 1회용 로그인 링크로 엽니다. 이 포트는 `tailscale serve`에 노출하지 않습니다(D5). sync 포트(기본 8730)와 `tailscale serve` 설정은 #4, 장치 pairing은 #19가 맡습니다.
+6. `open`은 브라우저로 로컬 UI(127.0.0.1의 admin 포트, 기본 8731)를 1회용 로그인 링크로 엽니다. 이 포트는 `tailscale serve`에 노출하지 않습니다(D5).
+7. 휴대폰·태블릿이 Hub에 닿도록 [sync 리스너와 tailscale serve](#sync-리스너와-tailscale-serve-d5-d22)대로 `tailscale serve`를 한 번 설정합니다. 장치 pairing은 #19가 맡습니다.
 
 **한계(D16):** 재부팅 뒤 사용자가 로그인하기 전에는 Hub가 없습니다. 노트북이 잠자거나 꺼져 있는 동안에도 Hub는 멈추고, 각 클라이언트는 Outbox에 쌓았다가 Hub가 돌아오면 다시 보냅니다. 알림은 각 클라이언트가 로컬에서 예약하므로 Hub와 관계없이 울립니다(D19). 실기기에서의 로그온 자동 시작과 장시간 생존은 #14가 확인합니다.
 
@@ -87,10 +88,36 @@ uv run campuslife-hub autostart unregister
 | `stop` | 도는 Hub를 멈춤 |
 | `ls` | Capture와 Attachment 목록 |
 | `autostart xml\|register\|unregister` | 로그온 자동 시작 작업 |
+| `tailscale-check` | `tailscale serve`가 sync 리스너만 노출하는지 확인하고 기대 `hub_url`을 출력(`--sync-port`, `--admin-port`, `--public-url`) |
 
-Hub가 도는 동안 `init`·`import`·`backup`은 그 Hub의 admin API를 거치고, Hub가 없으면 직접 data root를 잠그고 씁니다(E11). `restore`는 빈 data root를 잠그고 채우므로 그 root에서 도는 Hub가 없어야 합니다. `open`·`status`·`stop`은 도는 Hub가 있어야 합니다. `ls`·`fsck`는 잠그지 않고 읽기만 합니다(SQLite가 `-wal`·`-shm` 파일을 만들 수는 있음).
+Hub가 도는 동안 `init`·`import`·`backup`은 그 Hub의 admin API를 거치고, Hub가 없으면 직접 data root를 잠그고 씁니다(E11). `restore`는 빈 data root를 잠그고 채우므로 그 root에서 도는 Hub가 없어야 합니다. `open`·`status`·`stop`은 도는 Hub가 있어야 합니다. `ls`·`fsck`는 잠그지 않고 읽기만 합니다(SQLite가 `-wal`·`-shm` 파일을 만들 수는 있음). `tailscale-check`는 data root를 쓰지 않습니다.
 
 CLI 요청은 600초를 기다립니다. 그보다 오래 걸리는 큰 첫 백업이나 큰 import는 CLI가 시간 초과로 끝나도 Hub가 계속 처리합니다. 백업은 `status`의 `backup last`로, import는 `ls`로 끝났는지 확인합니다. 시간 초과 뒤 import를 다시 하면 같은 파일의 Capture가 둘 생깁니다.
+
+### sync 리스너와 tailscale serve (D5, D22)
+
+`serve`는 sync 리스너를 `127.0.0.1:8730`(`--sync-port`)에만 엽니다. 휴대폰·태블릿은 `tailscale serve`를 거쳐 닿습니다. serve가 이 노트북의 MagicDNS 이름(`<이름>.<tailnet>.ts.net`)의 공인 인증서로 HTTPS를 종단하고, 443을 sync 리스너로 넘깁니다. admin 포트(8731)는 넘기지 않습니다.
+
+```powershell
+tailscale serve --bg http://127.0.0.1:8730
+uv run campuslife-hub tailscale-check
+```
+
+1. 먼저 tailnet 관리 콘솔에서 MagicDNS와 HTTPS 인증서를 켭니다.
+2. **인증서를 켜기 전에 이 노트북의 Tailscale 장치 이름을 실명이나 학교명이 들어가지 않은 것으로 바꿉니다.** HTTPS 인증서를 발급하면 장치 FQDN이 공개 Certificate Transparency 로그에 영구히 남습니다.
+3. `tailscale serve --bg …`는 설정을 tailscale에 저장하므로 한 번만 하면 되고, 재부팅 뒤에도 남습니다. `--sync-port`를 바꿨으면 그 포트를 씁니다.
+4. `tailscale-check`는 `tailscale serve status --json`과 `tailscale status --json`을 읽기만 하고 아무것도 바꾸지 않습니다. 다음을 확인합니다.
+   - 443의 HTTPS가 경로 `/`로 `http://127.0.0.1:<sync 포트>`에만 갑니다.
+   - 어느 포트·경로·TCP forward도 admin 포트로 가지 않습니다. 이 노트북이 내놓는 Tailscale Service의 설정도 봅니다.
+   - Funnel이 꺼져 있습니다. Funnel은 Hub를 인터넷에 엽니다.
+   - tailscale이 로그인되어 있고 MagicDNS 이름이 있습니다.
+5. 모두 맞으면 `hub_url https://<이름>.<tailnet>.ts.net`과 `ok`를 출력합니다. 하나라도 틀리면 `problem:` 줄을 출력하고 0이 아닌 코드로 끝납니다. 포트를 바꿨으면 `--sync-port`, `--admin-port`를 같은 값으로 줍니다.
+   - pairing QR에 들어가는 `hub_url`은 `serve --public-url`의 값입니다(#19). `tailscale-check --public-url <URL>`을 주면, 그 값이 MagicDNS 이름과 다를 때 `warning:`을 출력합니다.
+   - 두 JSON의 모양은 tailscale 소스에서 읽은 것이라, 실제 tailnet에서는 #39가 확인합니다.
+6. 연결 확인: #19가 pairing을 붙이기 전에는 sync 리스너가 모든 요청을 400이나 401로 거절합니다. 그래도 응답에 `CampusLife-Hub-Id` 헤더가 있으면 serve를 거쳐 Hub까지 닿은 것입니다. Hub가 꺼져 있으면 serve가 이 헤더 없는 502로 답합니다.
+
+- sync 리스너는 serve가 연결을 다시 쓰도록 유휴 연결을 120초 유지합니다(admin 리스너는 uvicorn 기본값).
+- 노트북이 잠자는 동안에는 serve도 답하지 않습니다. 휴대폰에서 학교 VPN 등 다른 VPN을 켜면 Tailscale과 동시에 쓰지 못해 Hub에 닿지 못할 수 있습니다(D5).
 
 ### 백업 (U1, U3, E20)
 
@@ -128,7 +155,7 @@ uv run campuslife-hub --root D:\CampusLife-restored restore --from E:\CampusLife
 | 원본 Blob | 무기한(읽기 전용). Attachment·Artifact·Relation 어느 것도 가리키지 않게 된 Blob은 마지막으로 받은 지 7일 뒤 정리 |
 | tombstone(삭제 표시) | 무기한. purge 뒤에도 남음 |
 | purge | 즉시: Blob, 그것을 가리키는 Attachment, 파생 Artifact·Suggestion과 그 Relation. fork된 Note는 남기고 근거가 지워졌다고 표시(U2). 백업 세대에는 남음 |
-| 끝나지 않은 업로드 세션 | 마지막으로 열거나 chunk를 받은 지 7일 |
+| 끝나지 않은 업로드 세션 | 마지막으로 열거나 chunk를 받은 지 7일. 그사이 다른 장치가 같은 Blob을 올렸으면 다시 열 때 바로 끝남 |
 | Mutation 결과(`applied_mutations`) | 90일. 그보다 오래된 재전송은 create·patch는 다시 판정되어 해가 없고, delete·restore·Relation create는 다시 적용됨(수용) |
 | 백업 세대 | 드라이브마다 최근 N개(기본 5) |
 | 로그 `logs\hub.log` | 지금 파일과 이전 파일 5개(`hub.log.1`…`.5`), 각 5 MiB, 최대 30 MiB. 비밀 값과 강의 본문은 가림(E19) |

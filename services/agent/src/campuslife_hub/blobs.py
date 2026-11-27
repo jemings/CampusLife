@@ -27,7 +27,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import ClassVar
+from typing import BinaryIO, ClassVar
 
 from campuslife_contracts import validate
 
@@ -387,6 +387,22 @@ class BlobStore:
     async def put_file(self, src: Path) -> StoredBlob:
         return await self._store_and_register([Path(src)])
 
+    async def open_blob(self, sha256: str) -> tuple[StoredBlob, BinaryIO] | None:
+        """The stored Blob and a handle on its bytes; None when the Hub does not store it or its file is gone.
+
+        The handle reads to the end whatever removes the Blob meanwhile. On Windows it also keeps a collection or
+        purge from moving the file out until it closes, so they leave the file for their next try.
+        """
+        _refuse_outside_contract("common/sha256", sha256)
+        stored = await self._db.read(lambda snap: _stored_blob(snap, sha256))
+        if stored is None:
+            return None
+        try:
+            handle = await asyncio.to_thread(open, self.path_of(sha256), "rb")
+        except FileNotFoundError:
+            return None
+        return stored, handle
+
     def _session_dir(self, session_id: str) -> Path:
         return self._uploads_dir / session_id
 
@@ -425,17 +441,18 @@ class BlobStore:
 
         A new upload must fit twice in the space free on the data root's volume when it opens: finalize writes
         the combined file while the chunks are still there. Answering that the Blob is stored restarts its
-        collection clock, so it outlives the commit the device sends next.
+        collection clock, so it outlives the commit the device sends next, and ends the device's own upload of it,
+        as finalize does.
         """
         _refuse_outside_contract("blob/upload_request", {"sha256": sha256, "size": size})
 
-        def open_or_resume(tx: Tx) -> StoredBlob | UploadSession:
+        def open_or_resume(tx: Tx) -> tuple[StoredBlob | UploadSession, list[str]]:
             stored = _stored_blob(tx, sha256)
             if stored is not None:
                 if stored.size != size:
                     raise InvalidUpload(f"the stored Blob {sha256} is {stored.size} bytes, not {size}")
                 _restart_collection_clock(tx, sha256)
-                return stored
+                return stored, _end_sessions(tx, "device_id = ? AND sha256 = ?", (device, sha256))
             session = _open_session(tx, device, sha256)
             if session is None:
                 free = self._free_space(self._uploads_dir)
@@ -450,16 +467,22 @@ class BlobStore:
                 raise InvalidUpload(f"the open upload of {sha256} is {session.size} bytes, not {size}")
             else:
                 tx.execute("UPDATE upload_sessions SET touched_at = ? WHERE id = ?", (now_instant(), session.id))
-            return UploadSession(sha256, size, session.chunk_size, self._received(session))
+            return UploadSession(sha256, size, session.chunk_size, self._received(session)), []
 
-        return await self._db.write(open_or_resume)
+        opened, ended = await self._db.write(open_or_resume)
+        await self._discard_sessions(ended)
+        return opened
 
     def _write_staging(self, data: bytes) -> Path:
         staging = self._new_staging_path()
-        with open(staging, "xb") as writer:
-            writer.write(data)
-            writer.flush()
-            os.fsync(writer.fileno())
+        try:
+            with open(staging, "xb") as writer:
+                writer.write(data)
+                writer.flush()
+                os.fsync(writer.fileno())
+        except BaseException:
+            self._discard_quietly(staging)
+            raise
         return staging
 
     def _place_chunk(self, chunk: Path, data: bytes) -> None:

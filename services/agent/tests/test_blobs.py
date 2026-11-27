@@ -11,8 +11,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from conftest import contract_fixture
 
-from campuslife_hub import mutations, store
-from campuslife_hub.blobs import BlobStore, FileOps, KeptLeftover, StoredBlob, has_blob, is_sharing_violation, with_lock_retry
+from campuslife_hub import blobs, mutations, store
+from campuslife_hub.blobs import BlobStore, FileOps, InvalidUpload, KeptLeftover, StoredBlob, has_blob, is_sharing_violation, with_lock_retry
 from campuslife_hub.devices import ensure_hub_device
 from campuslife_hub.store import Entity, EntityRef
 
@@ -64,6 +64,46 @@ async def test_an_empty_file_is_a_blob(tmp_path, blob_store):
 
 async def test_an_unknown_blob_is_absent(db):
     assert not await db.read(lambda snap: has_blob(snap, ABC_SHA256))
+
+
+async def test_opening_a_stored_blob_gives_it_and_a_handle_on_its_bytes(tmp_path, blob_store):
+    await blob_store.put_file(source(tmp_path, "a.txt", b"abc"))
+
+    stored, handle = await blob_store.open_blob(ABC_SHA256)
+    with handle:
+        assert (stored, handle.read()) == (StoredBlob(ABC_SHA256, 3), b"abc")
+
+
+async def test_opening_a_blob_the_hub_does_not_store_or_whose_file_is_gone_gives_none(tmp_path, blob_store):
+    await blob_store.put_file(source(tmp_path, "a.txt", b"abc"))
+    final = blob_store.path_of(ABC_SHA256)
+    os.chmod(final, stat.S_IRUSR | stat.S_IWUSR)
+    final.unlink()
+
+    assert await blob_store.open_blob(ABC_SHA256) is None
+    assert await blob_store.open_blob(EMPTY_SHA256) is None
+
+
+@pytest.mark.parametrize("named", ["../../database/campuslife.sqlite3", ABC_SHA256.upper(), ABC_SHA256[:-1]])
+async def test_opening_by_a_name_that_is_not_a_sha256_is_refused_before_any_path_is_made(blob_store, named):
+    with pytest.raises(InvalidUpload):
+        await blob_store.open_blob(named)
+
+
+async def test_opening_a_blob_leaves_the_event_loop_free_while_the_file_opens(tmp_path, blob_store, monkeypatch):
+    await blob_store.put_file(source(tmp_path, "a.txt", b"abc"))
+    gate, let_go = threading.Event(), []
+
+    def slow_open(*args, **kwargs):
+        let_go.append(gate.wait(5))
+        return open(*args, **kwargs)
+
+    monkeypatch.setattr(blobs, "open", slow_open, raising=False)
+    asyncio.get_running_loop().call_later(0.05, gate.set)
+    stored, handle = await blob_store.open_blob(ABC_SHA256)
+    handle.close()
+
+    assert let_go == [True]
 
 
 async def test_a_missing_source_leaves_nothing_behind(tmp_path, blob_store):

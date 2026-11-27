@@ -525,11 +525,18 @@ async def test_an_upload_cut_off_mid_chunk_is_finished_over_another_connection(t
     assert core.blobs.path_of(UPLOADED_SHA).read_bytes() == UPLOADED
 
 
-@pytest.mark.parametrize("refusal", ["unknown token", "wrong length"])
-async def test_a_chunk_refused_before_its_body_is_answered_at_once_and_the_connection_goes_on(tmp_path, refusal):
+@pytest.mark.parametrize(
+    ("token", "length", "status"),
+    [
+        ("someone-else", len(UPLOADED), b"401"),
+        (SYNC_TOKEN, len(UPLOADED) + 1, b"400"),
+        (SYNC_TOKEN, len(UPLOADED) - 1, b"400"),
+    ],
+    ids=["unknown token", "longer length", "shorter length"],
+)
+async def test_a_chunk_refused_before_its_body_is_answered_at_once_and_the_connection_goes_on(tmp_path, token, length, status):
     """The refusal comes before the client sends the body; the server then reads and drops that body, so the same
     connection takes the next request (#4 decision 5)."""
-    token, length = (("someone-else", len(UPLOADED)) if refusal == "unknown token" else (SYNC_TOKEN, len(UPLOADED) + 1))
     async with serving(tmp_path, sync_app=sync_admitting_the_hub_device) as (core, client, listening, stop, served):
         async with sync_client(listening) as sync:
             await sync.post("/v1/blobs/uploads", json={"sha256": UPLOADED_SHA, "size": len(UPLOADED)})
@@ -544,6 +551,40 @@ async def test_a_chunk_refused_before_its_body_is_answered_at_once_and_the_conne
                                         f"Authorization: Bearer {SYNC_TOKEN}\r\n\r\n")
         writer.close()
 
-    assert refused.split()[1] == (b"401" if refusal == "unknown token" else b"400")
+    assert refused.split()[1] == status
     assert after.split()[1] == b"200"
     assert json.loads(body)["hub_id"] == core.identity.hub_id
+
+
+DOWNLOADED = bytes(range(256)) * 32768
+DOWNLOADED_SHA = hashlib.sha256(DOWNLOADED).hexdigest()
+
+
+async def test_a_download_cut_off_mid_body_resumes_by_range_over_another_connection_and_lets_go_of_the_file(tmp_path):
+    async with serving(tmp_path, sync_app=sync_admitting_the_hub_device) as (core, client, listening, stop, served):
+        source = tmp_path / "recording"
+        source.write_bytes(DOWNLOADED)
+        await core.blobs.put_file(source)
+        reader, writer = await asyncio.open_connection("127.0.0.1", listening.sync[1])
+        writer.write(
+            f"GET /v1/blobs/{DOWNLOADED_SHA} HTTP/1.1\r\nHost: 127.0.0.1\r\nCampusLife-Contract: 1\r\nAuthorization: Bearer {SYNC_TOKEN}\r\n\r\n".encode()
+        )
+        await writer.drain()
+        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 10)
+        reached = await asyncio.wait_for(reader.readexactly(100_000), 10)
+        writer.close()
+        async with sync_client(listening) as sync:
+            rest = await sync.get(f"/v1/blobs/{DOWNLOADED_SHA}", headers={"Range": f"bytes={len(reached)}-"})
+        finished = (await purge.purge_blob(core.db, core.blobs, DOWNLOADED_SHA, hooks=purge.PurgeHooks())).finished
+        for _ in range(50):
+            if finished:
+                break
+            await asyncio.sleep(0.1)
+            finished = all(finish.finished for finish in await purge.finish_unfinished(core.db, core.blobs, purge.PurgeHooks()))
+
+    assert head.split(b"\r\n")[0] == b"HTTP/1.1 200 OK"
+    assert rest.status_code == 206
+    assert rest.headers["content-range"] == f"bytes {len(reached)}-{len(DOWNLOADED) - 1}/{len(DOWNLOADED)}"
+    assert hashlib.sha256(reached + rest.content).hexdigest() == DOWNLOADED_SHA
+    assert finished
+    assert not core.blobs.path_of(DOWNLOADED_SHA).exists()

@@ -13,10 +13,12 @@
   ls       list Captures and their Attachments
   autostart  start the Hub at logon through Windows Task Scheduler: xml prints the task, register adds or
              replaces it, unregister removes it
+  tailscale-check  check that tailscale serve sends https on 443 to the sync listener only, and print the hub_url
 
 While a Hub serves the data root it holds the data root's hub.lock, and init, import and backup go
 through its admin API (E11); otherwise they take the lock themselves. restore takes the lock of the
 empty root it fills. open, status and stop need a serving Hub. ls and fsck take no lock and write no data.
+tailscale-check only reads what the tailscale command reports and needs no data root.
 Every command refuses to run on a Microsoft Store Python (E21).
 """
 
@@ -34,7 +36,7 @@ from pathlib import Path
 
 from starlette.types import ASGIApp
 
-from . import admin_client, autostart, backup, fsck, host, sync
+from . import admin_client, autostart, backup, fsck, host, sync, tailscale_check
 from .admin_client import AdminRefused, HubDidNotAnswer, HubNotServing, NotTheHub
 from .admin_token import AdminTokenUnusable
 from .autostart import AutostartFailed, LogonTask
@@ -48,12 +50,13 @@ from .local_import import UnimportableFile, import_files
 from .lock import AlreadyRunning
 from .migrations import DatabaseTooNew
 from .redaction import Redactor, file_handler
+from .tailscale_check import TailscaleUnavailable
 
 ROOT_ENV = "CAMPUSLIFE_ROOT"
 EXPECTED_FAILURES = (
     AlreadyRunning, NotInitialized, SchemaMismatch, UnsafeDataRoot, StartupRefused, DatabaseTooNew, UnimportableFile,
     HubNotServing, NotTheHub, AdminRefused, HubDidNotAnswer, AdminTokenUnusable, PortTaken, BackupRefused, RestoreRefused,
-    AutostartFailed,
+    AutostartFailed, TailscaleUnavailable,
     OSError, UnicodeError, sqlite3.Error,
 )
 
@@ -109,6 +112,10 @@ def _parser() -> argparse.ArgumentParser:
     showing.add_argument("--out", type=Path, metavar="FILE", help="write it to FILE in the UTF-16 Task Scheduler reads, instead of printing it")
     _serve_options(_task_name(actions.add_parser("register", help="add the task for this user, or replace it")), defaults=False)
     _task_name(actions.add_parser("unregister", help="remove the task"))
+    checking = commands.add_parser("tailscale-check", help="check what tailscale serve exposes and print the hub_url")
+    checking.add_argument("--sync-port", type=_port, default=DEFAULT_SYNC_PORT, help=f"the sync listener's port (default {DEFAULT_SYNC_PORT})")
+    checking.add_argument("--admin-port", type=_port, default=DEFAULT_ADMIN_PORT, help=f"the admin listener's port (default {DEFAULT_ADMIN_PORT})")
+    checking.add_argument("--public-url", metavar="URL", help="the hub_url serve is given, to compare with the tailnet's name for this machine")
     return parser
 
 
@@ -258,6 +265,20 @@ def _sync_app(hosted: Hosted) -> ASGIApp:
     return sync.create_sync_app(hosted, sync.refuse_every_bearer)
 
 
+def _tailscale_check(arguments: argparse.Namespace) -> None:
+    verdict = tailscale_check.check(
+        tailscale_check.tailscale, sync_port=arguments.sync_port, admin_port=arguments.admin_port, public_url=arguments.public_url,
+    )
+    print(f"hub_url {verdict.hub_url or '-'}")
+    for warning in verdict.warnings:
+        print(f"warning: {warning}")
+    for problem in verdict.problems:
+        print(f"problem: {problem}")
+    if not verdict.ok:
+        raise CommandFailed(f"tailscale serve is not set up as the Hub needs: {len(verdict.problems)} problem(s) above")
+    print(f"ok: https on 443 goes to http://127.0.0.1:{arguments.sync_port} only")
+
+
 def _logon_task(root: Path, arguments: argparse.Namespace) -> LogonTask:
     """The task that serves root with the serve options given; root must hold a Hub."""
     layout = _layout(root)
@@ -313,6 +334,8 @@ def _run(arguments: argparse.Namespace, root: Path) -> None:
             asyncio.run(_ls(root))
         case "autostart":
             _autostart(root, arguments)
+        case "tailscale-check":
+            _tailscale_check(arguments)
 
 
 def _leave_in_the_log(root: Path, said: str) -> None:

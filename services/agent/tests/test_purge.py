@@ -580,3 +580,30 @@ async def test_a_stored_blob_no_row_names_yet_is_purged_with_its_file(db, blob_s
     assert purged.finished
     assert not await held(db, sha)
     assert not blob_store.path_of(sha).exists()
+
+
+async def test_a_blob_purged_while_it_is_being_read_is_still_read_to_its_end(db, blob_store, tmp_path):
+    sha = await store_bytes(blob_store, tmp_path, b"downloaded while purged")
+    stored, handle = await blob_store.open_blob(sha)
+
+    with handle:
+        await purge.purge_blob(db, blob_store, sha, hooks=PurgeHooks())
+        read = handle.read()
+
+    assert read == b"downloaded while purged"
+    assert not await held(db, sha)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="sharing violations are how Windows treats an open handle")
+async def test_a_blob_purged_while_it_is_being_read_stays_on_the_unfinished_purge_until_the_reading_ends(db, blob_store, tmp_path):
+    sha = await store_bytes(blob_store, tmp_path, b"downloaded while purged")
+    stored, handle = await blob_store.open_blob(sha)
+
+    with handle:
+        purged = await purge.purge_blob(db, blob_store, sha, hooks=PurgeHooks())
+    finished = await purge.finish_unfinished(db, blob_store, PurgeHooks())
+
+    assert [kept.path for kept in purged.kept] == [blob_store.path_of(sha)]
+    assert not purged.finished
+    assert [finish.finished for finish in finished] == [True]
+    assert not blob_store.path_of(sha).exists()
