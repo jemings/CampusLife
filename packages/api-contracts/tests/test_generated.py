@@ -132,27 +132,42 @@ def node_at(instance, at):
     return instance
 
 
+def over_long(text, limit):
+    """Strings one longer than limit, each repeating one of text's characters where it stands, the first one first.
+
+    Repeating a character in place keeps most patterns, but which character depends on the pattern: the first
+    one breaks a pattern that starts with a literal such as https://.
+    """
+    if not text:
+        return ["a" * (limit + 1)]
+    extra = limit + 1 - len(text)
+    return [text[:index] + text[index] * extra + text[index:] for index in range(len(text))]
+
+
+def replaced(case, at, replacement):
+    instance = read_strict(case.path)
+    if not at:
+        return replacement, (), None
+    node_at(instance, at[:-1])[at[-1]] = replacement
+    return instance, at, None
+
+
 def broken(case, keyword, value, at):
-    """The fixture with the probed constraint broken, and the member path it is reported at."""
+    """Ways to break the probed constraint in the fixture, each with the member path it is reported at.
+
+    A length bound is broken once, or for maxLength in several ways of which one must break it alone.
+    """
     instance = read_strict(case.path)
     if keyword == "required":
         return [(instance, at, member) for member in value if member in node_at(instance, at)]
-    parent, last = (node_at(instance, at[:-1]), at[-1]) if at else (None, None)
     node = node_at(instance, at)
-    if keyword == "minLength" and value >= 1:
-        replacement = node[: value - 1]
+    if keyword in {"minLength", "minItems"} and value >= 1:
+        replacements = [node[: value - 1]]
     elif keyword == "maxLength":
-        # Repeat the first character so a pattern anchored at either end still holds.
-        filler = node[:1] or "a"
-        replacement = filler * (value + 1 - len(node)) + node
-    elif keyword == "minItems" and value >= 1:
-        replacement = node[: value - 1]
+        replacements = over_long(node, value)
     else:
         return []
-    if parent is None:
-        return [(replacement, (), None)]
-    parent[last] = replacement
-    return [(instance, at, None)]
+    return [replaced(case, at, replacement) for replacement in replacements]
 
 
 def cases_for(keyword):
@@ -186,8 +201,8 @@ def test_each_required_member_missing_is_exactly_one_required_violation(record):
 )
 def test_each_length_bound_broken_is_exactly_that_violation(record):
     case, keyword, _, value, at = record
-    for instance, at_, _ in broken(case, keyword, value, at):
-        assert CONTRACT.validate(case.schema_id, instance) == [SchemaViolation(pointer(list(at_)), keyword)]
+    reported = [CONTRACT.validate(case.schema_id, instance) for instance, _, _ in broken(case, keyword, value, at)]
+    assert not reported or [SchemaViolation(pointer(list(at)), keyword)] in reported, reported[0]
 
 
 def observed():
@@ -260,6 +275,7 @@ REQUIRED = {
     "common/error#/$defs/incomplete_details": {"missing_chunks"},
     "device/pair_request#": {"secret", "platform", "device_name", "app_version"},
     "device/pair_response#": {"device_id", "token"},
+    "device/pairing_offer#": {"hub_url", "hub_id", "secret"},
     "device/status#": {"app_version", "pending_upload_count", "pending_mutation_count", "open_conflict_count"},
     "blob/upload_request#": {"sha256", "size"},
     "blob/upload_session#": {"sha256", "size", "chunk_size", "received"},
@@ -350,6 +366,7 @@ LENGTHS = {
     "device/pair_request#/properties/app_version": {("minLength", 1), ("maxLength", 64)},
     "device/pair_request#/properties/device_name": {("minLength", 1), ("maxLength", 64)},
     "device/pair_response#/$defs/token": {("maxLength", 512)},
+    "device/pairing_offer#/properties/hub_url": {("maxLength", 267)},
     "device/status#/properties/last_error": {("minLength", 1), ("maxLength", 1000)},
     "artifact/artifact#/$defs/name": {("minLength", 1), ("maxLength", 200)},
     "artifact/artifact#/properties/input_hashes": {("minItems", 1)},

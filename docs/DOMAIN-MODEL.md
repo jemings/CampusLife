@@ -68,7 +68,7 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 | Device | id, platform(android\|ipados\|windows_hub), device_name, app_version, state(active\|dormant\|revoked), created_at, last_seen_at |
 | audit_log | 외부 AI 전송, 삭제, revoke, 충돌 해소 기록 (Hub 전용, 동기화하지 않음) |
 
-- Hub는 토큰의 SHA-256만 저장합니다. 이 값(예전 표의 `token_hash`)은 Hub DB에만 있고 wire에 나가지 않습니다(D6). 계약의 Device 모양은 pair 요청·응답과 status heartbeat뿐입니다(E20).
+- Hub는 토큰의 SHA-256만 저장합니다. 이 값(예전 표의 `token_hash`)은 Hub DB에만 있고 wire에 나가지 않습니다(D6). 계약의 Device 모양은 pairing offer(QR), pair 요청·응답, status heartbeat뿐입니다(E20, D23).
 - `windows_hub`는 Hub 자신의 Device 행이고 로컬 import가 씁니다. pair하는 장치는 `android`·`ipados`입니다.
 
 ## 3. Item kind
