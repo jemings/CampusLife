@@ -32,10 +32,12 @@ from .admin_auth import HELLO_PATH, LISTENER_SCOPE_KEY, SESSION_COOKIE, SESSION_
 from .admin_page import page
 from .backup import BackupRefused, BackupSettings
 from .core import Core
+from .db import Snapshot
 from .devices import DeviceSettings
-from .job_runner import JobRunner
+from .ingest import FileStatus, NoSuchCapture
+from .job_runner import JobRegistry, JobRunner
 from .jobs import Job, JobState, NoSuchJob, NotRetryable
-from .listing import latest_captures
+from .listing import CaptureSummary, latest_captures, lecture_session, lecture_sessions
 from .local_import import UnimportableFile, import_files
 from .purge import PurgePlan, PurgeRefused
 from .redaction import Redactor
@@ -145,12 +147,18 @@ async def original(request: Request, attachment_id: str) -> Response:
 
 
 @router.get("/import")
-async def import_page() -> Response:
+async def import_page(request: Request) -> Response:
+    sessions = await _admin(request).core.db.read(lambda snap: lecture_sessions(snap, PAGE_ROWS))
     options = '<option value="">the course or global default</option>' + "".join(f"<option>{policy}</option>" for policy in CLOUD_POLICIES)
+    choices = '<option value="">none</option>' + "".join(
+        f'<option value="{escape(session.id)}">{escape(" · ".join(part for part in (session.date, session.course, session.title) if part))}</option>'
+        for session in sessions
+    )
     return page(
         "Import",
         '<form method="post" action="/import" enctype="multipart/form-data">'
         '<p><input class="drop" type="file" name="files" multiple required aria-label="Drop files here or choose them"></p>'
+        f'<p><label>Lecture session <select name="lecture_session">{choices}</select></label></p>'
         f'<p><label>cloud_policy <select name="cloud_policy">{options}</select></label></p>'
         "<p><button>Import as one Capture</button></p></form>",
     )
@@ -168,12 +176,17 @@ async def import_form(request: Request) -> Response:
     except FormRefused as error:
         return _refused("Import refused", str(error))
     try:
-        policy = form.fields.get("cloud_policy") or None
+        policy, session = form.fields.get("cloud_policy") or None, form.fields.get("lecture_session") or None
         if not form.files:
             return _refused("Import refused", "choose or drop at least one file")
         if policy is not None and policy not in CLOUD_POLICIES:
             return _refused("Import refused", f"cloud_policy is one of {', '.join(CLOUD_POLICIES)}")
-        imported = await import_files(admin.core, [staged.path for staged in form.files], names=[staged.name for staged in form.files], cloud_policy=policy)
+        if session is not None and await admin.core.db.read(lambda snap: lecture_session(snap, session)) is None:
+            return _refused("Import refused", "the lecture session chosen is not in the Hub, or is in the trash")
+        links = [f"item:{session}"] if session else []
+        imported = await import_files(
+            admin.core, [staged.path for staged in form.files], names=[staged.name for staged in form.files], links=links, cloud_policy=policy,
+        )
     except UnimportableFile as error:
         return _refused("Import refused", str(error))
     finally:
