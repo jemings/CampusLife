@@ -183,6 +183,7 @@ def _snapshot(database: Path, into: Path) -> _Snapshot:
         source.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
         source.backup(copy)
         copy.execute("PRAGMA journal_mode = DELETE")
+        copy.execute("PRAGMA foreign_keys = ON")
         copy.execute(f"DELETE FROM blobs WHERE sha256 NOT IN ({named})")
         blobs = copy.execute("SELECT sha256, size FROM blobs ORDER BY sha256").fetchall()
         hub_id, epoch, change_seq = copy.execute("SELECT hub_id, epoch, change_seq FROM hub_state").fetchone()
