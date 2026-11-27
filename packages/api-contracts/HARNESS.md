@@ -90,11 +90,13 @@ uv run campuslife-contracts compare fixtures/valid <out>
   |---|---|---|
   | `heading` | 제목 | `{level}`: 개요 깊이, 가장 바깥이 1인 정수. payload가 있으면 `level`이 있어야 합니다. |
   | `paragraph` | 본문 문단 | 없음 |
-  | `page` | PDF 쪽 하나, ref는 그 쪽(`pdf_page`). 텍스트 층이 없는 쪽은 `text`가 없고 본문에 `no_text_layer` warning이 붙습니다. | 없음 |
+  | `page` | PDF 쪽 하나, ref는 보통 그 쪽(`pdf_page`). 텍스트 층이 없는 쪽은 `text`가 없고 본문에 `no_text_layer` warning이 붙습니다. | 없음 |
   | `table` | 문서 안의 표. `text`는 행을 LF로, 칸을 탭으로 잇고, 칸 안의 탭·줄바꿈은 공백으로 씁니다. 병합 칸은 왼쪽 위 칸에 한 번만 씁니다. 긴 표는 행 사이에서 여러 블록으로 나뉩니다. | v1에는 없음 |
-  | `table_row` | 시트나 구분자 파일(CSV·TSV)의 행 하나. `text`는 칸을 탭으로 잇고, ref는 그 행의 칸들을 덮는 `sheet_range` 하나입니다. | `{formulas?}`: 수식이 있는 칸만, 키는 그 행의 칸 하나(A1, 대문자, `$` 없음), 값은 통합 문서에 저장된 수식 문자열(앞의 `=` 없음). `text`에는 캐시값이 들어갑니다. 수식이 없으면 `formulas`가 없고, 빈 map은 쓰지 않습니다. |
+  | `table_row` | 시트나 구분자 파일(CSV·TSV)의 행 하나. ref는 보통 그 행에서 값이 있는 첫 칸부터 마지막 칸까지의 `sheet_range` 하나입니다. `text`는 그 범위의 칸을 탭으로 잇습니다. 빈 칸은 빈 문자열로 자리를 지키고, 칸 안의 탭·줄바꿈은 공백 하나로 씁니다. 그래서 n번째(0부터) 탭 필드는 범위의 첫 열 + n번째 열이고 `formulas` 키와 대응합니다. | `{formulas?}`: 수식이 있는 칸만 담습니다. 키는 칸 하나의 절대 주소입니다(A1, 대문자, `$` 없음). 값은 통합 문서에 저장된 수식 문자열이고 `=`로 시작하지 않습니다(스키마가 막음). `text`에는 캐시값이 들어갑니다. 수식이 없으면 `formulas`가 없고, 빈 map은 쓰지 않습니다. 키가 그 블록의 행 안에 있는 칸인지는 계약이 보지 않고, Hub 추출기 시험(#6 PR3)이 확인합니다. |
   | `table_header` | 아래 열들의 머리글 행. payload가 없는 것 말고는 `table_row`와 같습니다. | 없음 |
-  | `notes` | 슬라이드의 발표자 노트, ref는 그 슬라이드(`slide`). | 없음 |
+  | `notes` | 슬라이드의 발표자 노트, ref는 보통 그 슬라이드(`slide`). | 없음 |
+
+  - 추출기가 위치를 확신할 수 없는 블록은 `document`를 인용합니다(#6 결정 9, D13). 그리드(1,048,576행, XFD열)를 넘는 구분자 파일의 행, 읽지 못한 시트 이름이 그런 경우입니다. 이때 행의 탭 필드는 열과 대응하지 않지만 `formulas` 키는 여전히 절대 주소입니다(valid `rows_without_a_place`). 스키마는 block_type별로 ref kind를 강제하지 않습니다.
 
   - payload는 열려 있습니다. 알려진 payload의 모르는 멤버, payload를 정의하지 않은 type의 payload(새 Hub가 `table`에 더한 멤버 등)는 무시합니다(forward `known_payload_unknown_members`). 예외로 `formulas`의 이름은 멤버가 아니라 칸 주소라서 열림 시험에서 면제됩니다(`KEYED_BY_CELL`).
 - 본문 Blob의 바이트는 `canonical_json(body)`입니다(비교기와 같은 함수). 그래서 같은 본문은 같은 Blob이고, 그 Blob을 입력으로 받는 job(#8)의 job_key가 흔들리지 않습니다. Hub가 쓸 때 지킵니다(#5 PR2).
