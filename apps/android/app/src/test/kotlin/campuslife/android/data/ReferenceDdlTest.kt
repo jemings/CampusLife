@@ -7,26 +7,39 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.File
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ReferenceDdlTest {
+    private val context = ApplicationProvider.getApplicationContext<Context>()
+    private val room = Room.inMemoryDatabaseBuilder(context, CampusLifeDatabase::class.java).allowMainThreadQueries().build()
+    private val reference = SQLiteDatabase.create(null)
+
+    @After
+    fun close() {
+        room.close()
+        reference.close()
+    }
+
     @Test
     fun `Room creates the tables, keys and indexes of the reference DDL`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val room = Room.inMemoryDatabaseBuilder(context, CampusLifeDatabase::class.java).allowMainThreadQueries().build()
-        val reference = SQLiteDatabase.create(null)
-        try {
-            referenceStatements().forEach(reference::execSQL)
-            val created = room.openHelper.writableDatabase
+        referenceStatements().forEach(reference::execSQL)
+        val created = room.openHelper.writableDatabase
 
-            assertEquals(shapeOf { reference.rawQuery(it, null) }, shapeOf { created.query(it) })
-        } finally {
-            room.close()
-            reference.close()
-        }
+        assertEquals(shapeOf { reference.rawQuery(it, null) }, shapeOf { created.query(it) })
+    }
+
+    @Test
+    fun `Room declares none of the clauses the reference DDL keeps out`() {
+        val created = room.openHelper.writableDatabase
+        val statements = rowsOf({ created.query(it) }, "SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL")
+            .filter { (name) -> name !in NOT_ROOMS }
+
+        for ((name, sql) in statements) assertFalse("$name: $sql", KEPT_OUT.containsMatchIn(sql!!))
     }
 
     private data class Column(
@@ -49,6 +62,8 @@ class ReferenceDdlTest {
     )
 
     private data class ForeignKey(
+        val id: Int,
+        val seq: Int,
         val table: String,
         val from: String,
         val to: String,
@@ -63,14 +78,16 @@ class ReferenceDdlTest {
         val foreignKeys: Set<ForeignKey>,
     )
 
-    private fun shapeOf(query: (String) -> Cursor): Map<String, Table> {
-        fun rows(sql: String): List<List<String?>> = query(sql).use { cursor ->
-            buildList {
-                while (cursor.moveToNext()) {
-                    add((0 until cursor.columnCount).map { if (cursor.isNull(it)) null else cursor.getString(it) })
-                }
+    private fun rowsOf(query: (String) -> Cursor, sql: String): List<List<String?>> = query(sql).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add((0 until cursor.columnCount).map { if (cursor.isNull(it)) null else cursor.getString(it) })
             }
         }
+    }
+
+    private fun shapeOf(query: (String) -> Cursor): Map<String, Table> {
+        fun rows(sql: String): List<List<String?>> = rowsOf(query, sql)
 
         fun index(row: List<String?>): Index {
             val name = row[1]!!
@@ -79,17 +96,17 @@ class ReferenceDdlTest {
             return Index(name, row[2] == "1", row[3]!!, row[4] == "1", columns)
         }
 
-        val tables = rows(
-            "SELECT name, sql FROM sqlite_master WHERE type = 'table' " +
-                "AND name NOT IN ('sqlite_sequence', 'android_metadata', 'room_master_table')",
-        )
+        fun foreignKey(row: List<String?>) =
+            ForeignKey(row[0]!!.toInt(), row[1]!!.toInt(), row[2]!!, row[3]!!, row[4]!!, row[5]!!, row[6]!!)
+
+        val tables = rows("SELECT name, sql FROM sqlite_master WHERE type = 'table'").filter { (name) -> name !in NOT_ROOMS }
         return tables.associate { (name, sql) ->
             name!! to Table(
                 columns = rows("PRAGMA table_xinfo(`$name`)")
                     .map { Column(it[1]!!, it[2]!!, it[3] == "1", it[4], it[5]!!.toInt(), it[6]!!.toInt()) },
                 autoincrement = sql!!.contains("AUTOINCREMENT", ignoreCase = true),
                 indexes = rows("PRAGMA index_list(`$name`)").map(::index).toSet(),
-                foreignKeys = rows("PRAGMA foreign_key_list(`$name`)").map { ForeignKey(it[2]!!, it[3]!!, it[4]!!, it[5]!!, it[6]!!) }.toSet(),
+                foreignKeys = rows("PRAGMA foreign_key_list(`$name`)").map(::foreignKey).toSet(),
             )
         }
     }
@@ -101,5 +118,13 @@ class ReferenceDdlTest {
             .split(';')
             .map(String::trim)
             .filter(String::isNotEmpty)
+    }
+
+    private companion object {
+        /** Tables SQLite, Android and Room keep for themselves. */
+        val NOT_ROOMS = setOf("sqlite_sequence", "android_metadata", "room_master_table")
+
+        /** The clauses the header of packages/api-contracts/ddl/client.sql keeps out, as tests/test_ddl.py lists them. */
+        val KEPT_OUT = Regex("""\b(CHECK|COLLATE|GENERATED|DEFERRABLE|DESC|MATCH)\b|\bON\s+CONFLICT\b""", RegexOption.IGNORE_CASE)
     }
 }
