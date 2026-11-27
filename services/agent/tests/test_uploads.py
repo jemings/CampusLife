@@ -164,6 +164,17 @@ async def test_opening_a_blob_already_stored_answers_stored_and_opens_nothing(tm
         await store.put_chunk(tablet, sha(DATA), 0, chunks(DATA)[0])
 
 
+async def test_opening_a_blob_another_device_stored_meanwhile_ends_this_devices_own_upload_of_it(tmp_path, store, phone, tablet):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+    await put_all(store, phone, DATA, order=[0])
+    await upload(store, tablet, DATA)
+
+    assert await store.open_upload(phone, sha(DATA), len(DATA)) == StoredBlob(sha(DATA), len(DATA))
+    assert session_dirs(tmp_path) == []
+    with pytest.raises(NoUploadSession):
+        await store.put_chunk(phone, sha(DATA), 1, chunks(DATA)[1])
+
+
 async def test_opening_a_blob_already_stored_with_another_size_is_an_invalid_request(store, phone):
     await upload(store, phone, DATA)
 
