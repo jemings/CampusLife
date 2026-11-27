@@ -155,7 +155,7 @@ class Files:
         *, whole: bool = True,
     ) -> Finished:
         """Run the child on the job's Blob and record what made builds from its answer. A child that reads the whole
-        Blob (whole) is not handed one larger than input_max_bytes; identify reads only the head of it."""
+        Blob (whole) is not handed one larger than input_max_bytes; identify never holds a whole Blob (sniff)."""
         sha256 = job.inputs[0]
         size = await context.db.read(lambda snap: snap.execute("SELECT size FROM blobs WHERE sha256 = ?", (sha256,)).fetchone())
         if size is None:

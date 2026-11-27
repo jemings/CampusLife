@@ -21,8 +21,14 @@ generated Korean and English Markdown, generated ZIPs), not on users' files:
 - identify read a 10,000-member ZIP in 0.05 s and 26 MiB;
 - deflate packed 64 MiB of zeros, a zip bomb, 1,029 times; a 1 MiB Markdown file of one paragraph repeated 140 times;
   one paragraph alone 3.8 times. zip_max_ratio parts them;
-- timeout_s, mem_bytes, input_max_bytes and rendition_max_bytes are not measured here: they leave the format extractors and the converter to come (#6,
-  #7, #13, O4) the room a lecture PDF or deck of a few hundred MiB needs, and those issues measure them.
+- timeout_s, mem_bytes, input_max_bytes and rendition_max_bytes are not measured here: they leave the format
+  extractors and the converter to come (#6, #7, #13, O4) the room a lecture PDF or deck of a few hundred MiB needs,
+  and those issues measure them. Nor are zip_max_member_bytes and zip_max_total_bytes: #13, which reads members,
+  measures them.
+
+identify does not read a Blob whole into memory: it reads the head, a ZIP's member names (safe_zip names_only, so
+only zip_max_members and zip_max_depth bind it there), and an OLE file in chunks. The byte bounds bind the jobs that
+read a Blob or its members whole.
 """
 
 from __future__ import annotations
@@ -43,8 +49,8 @@ class Limits:
     stdout_max_bytes: int = 64 * MiB
     """What the child may print; past it the child is killed."""
     input_max_bytes: int = 256 * MiB
-    """The Blob an extract or render job reads whole; a larger one is not handed to its child. identify reads only
-    the head of a Blob, so it takes one of any size."""
+    """The Blob an extract or render job reads whole; a larger one is not handed to its child. identify holds no
+    more than a chunk of a Blob at once, so it takes one of any size."""
     max_blocks: int = 20_000
     """Blocks of one body: the Hub builds and validates them off the event loop in about 16 s."""
     max_block_text_chars: int = 200_000

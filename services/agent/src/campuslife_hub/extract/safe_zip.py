@@ -2,7 +2,8 @@
 
 Opening checks every member the central directory lists before anything is read: its path stays inside the
 archive, it is no link, it is not encrypted, and its declared size and compression ratio keep within the limits
-table, as do the member count and their total size. Reading a member is zipfile's: it stops at the size the member
+table, as do the member count and their total size. Opened for its names only (identify), the sizes wait until a
+member is read. Reading a member is zipfile's: it stops at the size the member
 declares, so a header that lies about it cannot make a reader inflate more, and bytes that then fail the member's CRC
 end the job as corrupt. zipfile cuts a member name at its first NUL, so a NUL never reaches the path check. An archive
 inside an archive opens one level deeper, up to zip_max_depth. Only this module imports zipfile
@@ -49,7 +50,15 @@ def _is_link(info: zipfile.ZipInfo) -> bool:
     return stat.S_ISLNK(info.external_attr >> 16)
 
 
-def _check(infos: list[zipfile.ZipInfo], limits: Limits) -> None:
+def _check_bytes(info: zipfile.ZipInfo, limits: Limits) -> None:
+    name = info.filename
+    if info.file_size > limits.zip_max_member_bytes:
+        raise _unsafe(f"member {name!r} declares {info.file_size} bytes, more than {limits.zip_max_member_bytes}")
+    if info.file_size > max(info.compress_size, 1) * limits.zip_max_ratio:
+        raise _unsafe(f"member {name!r} inflates more than {limits.zip_max_ratio} times")
+
+
+def _check(infos: list[zipfile.ZipInfo], limits: Limits, *, names_only: bool) -> None:
     if len(infos) > limits.zip_max_members:
         raise _unsafe(f"{len(infos)} members, more than {limits.zip_max_members}")
     names: set[str] = set()
@@ -65,12 +74,10 @@ def _check(infos: list[zipfile.ZipInfo], limits: Limits) -> None:
             raise _unsafe(f"member {name!r} is a link")
         if info.flag_bits & ENCRYPTED_FLAG:
             raise Refused(Status.PASSWORD_REQUIRED, f"member {name!r} is encrypted")
-        if info.file_size > limits.zip_max_member_bytes:
-            raise _unsafe(f"member {name!r} declares {info.file_size} bytes, more than {limits.zip_max_member_bytes}")
-        if info.file_size > max(info.compress_size, 1) * limits.zip_max_ratio:
-            raise _unsafe(f"member {name!r} inflates more than {limits.zip_max_ratio} times")
+        if not names_only:
+            _check_bytes(info, limits)
         total += info.file_size
-    if total > limits.zip_max_total_bytes:
+    if not names_only and total > limits.zip_max_total_bytes:
         raise _unsafe(f"the members declare {total} bytes together, more than {limits.zip_max_total_bytes}")
 
 
@@ -85,6 +92,7 @@ class SafeZip:
 
     def read(self, name: str) -> bytes:
         info = self._archive.getinfo(name)
+        _check_bytes(info, self._limits)
         try:
             with self._archive.open(info) as member:
                 return member.read()
@@ -99,9 +107,13 @@ class SafeZip:
 
 
 @contextmanager
-def open_zip(source: Path | BinaryIO, limits: Limits, *, depth: int = 1) -> Iterator[SafeZip]:
+def open_zip(source: Path | BinaryIO, limits: Limits, *, depth: int = 1, names_only: bool = False) -> Iterator[SafeZip]:
     """The archive at source, checked; Refused when it is not a ZIP (corrupt), holds an encrypted member
-    (password_required) or breaks a check (unsafe_input)."""
+    (password_required) or breaks a check (unsafe_input).
+
+    names_only is for identify, which tells a format by its member names: the names and the member count are
+    checked, the members' sizes, ratios and total are not, and a member's own size and ratio are checked only when it
+    is read. A large archive is then left to the extractor that reads its members."""
     if depth > limits.zip_max_depth:
         raise _unsafe(f"an archive nested {depth} deep, more than {limits.zip_max_depth}")
     try:
@@ -109,5 +121,5 @@ def open_zip(source: Path | BinaryIO, limits: Limits, *, depth: int = 1) -> Iter
     except (zipfile.BadZipFile, EOFError, ValueError) as error:
         raise Refused(Status.CORRUPT, f"not a readable ZIP archive: {error}") from None
     with archive:
-        _check(archive.infolist(), limits)
+        _check(archive.infolist(), limits, names_only=names_only)
         yield SafeZip(archive, limits, depth)
