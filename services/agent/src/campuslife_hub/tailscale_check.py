@@ -3,7 +3,8 @@
 Read-only. It reads `tailscale serve status --json` (tailscale's ServeConfig) and `tailscale status --json` and judges:
 
 - https on 443 is terminated by serve and goes, path / only, to http://127.0.0.1:<sync port>;
-- no site, path or TCP forward on any port reaches the admin port, which is never exposed (D5);
+- no site, path or TCP forward on any port, of this machine or of a Tailscale Service it hosts, reaches the admin
+  port, which is never exposed (D5); what else a Service offers is not judged;
 - Funnel is off, so only the tailnet reaches the Hub;
 - the tailnet is running and this machine has a MagicDNS name, whose https URL is the hub_url pairing hands out.
 
@@ -88,34 +89,50 @@ def _reaches(target: str, port: int) -> bool:
         return False
 
 
+def _handlers(config: Mapping) -> Iterator[tuple[str, str, str, str | None]]:
+    """(site, its port, path, proxy target) of every web handler in a serve config."""
+    for site, web in (config.get("Web") or {}).items():
+        for path, handler in ((web or {}).get("Handlers") or {}).items():
+            yield site, site.rpartition(":")[2], path, (handler or {}).get("Proxy")
+
+
+def _to_admin(config: Mapping, admin_port: int, label: str = "") -> list[str]:
+    """What in a serve config, or in one of its Tailscale Services, reaches the admin port."""
+    found = []
+    for port, listener in (config.get("TCP") or {}).items():
+        forward = (listener or {}).get("TCPForward")
+        if forward and _reaches(forward, admin_port):
+            found.append(f"{label}port {port} forwards to the admin port {admin_port}, which must never be exposed")
+    for site, _, path, proxy in _handlers(config):
+        if proxy and _reaches(proxy, admin_port):
+            found.append(f"{label}https://{site}{path} goes to the admin port {admin_port}, which must never be exposed")
+    return found
+
+
 def judge(serve: Mapping, status: Mapping, *, sync_port: int, admin_port: int, public_url: str | None) -> Verdict:
     sync = f"http://127.0.0.1:{sync_port}"
     setup = f"run `tailscale serve --bg {sync}`"
     problems: list[str] = []
     served_443 = terminated_443 = False
     for config in _configs(serve):
-        for port, listener in (config.get("TCP") or {}).items():
-            forward = (listener or {}).get("TCPForward")
-            if forward and _reaches(forward, admin_port):
-                problems.append(f"port {port} forwards to the admin port {admin_port}, which must never be exposed")
-            if str(port) == "443":
-                if (listener or {}).get("HTTPS") and not forward:
-                    terminated_443 = True
-                else:
-                    problems.append(f"port 443 is not https that serve terminates; {setup}")
-        for site, web in (config.get("Web") or {}).items():
-            port = site.rpartition(":")[2]
-            for path, handler in ((web or {}).get("Handlers") or {}).items():
-                proxy = (handler or {}).get("Proxy")
-                where = f"https://{site}{path}"
-                if proxy and _reaches(proxy, admin_port):
-                    problems.append(f"{where} goes to the admin port {admin_port}, which must never be exposed")
-                elif port == "443" and (path != "/" or proxy != sync):
-                    problems.append(f"{where} goes to {proxy or 'something other than a proxy'}; on 443 only / goes, to {sync}")
-                elif port == "443":
-                    served_443 = True
+        problems += _to_admin(config, admin_port)
+        listener = (config.get("TCP") or {}).get("443")
+        if listener is not None:
+            if (listener or {}).get("HTTPS") and not (listener or {}).get("TCPForward"):
+                terminated_443 = True
+            else:
+                problems.append(f"port 443 is not https that serve terminates; {setup}")
+        for site, port, path, proxy in _handlers(config):
+            if port != "443":
+                continue
+            if path != "/" or proxy != sync:
+                problems.append(f"https://{site}{path} goes to {proxy or 'something other than a proxy'}; on 443 only / goes, to {sync}")
+            else:
+                served_443 = True
         if any((config.get("AllowFunnel") or {}).values()):
             problems.append("Funnel is on, opening the Hub to the internet; turn it off so only the tailnet reaches it")
+    for name, service in (serve.get("Services") or {}).items():
+        problems += _to_admin(service or {}, admin_port, f"Tailscale Service {name}: ")
     if not (served_443 and terminated_443):
         problems.append(f"nothing serves https on 443 to the sync listener; {setup}")
 
