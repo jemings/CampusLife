@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .compare import BrokenGolden, compare_dirs
+from .contract import Contract
 
 
 def _directory(value: str) -> Path:
@@ -14,6 +15,11 @@ def _directory(value: str) -> Path:
     if not path.is_dir():
         raise argparse.ArgumentTypeError(f"not a directory: {value}")
     return path
+
+
+def _contract_of(expected_dir: Path) -> Contract | None:
+    root = expected_dir.resolve().parent.parent
+    return Contract.load(root) if expected_dir.name == "valid" and (root / "schemas").is_dir() else None
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -25,7 +31,7 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "For every *.json under EXPECTED_DIR, read the file at the same relative path under "
             "ACTUAL_DIR and compare JSON values: numbers by exact decimal value, member order "
-            "ignored, absent differs from null, strings by code point. A missing output file is "
+            "ignored, absent differs from null, strings by code point; when EXPECTED_DIR is a contract's fixtures/valid, an integer place of the schema written with a fraction or exponent is a mismatch too. A missing output file is "
             "a mismatch; extra output files are ignored. Exit status: 0 all match, 1 mismatches "
             "(one per line on stdout), 2 usage error (an EXPECTED_DIR without *.json, or a file "
             "under it that is not strict JSON)."
@@ -43,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"no *.json under {arguments.expected_dir}")
     sys.stdout.reconfigure(errors="backslashreplace")
     try:
-        mismatches = compare_dirs(arguments.expected_dir, arguments.actual_dir)
+        mismatches = compare_dirs(arguments.expected_dir, arguments.actual_dir, _contract_of(arguments.expected_dir))
     except BrokenGolden as error:
         print(f"campuslife-contracts compare: golden file is not strict JSON: {error}", file=sys.stderr)
         return 2
