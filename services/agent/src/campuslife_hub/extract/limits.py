@@ -1,4 +1,4 @@
-"""The limits table (S7): every bound an identify or extract job runs under, in one frozen value.
+"""The limits table (S7): every bound an identify, extract or render job runs under, in one frozen value.
 
 A job carries the table in its request, the child keeps to it, and the Hub checks what comes back against it. Its
 hash is part of the pipeline version, so a change of any bound makes new jobs rather than reusing results made under
@@ -21,8 +21,8 @@ generated Korean and English Markdown, generated ZIPs), not on users' files:
 - identify read a 10,000-member ZIP in 0.05 s and 26 MiB;
 - deflate packed 64 MiB of zeros, a zip bomb, 1,029 times; a 1 MiB Markdown file of one paragraph repeated 140 times;
   one paragraph alone 3.8 times. zip_max_ratio parts them;
-- timeout_s, mem_bytes and input_max_bytes are not measured here: they leave the format extractors to come (#6, #7,
-  #13) the room a lecture PDF or deck of a few hundred MiB needs, and those issues measure them.
+- timeout_s, mem_bytes, input_max_bytes and rendition_max_bytes are not measured here: they leave the format extractors and the converter to come (#6,
+  #7, #13, O4) the room a lecture PDF or deck of a few hundred MiB needs, and those issues measure them.
 """
 
 from __future__ import annotations
@@ -51,6 +51,8 @@ class Limits:
     """The text of all blocks together; an extractor stops there, partial."""
     body_max_bytes: int = 64 * MiB
     """The body the Hub stores, as canonical JSON."""
+    rendition_max_bytes: int = 512 * MiB
+    """The PDF a converter writes; a larger one is not stored."""
     zip_max_members: int = 10_000
     zip_max_total_bytes: int = 1024 * MiB
     """What the members of one archive declare uncompressed, together."""
