@@ -1,12 +1,13 @@
 """What the file pipeline tells the local UI about each Attachment (S13)."""
 
 import pytest
-from extract_harness import hub_with
+from extract_harness import TEST_LIMITS, hub_with
 from test_capture_commit import blob_store, device
 
 from campuslife_hub import ingest
 from campuslife_hub.extract.fakes import fake
-from campuslife_hub.extract.framework import IDENTIFY
+from campuslife_hub.extract.framework import IDENTIFY, RULES_CHANGED
+from campuslife_hub.extract.limits import Limits
 from campuslife_hub.ingest import REPROCESS
 from campuslife_hub.jobs import JobState, OutcomeCode
 
@@ -117,3 +118,30 @@ async def test_the_file_pipeline_reports_its_status_through_the_registry(db, dev
     hub = hub_with(db, blob_store, device, tmp_path)
 
     assert [(name, reporter.__self__) for name, reporter in hub.registry.statuses] == [("files", hub.files)]
+
+
+async def test_after_the_rules_change_the_last_reading_is_shown_with_the_change_and_nothing_is_queued(db, device, blob_store, tmp_path):
+    refusing = fake("refuse", {"text/plain": {"status": "corrupt"}})
+    hub = hub_with(db, blob_store, device, tmp_path, refusing)
+    capture = await hub.capture(("a.md", NOTES), ("b.txt", NOTES))
+    await hub.settle()
+    queued = len(await hub.jobs())
+    changed = hub_with(db, blob_store, device, tmp_path, refusing, limits=Limits(**{**TEST_LIMITS.to_json(), "rendition_max_bytes": 1 << 20}))
+
+    markdown, plain = [await status(changed, attachment) for attachment in capture["attachments"]]
+    await changed.settle()
+
+    assert (markdown.detected_mime, markdown.facts) == ("text/markdown", (RULES_CHANGED,))
+    assert kinds(markdown) == [(IDENTIFY, {}, JobState.SUCCEEDED, None), ("extract.text", {"syntax": "markdown"}, JobState.SUCCEEDED, None)]
+    assert plain.detected_mime == "text/plain"
+    assert [(job.job_type, job.state, job.outcome_code) for job in plain.jobs][-1] == ("extract.fake_refuse", JobState.FAILED, OutcomeCode.CORRUPT)
+    assert RULES_CHANGED in plain.facts
+    assert len(await changed.jobs()) == queued
+
+
+async def test_a_file_read_under_the_current_rules_has_no_rules_fact(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path)
+    capture = await hub.capture(("a.md", NOTES))
+    await hub.settle()
+
+    assert RULES_CHANGED not in (await status(hub, capture["attachments"][0])).facts

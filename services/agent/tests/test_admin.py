@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+
+import malicious_files as make
 from conftest import SignedAs
 from fastapi import APIRouter, HTTPException
 from opentelemetry import trace
@@ -1049,10 +1051,46 @@ async def test_the_file_status_masks_secrets_and_is_escaped(tmp_path, monkeypatc
         assert f"&lt;meta name=&quot;{name}&quot;&gt;" in page
 
 
-def failed_job(error):
+def failed_job(error, state=JobState.FAILED):
     return jobs.Job(
-        "j", "k", "extract.text", "blob:x", (), {}, EXTRACT, JobState.FAILED, None, 1, None, error, "2026-03-02T00:30:00.000Z", "2026-03-02T00:30:00.000Z",
+        "j", "k", "extract.text", "blob:x", (), {}, EXTRACT, state, None, 1, None, error, "2026-03-02T00:30:00.000Z", "2026-03-02T00:30:00.000Z",
     )
+
+
+async def page_with_status(tmp_path, found):
+    registry = JobRegistry()
+    registry.plan("planted", lambda view, context: [], status=lambda snap, attachment_id: found)
+    async with hub(tmp_path, registry=registry) as (client, admin):
+        await import_files(admin.core, [source(tmp_path, "notes.txt")])
+        await log_in(client)
+        return (await client.get("/")).text
+
+
+async def test_the_file_status_cuts_a_long_error(tmp_path):
+    error = "e" * admin_app.STATUS_ERROR_CHARS + "TAIL"
+
+    page = await page_with_status(tmp_path, FileStatus("text/plain", (), (failed_job(error),)))
+
+    assert f"extract.text failed: {'e' * admin_app.STATUS_ERROR_CHARS}<" in page
+    assert "TAIL" not in page
+
+
+async def test_the_file_status_shows_why_a_job_waits_to_be_tried_again(tmp_path):
+    page = await page_with_status(tmp_path, FileStatus("text/plain", (), (failed_job("the child exited 1", JobState.RETRY_WAIT),)))
+
+    assert "extract.text retry_wait: the child exited 1" in page
+
+
+async def test_a_file_whose_identify_failed_is_not_said_to_be_waiting(tmp_path):
+    async with hub(tmp_path, registry=build_registry()) as (client, admin):
+        await import_files(admin.core, [source(tmp_path, "slides.zip", make.traversal(tmp_path / "t.zip").read_bytes())])
+        await admin.runner.run_due()
+        await log_in(client)
+
+        page = (await client.get("/")).text
+
+    assert "not identified · identify failed (unsafe_input)" in page
+    assert "not identified yet" not in page
 
 
 async def test_reprocess_from_the_captures_page_queues_the_capture_again_and_wakes_the_runner(tmp_path):
