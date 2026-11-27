@@ -702,6 +702,20 @@ async def test_a_purge_leaves_no_deleted_text_in_the_database_file_or_its_wal(de
     assert SECRET_FILENAME.encode() not in left
 
 
+async def test_a_purge_leaves_no_text_of_the_conflict_records_it_takes_in_the_database_file_or_its_wal(default_secure_delete_off, db, device, blob_store, tmp_path):
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    kept_aside = "충돌로남긴비밀문장QWERTY"
+    stale = {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": None, "to": kept_aside}}}
+    [outcome] = await apply(db, device, stale)
+    assert outcome["conflict_record_ids"] == [stale["mutation_id"]]
+    assert kept_aside.encode() in database_file_bytes(Layout(tmp_path).database)
+
+    purged = await purge.purge_blob(db, blob_store, lecture_.pdf, delete_notes=[lecture_.note], hooks=PurgeHooks())
+
+    assert purged.finished
+    assert kept_aside.encode() not in database_file_bytes(Layout(tmp_path).database)
+
+
 def read_holding_the_wal(database):
     reader = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True, isolation_level=None)
     reader.execute("BEGIN")
