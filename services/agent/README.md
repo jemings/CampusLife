@@ -81,6 +81,7 @@ uv run campuslife-hub autostart unregister
 | `serve` | Hub 실행(sync 리스너 `127.0.0.1:8730`, 로컬 UI·admin API `127.0.0.1:8731`, job runner, 1시간마다 정리; `--public-url`, `--dormant-after-days`). 보통은 작업이 실행함 |
 | `open` | 로컬 UI를 1회용 로그인 링크로 엶 |
 | `import <파일…>` | 파일들을 Capture 하나로 가져옴(`--policy`, `--link item:<id>`) |
+| `reprocess --capture <id>` \| `--all` | Capture 하나 또는 전체의 파일을 지금 Hub의 판별기·추출기로 다시 처리(원본은 그대로) |
 | `backup --to <폴더>` | 백업 세대 하나를 씀(`--keep N`) |
 | `restore --from <폴더>` | 빈 data root에 백업 세대를 복원(`--generation NAME`) |
 | `fsck` | 모든 Blob의 해시를 다시 계산하고 누락·손상·고아 Blob을 보고 |
@@ -93,9 +94,17 @@ uv run campuslife-hub autostart unregister
 | `approve <id>` | dormant 장치를 다시 승인. 같은 id와 토큰으로 이어서 동기화함 |
 | `tailscale-check` | `tailscale serve`가 sync 리스너만 노출하는지 확인하고 기대 `hub_url`을 출력(`--sync-port`, `--admin-port`, `--public-url`) |
 
-Hub가 도는 동안 `init`·`import`·`backup`·`devices`·`revoke`·`approve`는 그 Hub의 admin API를 거치고, Hub가 없으면 직접 data root를 잠그고 씁니다(E11). `restore`는 빈 data root를 잠그고 채우므로 그 root에서 도는 Hub가 없어야 합니다. `open`·`status`·`stop`은 도는 Hub가 있어야 합니다. `ls`·`fsck`는 잠그지 않고 읽기만 합니다(SQLite가 `-wal`·`-shm` 파일을 만들 수는 있음). `tailscale-check`는 data root의 데이터를 바꾸지 않습니다. `--public-url`을 주지 않으면 그 root에서 도는 Hub에게 `public_url`을 묻는데, 도는 Hub를 찾을 때 다른 명령처럼 `hub.lock`을 만들거나 멈춘 Hub가 남긴 `admin.port`를 지울 수 있습니다. Hub에게 묻지 못하면(admin 토큰을 읽을 수 없음 등) 그 이유를 `warning:` 한 줄로 알리고 비교 없이 노출 검사를 계속합니다.
+Hub가 도는 동안 `init`·`import`·`reprocess`·`backup`·`devices`·`revoke`·`approve`는 그 Hub의 admin API를 거치고, Hub가 없으면 직접 data root를 잠그고 씁니다(E11). `restore`는 빈 data root를 잠그고 채우므로 그 root에서 도는 Hub가 없어야 합니다. `open`·`status`·`stop`은 도는 Hub가 있어야 합니다. `ls`·`fsck`는 잠그지 않고 읽기만 합니다(SQLite가 `-wal`·`-shm` 파일을 만들 수는 있음). `tailscale-check`는 data root의 데이터를 바꾸지 않습니다. `--public-url`을 주지 않으면 그 root에서 도는 Hub에게 `public_url`을 묻는데, 도는 Hub를 찾을 때 다른 명령처럼 `hub.lock`을 만들거나 멈춘 Hub가 남긴 `admin.port`를 지울 수 있습니다. Hub에게 묻지 못하면(admin 토큰을 읽을 수 없음 등) 그 이유를 `warning:` 한 줄로 알리고 비교 없이 노출 검사를 계속합니다.
 
 CLI 요청은 600초를 기다립니다. 그보다 오래 걸리는 큰 첫 백업이나 큰 import는 CLI가 시간 초과로 끝나도 Hub가 계속 처리합니다. 백업은 `status`의 `backup last`로, import는 `ls`로 끝났는지 확인합니다. 시간 초과 뒤 import를 다시 하면 같은 파일의 Capture가 둘 생깁니다.
+
+### 파일 처리 (D26)
+
+- Capture가 들어오면 Hub가 파일마다 형식을 판별(identify)하고, 그 형식을 읽는 추출기(지금은 텍스트·Markdown의 `text`)로 extraction Artifact를 만듭니다. 판별·추출은 Hub 밖 child 프로세스에서 상한 표(FILE-INGESTION §10) 안에서 돌고, 하나가 죽거나 멈춰도 Hub와 다른 파일 처리는 계속됩니다.
+- 로컬 UI의 **Captures**가 파일마다 판별 형식, job 상태와 `outcome_code`, 실패 이유를 보여 줍니다. 이름이 바이트와 다른 형식을 말하거나 읽는 추출기가 없으면 그것도 적습니다. 더 자세한 job 목록은 **Jobs**에 있습니다.
+- 가져오기 폼에서 강의 세션을 고르면 가져온 파일이 모두 그 LectureSession에 연결됩니다. CLI는 `import --link item:<id>`입니다.
+- **재처리:** Captures의 **Reprocess**(Capture 하나)나 **Reprocess every Capture**, 또는 `campuslife-hub reprocess --capture <id> | --all`. 판별부터 다시 하고 새 Artifact를 만들며, 원본과 옛 Artifact는 그대로 둡니다. 같은 추출기 버전이면 block id가 같습니다. Hub를 업데이트해 추출기가 바뀌어도 자동으로 다시 처리하지 않으므로, 새 추출기로 읽히고 싶은 Capture는 재처리합니다. Hub가 돌지 않을 때 실행하면 job만 쌓이고 다음 `serve`에서 돕니다.
+- 실패한 job은 **Jobs**의 Retry로 같은 job을 다시 시도합니다. 원본이 purge된 뒤의 job은 Retry가 없습니다.
 
 ### sync 리스너와 tailscale serve (D5, D22)
 
@@ -185,6 +194,7 @@ uv run campuslife-hub --root D:\CampusLife-restored restore --from E:\CampusLife
 | pairing secret 해시 | 쓴 것은 남김(Hub를 다시 시작해도 재사용을 잡기 위해). 쓰지 않은 것은 새 코드를 만들 때 지움 |
 | 로그 `logs\hub.log` | 지금 파일과 이전 파일 5개(`hub.log.1`…`.5`), 각 5 MiB, 최대 30 MiB. 비밀 값과 강의 본문은 가림(E19) |
 | `staging\`의 쓰다 만 파일 | 다음 기동 때 지움 |
-| 판별·추출 결과(identify·extraction Artifact, Blob마다의 판별 형식) | 무기한. 원본을 purge하면 함께 지움. 추출기 버전이나 params가 바뀌어 새로 추출해도 옛 Artifact는 남음 |
+| 판별·추출 결과(identify·extraction Artifact, Blob마다의 판별 형식) | 무기한. 원본을 purge하면 함께 지움. 추출기 버전이나 params가 바뀌거나 재처리해 새로 추출해도 옛 Artifact는 남음 |
+| 렌디션(rendition Artifact와 그 PDF Blob. 변환기는 아직 없음, O4) | 무기한. 원본을 purge하면 함께 지움. 변환기 버전이 바뀌어 새로 만들어도 옛 렌디션은 남음 |
 | 끝난 처리 job(`processing_jobs`) | 무기한. 입력 Blob이 purge·정리로 없어지면, 그때 끝나 있던 job은 행이 이력으로 남고 `job_key`만 `released:<id>`로 풀림(다시 시도할 수 없음). 그래서 같은 바이트가 다시 들어오면 판별·추출을 다시 함. 그때 아직 대기·실행 중이던 job은 key를 지킴 |
 | `work\<job id>\`(추출 child의 작업 디렉터리) | job이 끝날 때 지움. Hub가 멈춰 남은 것은 다음 기동 때 지움 |

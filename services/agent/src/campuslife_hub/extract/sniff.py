@@ -1,8 +1,9 @@
 """identify (S9): the media type family a Blob's bytes show, read in the child.
 
-Magic bytes first; a ZIP is opened through safe_zip to tell OOXML and HWPX from a plain archive, so a dangerous
-archive ends identify with unsafe_input; an OLE container holding an EncryptedPackage stream is an encrypted
-OOXML file and ends it with password_required. Bytes with no signature are text when a sample of them decodes,
+Magic bytes first; a ZIP is opened through safe_zip for its member names to tell OOXML and HWPX from a plain
+archive, so an archive whose names are dangerous ends identify with unsafe_input, while one too large to read is left
+to its extractor; an OLE container holding an EncryptedPackage stream, found by scanning the file in chunks, is an
+encrypted OOXML file and ends it with password_required. Bytes with no signature are text when a sample of them decodes,
 and application/octet-stream otherwise. UTF-16 is known only by its BOM: without one it is not guessed and reads as
 application/octet-stream. The version goes into the identify pipeline: a change to what this
 reports is a new version.
@@ -22,6 +23,10 @@ VERSION = "1"
 
 HEAD_BYTES = 4096
 TEXT_SAMPLE_BYTES = 64 * 1024
+SCAN_BYTES = 1 << 20
+"""What identify holds of a file at once while it looks through all of it."""
+MIMETYPE_MAX_BYTES = 256
+"""An HWPX mimetype member says application/hwp+zip; a larger one is not read."""
 BOMS = (codecs.BOM_UTF8, codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)
 """A text BOM comes before every signature: FF FE would otherwise read as an MPEG audio frame."""
 CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
@@ -32,10 +37,11 @@ OOXML_PARTS = (("word/document.xml", formats.DOCX), ("ppt/presentation.xml", for
 
 
 def _zip_family(path: Path, limits: Limits) -> str:
-    with open_zip(path, limits) as archive:
-        names = {member.name for member in archive.members}
-        if "mimetype" in names and archive.read("mimetype").strip() == formats.HWPX.encode():
+    with open_zip(path, limits, names_only=True) as archive:
+        sizes = {member.name: member.size for member in archive.members}
+        if sizes.get("mimetype", MIMETYPE_MAX_BYTES + 1) <= MIMETYPE_MAX_BYTES and archive.read("mimetype").strip() == formats.HWPX.encode():
             return formats.HWPX
+        names = set(sizes)
         if "[Content_Types].xml" in names:
             for part, media_type in OOXML_PARTS:
                 if part in names:
@@ -43,8 +49,21 @@ def _zip_family(path: Path, limits: Limits) -> str:
         return formats.ZIP
 
 
+def _holds(path: Path, marker: bytes) -> bool:
+    """Whether the file holds marker, read SCAN_BYTES at a time, each chunk after the last len(marker) - 1 bytes of
+    the one before so a marker across two chunks is found."""
+    carried = b""
+    with open(path, "rb") as source:
+        while chunk := source.read(SCAN_BYTES):
+            window = carried + chunk
+            if marker in window:
+                return True
+            carried = window[-(len(marker) - 1):]
+    return False
+
+
 def _cfb_family(path: Path) -> str:
-    if ENCRYPTED_PACKAGE in path.read_bytes():
+    if _holds(path, ENCRYPTED_PACKAGE):
         raise Refused(Status.PASSWORD_REQUIRED, "an encrypted Office document (an OLE container with an EncryptedPackage)")
     return formats.CFB
 

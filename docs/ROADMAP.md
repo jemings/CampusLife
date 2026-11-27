@@ -93,7 +93,7 @@ README와 Epic #1의 MVP 기준은 이 목록을 따릅니다.
 - 다수 파일을 Relation으로 같은 LectureSession·Course에 연결, 개정판은 `supersedes` Suggestion (#5)
 - 확장자 + MIME + magic bytes 기반 형식 탐지, extractor subprocess 격리
 - PDF 텍스트·스캔 OCR, PPTX, DOCX, XLSX/CSV (#6)
-- PDF 렌디션 Blob(`rendition_of`)
+- PDF 렌디션(rendition Artifact, 변환기는 O4, D26)
 - HWP/HWPX adapter와 미지원 fallback (#7)
 - ZIP 안전 검사, 코드/Jupyter, 오디오/비디오/자막 (#13)
 - 결정적 ContentBlock id와 공통 Locator (D13)

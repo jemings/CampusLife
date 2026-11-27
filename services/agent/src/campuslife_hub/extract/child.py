@@ -29,8 +29,12 @@ def respond(request: dict) -> dict:
     limits = Limits.from_json(request["limits"])
     path = Path(request["path"])
     try:
-        if Op(request["op"]) is Op.IDENTIFY:
+        op = Op(request["op"])
+        if op is Op.IDENTIFY:
             return {"status": Status.OK, "media_type": sniff.identify(path, limits)}
+        if op is Op.RENDER:
+            _entry(request["entry"])(path, request["params"], limits, Path(request["out"]))
+            return {"status": Status.OK}
         extracted: Extracted = _entry(request["entry"])(path, request["params"], limits)
     except Refused as refused:
         return {"status": refused.status, "reason": refused.reason}
