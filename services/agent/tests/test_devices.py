@@ -491,6 +491,15 @@ async def test_the_audit_log_keeps_the_tailscale_login_a_pairing_came_with(tmp_p
         ]
 
 
+async def test_the_tailscale_login_reaches_the_audit_log_on_one_line_and_cut_to_256_characters(tmp_path):
+    """The audit log keeps what it is given for good, and the header comes from outside the Hub."""
+    async with bench(tmp_path) as b:
+        login = "a\nb\u2028c\u202ed\x7f" + "x" * 100_000
+        await devices.pair(b.core, request(UNKNOWN_SECRET), now=b.clock(), limiter=b.limiter, redactor=b.redactor, tailscale_user=login)
+
+        assert await pair_failures(b) == [{"reason": "unknown_secret", "tailscale_user": "a\ufffdb\ufffdc\ufffdd\ufffd" + "x" * 248}]
+
+
 async def test_a_reissued_token_leaves_the_old_one_working_until_its_own_first_use_retires_it(tmp_path):
     async with bench(tmp_path) as b:
         paired = await b.paired()
