@@ -89,7 +89,7 @@
 - `GET /v1/changes?since=<seq>&limit=500`은 다음을 돌려줍니다: `{hub_id, epoch, changes:[{type, id, rev, deleted, data}], next_since, has_more}`. 스트림은 하나입니다. *(D20으로 대체됨: 항목 구분 키는 `type`이 아니라 `entity`(E18))*
 - cursor는 클라이언트가 저장합니다. 같은 페이지를 다시 받아도 행을 덮어쓰기만 하므로 멱등입니다. full reconcile은 `since=0`과 같은 경로입니다.
 - tombstone은 휴지통 purge 후에도 `(id, deleted)` 행으로 남깁니다. 작아서 무기한 보존할 수 있으므로 "retention 초과" 상황이 없습니다.
-- **`hub_id`와 `epoch`:** 모든 응답에 싣습니다. `epoch`은 복원하거나 새 노트북으로 이전할 때 새로 발급합니다. 클라이언트는 epoch가 바뀐 것을 보면 다음을 합니다.
+- **`hub_id`와 `epoch`:** 모든 응답에 싣습니다. `epoch`은 복원하거나 새 노트북으로 이전할 때 새로 발급합니다. 클라이언트는 epoch가 바뀐 것을 보면 다음을 합니다. *(D24로 대체됨: 클라이언트는 응답의 epoch을 비교하지 않습니다. `GET /v1/changes`·`POST /v1/mutations`에 기준 epoch(`CampusLife-Epoch`)을 싣고, Hub가 409 `epoch_changed`로 답하면 캐시를 비우고 `since=0`부터 받고 보관한 Mutation을 미전송 Mutation 앞에 처음 순서대로 다시 보냅니다. Hub에 없는 Capture는 그 재전송의 `retry{missing_blobs}`를 따라 다시 올립니다)*
   1. 로컬 캐시를 버리고 `since=0`부터 다시 받습니다.
   2. ACK를 받았지만 Hub에 없는 Capture를 다시 올립니다. D14의 보존 규칙 덕분에 원본이 아직 남아 있습니다.
   3. 미전송 Mutation을 다시 보냅니다.
@@ -493,7 +493,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 긴 텍스트 필드(스키마에 `x-text: true`)는 `from` 대신 `from_hash`를 보냅니다.
 - **적용 규칙:** Hub의 현재 값이 `from`과 같으면 그 필드를 적용하고, 다르면 그 필드만 충돌입니다.
   - 스칼라 필드: 같은 필드를 동시에 바꾼 경우만 충돌이고, 나머지 필드는 적용합니다.
-  - 텍스트 본문(Note body): 충돌하면 Hub 값을 유지하고, 제출된 값은 `ConflictRecord{entity_ref, field, theirs_rev, mine_value_blob, state}`로 보존합니다. 사용자가 비교 UI에서 고르거나 직접 합친 결과를 일반 patch로 보내면 해소됩니다. 자동 텍스트 병합은 하지 않습니다.
+  - 텍스트 본문(Note body): 충돌하면 Hub 값을 유지하고, 제출된 값은 `ConflictRecord{entity_ref, field, theirs_rev, mine_value_blob, state}`로 보존합니다. 사용자가 비교 UI에서 고르거나 직접 합친 결과를 일반 patch로 보내면 해소됩니다. 자동 텍스트 병합은 하지 않습니다. *(D24로 대체됨: 스칼라와 날짜 묶음을 포함해 진 키 전부를 Mutation 하나당 기록 하나 `{id = mutation_id, entity_ref, set | resolved}`에 inline으로 보존하고, 해소는 전용 원자 op `conflict.resolve`입니다)*
   - Relation·Tag: 각각 독립 행이고 추가·삭제가 멱등이라 충돌이 없습니다. Relation ID는 `"{from}|{type}|{to}"`입니다.
   - delete: 소프트 삭제라 항상 적용됩니다. 삭제된 엔터티에 patch가 오면 거부하되 제출 값은 ConflictRecord로 보존합니다.
 - **재전송:** `mutation_id`는 Hub `applied_mutations`의 PK이고 90일 보관합니다. 그보다 오래된 재전송이 와도 CAS가 다시 판정하므로 두 번 적용되지 않습니다. *(D21로 대체됨: create·patch만 그렇습니다. CAS가 없는 delete·restore·Relation create는 90일 넘은 재전송이 다시 적용됩니다(수용))*
@@ -537,7 +537,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **E12. Mutation 결과:** `{mutation_id, result: applied|duplicate|conflict|rejected|retry|not_attempted, reason?, applied_fields?, conflicted_fields?, conflict_record_ids?, missing_blobs?, original?}`.
   - `reason`은 `id_reuse, not_canonical, owner, schema, deleted, link_target_missing, unsupported_entity`입니다(A4). `id_reuse`(같은 id, 다른 내용)는 rejected입니다.
   - `duplicate`는 이미 처리한 `mutation_id`의 재전송이며 `original`에 처음 결과를 담습니다.
-  - 배치는 순서대로 처리하고 첫 `retry` 뒤는 `not_attempted`입니다. 배치가 형식에 맞으면 HTTP 200입니다. HTTP 409는 업로드 세션 같은 단일 자원에만 씁니다.
+  - 배치는 순서대로 처리하고 첫 `retry` 뒤는 `not_attempted`입니다. 배치가 형식에 맞으면 HTTP 200입니다. HTTP 409는 업로드 세션 같은 단일 자원에만 씁니다. *(D24로 대체됨: 기준 epoch이 Hub와 다른 배치는 Hub가 본문을 읽기 전에 409 `epoch_changed`로 통째로 거절합니다)*
   - D4·D7의 `id_reuse` 응답과 D18의 결과 표현을 대체합니다.
 - **E13. 시간 표기:** `instant`는 정확히 `YYYY-MM-DDTHH:MM:SS.sssZ`(UTC, 밀리초 3자리)입니다. `local_date`는 `{date, tz}`, `local_time_rule`은 `{weekdays(ISO, 월=1), start, end, tz, from_date, until_date}`(end > start)입니다. Item `starts_at`·`due_at`은 `all_day`가 true면 local_date, 아니면 instant입니다. 날짜 부분은 실제 달력 날짜여야 합니다(규칙 `calendar`).
 - **E15. 녹음 타임라인:** 이벤트는 `{type, mono_ns, media_pos_ms}`이고 wall clock은 timeline의 `boot_id`, `anchors:[{wall_ms, mono_ns}]`(1개 이상), `start_uncertainty_ms?`에만 둡니다. `mono_ns`는 2^53을 넘을 수 있는 int64입니다. D15의 이벤트 문장을 대체합니다.
@@ -705,7 +705,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **판정 순서 (#4 결정 3):** 앱 바깥의 ASGI 래퍼 하나가 404·405·500을 포함한 모든 응답에 Hub 헤더와 `common/error` 모양을 씌우고, 요청은 다음 순서로 판정합니다.
   1. `CampusLife-Contract`가 없거나 형식이 틀리면 400 `invalid_request`
   2. 인증 실패는 401(`WWW-Authenticate: Bearer`)
-  3. `contract_too_old`(GET `/v1/hub`는 제외)
+  3. `contract_too_old`(GET `/v1/hub`는 제외) *(D24로 대체됨: 3과 4 사이에 `GET /v1/changes`·`POST /v1/mutations`의 기준 epoch 판정이 들어갑니다. 헤더가 없거나 틀리면 400 `invalid_request`, Hub와 다르면 409 `epoch_changed`)*
   4. 본문: `loads_strict`로 읽고, JSON 본문은 `Content-Type: application/json`이어야 합니다. 위반이 NFC뿐이면 `not_canonical`, 그 밖은 `invalid_request`입니다.
   5. 처리하지 못한 예외는 500 `internal_error`이고, 본문에 내부 정보를 싣지 않습니다.
   - 405는 `invalid_request`에 `Allow`를 붙입니다. 끝에 붙은 슬래시는 redirect하지 않고 404입니다(sync.yaml에 3xx가 없음).
@@ -842,6 +842,63 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - 운영 방법은 `services/agent/README.md`의 "장치", 클라이언트 규칙은 MULTI-DEVICE-ARCHITECTURE §4, 보안 요약은 PRIVACY-SECURITY의 Multi-device Security가 적습니다.
 - D22의 "#19가 붙기 전의 serve" 문장과 `tailscale-check`(#4 결정 9)의 비교 대상은 이 항목을 따릅니다.
 - 범위 밖: 클라이언트 등록 화면과 저장(#3·#16), 실기기 확인(#39·#14), 복원 뒤 클라이언트 재동기화(#18), 재pairing 뒤 annotation layer 이어받기(#17).
+
+## D24. 충돌 기록과 복원 뒤 재동기화 (#18, 2026-11-28)
+
+**문제:** #18을 시작하며 D3·D18이 구현(#2·#4·#19)과 맞지 않는 곳이 드러났습니다. 괄호 안 E 번호는 #18 계약서의 실험입니다.
+- D18의 ConflictRecord는 필드당 한 행과 `mine_value_blob`이고, 텍스트 본문과 지워진 엔터티의 patch만 기록했습니다. 제목과 본문을 함께 고친 patch가 지면 진 제목 값은 어디에도 남지 않았습니다(E1). 같은 patch를 91일 뒤 다시 보내면 기록이 하나 더 생겼습니다(E2).
+- D21의 날짜 묶음(`all_day`·`starts_at`·`due_at`)은 한 단위로 판정됩니다. 그래서 필드별 기록에서 `starts_at`만 "내 값 채택"하면 해소가 `rejected{schema}`가 됩니다(E4).
+- D3은 클라이언트가 응답의 epoch이 바뀐 것을 보고 재동기화한다고 했습니다. 그런데 #19 뒤로는 복원 뒤 첫 응답이 `401 device_dormant`이고, 백업 뒤 pairing한 장치는 재pairing해 새 장치가 됩니다. 클라이언트 규칙이 하나만 빠져도 옛 cursor로 받은 pull은 0행과 같은 `next_since`를 돌려받아 이후 변경을 조용히 놓쳤고, 옛 상태를 기준으로 한 push는 복원된 Hub에서 그대로 판정되었습니다(E6).
+- 복원은 `applied_mutations`도 백업 시점으로 되돌립니다. 백업 뒤 ACK된 편집은 복원된 Hub에 없고, 같은 mutation_id로 다시 보내면 적용됩니다(E6).
+- device/status의 `open_conflict_count`는 Hub가 소유한 상태를 클라이언트에게 세라고 하는 이름이었습니다.
+
+**검토한 안:** 결정마다 아래 "버린 안"에 적습니다. 근거와 실험 재현은 #18 본문의 계약서에 있습니다.
+
+**결정** (오케스트레이터 결정, 2026-11-28, 사용자가 결정을 위임). 앞 항목에서 이 결정과 어긋나는 문장에는 `D24로 대체됨`을 달았습니다.
+- **ConflictRecord 모양 (#18 결정 1):** Mutation 하나에 기록 하나이고 `id = mutation_id`입니다. 제출한 change를 patch의 set 모양 그대로 `set:{key: change}`에 담습니다(계약 `conflict_record/conflict_record`).
+  - 기록하는 것: `conflict` 결과의 `conflicted_fields` 전부(스칼라와 날짜 묶음 포함), patch가 `rejected{deleted}`일 때 그 키 전부.
+  - 기록하지 않는 것: 값이 없는 상태 손실(`STATE_LOST`), 없는 Item의 restore(D21, 남길 값이 없음), `suggestion.accept`의 `rejected{deleted}`(의도는 Suggestion이 가짐).
+  - 근거: 날짜 묶음이 한 기록에 남아 해소가 거부되지 않고(E4), 기본 키가 E2의 중복을 막습니다. 새 Blob 참조가 없어 Blob 정리·백업·purge(`BLOB_REFERENCES`의 세 소비자)를 건드리지 않습니다. Item 본문도 이미 피드에 inline입니다.
+  - 버린 안: D18 원안(필드당 행 + Blob), inline과 Blob 혼합, uuid5로 유도한 id.
+  - 단점: 피드 행 하나가 최대 8 MiB(D22)입니다. 한 Mutation이 기록 둘을 낼 op가 생기면 그 op가 기록 종류를 additive로 더합니다.
+- **수명 (#18 결정 2):** 열린 기록은 `set`을 가집니다. 해소하면 `set`을 지우고 `resolved:{at, mutation_id}`를 씁니다. 스키마는 둘 중 정확히 하나를 요구하고, 클라이언트는 `set`이 있을 때만 열린 기록으로 봅니다.
+  - 닫힌 `state` enum을 두지 않으므로 첫 배포 뒤에도 새 상태를 선택 멤버로 더할 수 있습니다(D20).
+  - 해소된 작은 행은 무기한 남아 중복을 막습니다. 90일 넘은 재전송은 CAS가 다시 `conflict`로 판정하되, `conflict_record_ids`에 기존 id를 싣고 기록을 다시 열지 않습니다.
+  - 휴지통 만료는 열린 기록이 있는 Item을 건너뜁니다. 즉시 purge는 사용자의 명시적 파괴이므로 그 엔터티의 기록을 같은 트랜잭션에서 tombstone으로 만듭니다. 복구 없이 사라진 대상(Tag 등)의 열린 기록은 `set` 없는 `conflict.resolve`로 닫습니다.
+  - 버린 안: 값 영구 보존(진 본문이 모든 캐시와 백업에 남음), 해소할 때 tombstone(91일 재전송이 되살림), 닫힌 `state` enum.
+- **해소 (#18 결정 3):** 전용 원자 op `conflict.resolve {mutation_id, op, conflict_record_id, entity, set?}`이고 한 트랜잭션입니다.
+  1. 기록이 없거나 tombstone이면 `rejected{deleted}`이고 쓰지 않습니다.
+  2. `set`이 있으면 patch와 같은 CAS를 합니다. 키를 기록의 키로 제한하지 않습니다(E4의 `all_day`). schema·owner·not_canonical을 어기거나 대상이 soft-delete됐거나 없으면 rejected이고, 기록은 열린 채로 두며 새 기록도 만들지 않습니다.
+  3. 진 키는 새 기록(id = 이 mutation_id)이 되고 결과는 `conflict` + `conflict_record_ids`입니다.
+  4. 원 기록을 해소로 바꿉니다. 이미 해소됐으면 그대로 둡니다(멱등).
+  5. audit `conflict_resolved`(참조만)를 남깁니다.
+  - `entity`를 싣는 이유: set 규칙이 형제 `entity`를 읽습니다.
+  - 두 기기가 함께 해소하면 먼저 온 쪽이 해소합니다. 나중 쪽의 `set`은 지금 값에 대한 일반 CAS라서 같은 값이면 `applied`(수렴), 다르면 새 기록입니다. `set` 없는 "유지"는 아무것도 하지 않습니다. 잃는 값이 없습니다.
+  - soft-delete된 대상은 UI가 `[restore, conflict.resolve]`를 한 배치로 보냅니다. 암묵 복원은 없습니다.
+  - 버린 안: patch와 상태만 바꾸는 resolve. 원자적이지 않아 patch `rejected{schema}` + resolve `applied`면 값을 잃습니다.
+- **기준 epoch 요청 헤더 (#18 결정 4):** `GET /v1/changes`와 `POST /v1/mutations`는 요청 헤더 `CampusLife-Epoch`를 꼭 싣습니다. 값은 클라이언트의 캐시·cursor·보관 Mutation이 속한 epoch(기준 epoch)입니다. Hub의 epoch과 다르면 sync 봉투가 인증·계약 버전 판정 뒤, **본문을 읽기 전에** 409 `epoch_changed`로 답하고 아무것도 적용하지 않습니다(오류 `code`는 열린 값이라 additive).
+  - 기준 epoch은 처음 `GET /v1/hub`에서 정하고 409를 처리할 때만 바꿉니다. pairing·재pairing·401은 건드리지 않습니다. 응답의 epoch 헤더는 진단용이고 클라이언트가 비교하지 않습니다.
+  - 409 본문은 `details.epoch`에 Hub의 epoch을 싣고, 클라이언트는 그 값을 새 기준 epoch으로 씁니다(구현자 결정, #18 PR1). 근거: 거절과 새 값이 한 응답에 있어, 진단용인 응답 헤더나 따로 묻는 `GET /v1/hub`에 기대지 않습니다.
+  - 헤더가 없거나 두 번 오거나 형식이 틀리면 400 `invalid_request`입니다. 다른 operation은 이 헤더를 읽지 않습니다.
+  - push도 막는 이유: pull만 막으면 복원·재승인 뒤 먼저 간 push가 옛 상태 기준으로 `rejected`를 **기록**하고, 그 재전송은 `duplicate`에 막힙니다.
+  - 근거: 트리거가 인증된 요청의 409 하나라서 401 dormant와 재pairing의 예외 규칙이 필요 없고, Hub 시험만으로 검증합니다. E6의 원인은 cursor의 뜻이 따로 보관되는 epoch에 달린 결합이었고, 요청 헤더 하나로 그 결합을 없앱니다.
+  - 버린 안: 응답 헤더 비교(규칙 하나만 빠져도 E6), `changes_query`의 epoch(push 순서가 뒤집힘), 불투명 cursor(`next_since` 타입을 깨고 push는 따로), `since > change_seq` 거부(복원 Hub의 seq가 다시 자라면 놓침).
+  - 단점: 필수 헤더는 닫힌 입력이라 #3 첫 릴리스 전에 착륙해야 합니다(D20).
+- **백업 뒤 ACK된 편집 (#18 결정 5):** 클라이언트는 보낸 Mutation을 보관하고, 409 `epoch_changed`를 받으면 모두 처음 순서대로 다시 보냅니다. 어디까지가 백업에 있었는지는 복원된 Hub의 `applied_mutations`가 판정합니다. 백업에 있던 것은 `duplicate`, 잃은 것만 다시 CAS입니다.
+  - 보관 기간: create·patch·delete·restore·accept·dismiss·resolve는 ACK 뒤 60일입니다(계약 상수 `SENT_RETENTION_DAYS`). Hub 결과 보관 90일(`RESULT_RETENTION`)보다 짧아 "보관 중이면 Hub 결과도 남아 있음"이 성립하고, 30일은 시계와 정리 주기의 여유입니다. `capture.commit`은 원본을 보관하는 동안 보관합니다(commit은 이전 create와 비교하므로 나이와 무관하게 안전).
+  - 409 처리는 로컬 트랜잭션 하나입니다: 캐시를 비우고, cursor = 0, 기준 epoch을 갱신하고, 보관한 Mutation을 미전송 Mutation 앞에 처음 순서대로 둡니다. 몇 번 되풀이해도 같은 끝 상태입니다.
+  - D3의 "Hub에 없는 Capture를 다시 올림"은 이 경로가 대신합니다(재전송 → `retry{missing_blobs}` → 업로드 → `applied`). 백업 뒤 생긴 ConflictRecord도 같은 id로 되살아납니다.
+  - 사전 조건(#18의 뒤 PR): `suggestion.accept`가 만드는 Item id를 accept의 mutation_id에서 결정적으로 유도합니다. 60일보다 오래된 세대로 복원하면 CLI·UI가 "그 뒤 편집은 클라이언트가 되돌려 줄 수 없음"을 경고합니다. 원본이 정리된 commit(D14)이 `retry{missing_blobs}`를 계속 받으면 클라이언트는 그 commit을 rejected 목록으로 옮기고 다음으로 갑니다.
+  - **잃는 것:** Windows 로컬 UI(`windows_hub`)에서 백업 뒤에 한 편집(Outbox가 없음), 백업 뒤 생긴 Suggestion의 수락(다시 만든 Suggestion은 id가 달라 rejected 목록으로 감), 60일을 넘긴 편집.
+  - 버린 안: 손실 수용(복원 한 번에 진 값의 유일한 사본인 ConflictRecord까지 잃음), `backed_up_through`(결과에 rev가 없어 대응할 수 없고 얻는 것은 저장 공간뿐), 90일 전부 보관(결과를 잊는 경계와 겹쳐 delete가 다시 적용될 위험).
+- **장치 상태의 수 (#18 결정 6):** device/status `open_conflict_count`를 `rejected_mutation_count`(클라이언트 rejected 목록의 수)로 바꿉니다. 열린 기록 수는 Hub가 셉니다(Hub 소유 상태, D1). 닫힌 입력이라 #3 첫 릴리스 전에 바꿉니다.
+- **동기화 엔터티 (#18 결정 7):** ConflictRecord는 Hub가 모든 멤버를 쓰는 동기화 엔터티이고 피드에 `entity: conflict_record`로 옵니다(`changes_page.entity`는 열린 값). 계약 열림 시험의 OPEN 목록에 있습니다. 첫 배포 전이므로 필수 헤더를 더해도 `CONTRACT_VERSION`은 올리지 않습니다.
+- #17의 `conflict_of`는 ConflictRecord와 다른 기제입니다. 필기 레이어는 작성자가 하나이고, `rev`가 맞지 않은 제출본은 `conflict_of`가 붙은 형제 레이어로 남습니다(D12). ConflictRecord는 patch의 키 단위 CAS에서 진 값을 담습니다.
+
+**결과:**
+- 계약은 `schemas/conflict_record/conflict_record.json`, `sync/changes_page`의 conflict_record 행, `sync/request_headers`의 `CampusLife-Epoch`, `common/error`의 `epoch_changed`, `device/status`의 `rejected_mutation_count`, `campuslife_contracts.SENT_RETENTION_DAYS`이고, 하네스 규칙은 `HARNESS.md`의 "ConflictRecord"와 "HTTP 표면"에 있습니다. Hub는 `sync_envelope.py`가 기준 epoch을 판정합니다.
+- D3의 epoch 감지 문장, D18의 ConflictRecord·해소 문장, D20 E12의 409 문장, DOMAIN-MODEL의 ConflictRecord 행은 이 항목을 따릅니다.
+- 범위: 이 항목은 #18 PR1(계약과 경계)에서 적습니다. 기록 생성과 이주, 해소 op, 휴지통 만료, 시험용 모의 장치, Windows `/conflicts`, 클라이언트 규칙 문서(MULTI-DEVICE §3.2·§3.3·§8)는 #18의 뒤 PR입니다. 클라이언트 쪽(기준 epoch 헤더, 409 처리, 60일 보관, `rejected_mutation_count`)은 #3·#16이 구현합니다.
 
 ---
 

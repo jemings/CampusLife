@@ -180,7 +180,7 @@ iPadOS 앱은 실제 창 크기, size class, orientation, Split View, Stage Mana
 
 장치별로 다음을 보여 줍니다(heartbeat 기반).
 - last_seen_at, last_successful_sync_at
-- pending_upload_count, pending_mutation_count, open_conflict_count
+- pending_upload_count, pending_mutation_count, rejected_mutation_count(Hub가 거절해 클라이언트의 rejected 목록에 있는 Mutation 수, D24)
 - last_error, retry_after
 - app_version, platform
 - local cache 크기, Outbox 사용량
