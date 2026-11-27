@@ -6,10 +6,17 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+import httpx
+from sync_client import CONTRACT, Waking
+from sync_contract import checked
+
 from campuslife_hub import devices
 from campuslife_hub.core import Core, open_core
-from campuslife_hub.devices import ClientPlatform, PairingLimiter, PairRequest
+from campuslife_hub.devices import ClientPlatform, DeviceSettings, PairingLimiter, PairRequest
+from campuslife_hub.host import Hosted
 from campuslife_hub.redaction import Redactor
+from campuslife_hub.sync import create_sync_app
+from campuslife_hub.sync_devices import DeviceSync
 
 PUBLIC_URL = "https://campus-laptop.tail0a1b2c.ts.net"
 START = datetime(2026, 3, 2, 9, 0, tzinfo=UTC)
@@ -78,6 +85,18 @@ class Bench:
 
     async def device(self, device_id: str) -> devices.DeviceRecord:
         return await self.core.db.read(lambda snap: devices.device(snap, device_id))
+
+    @asynccontextmanager
+    async def sync(self):
+        """A client of the sync app as serve makes it, on this bench's Hub, clock and limiter. It sends no bearer
+        token of its own, and every response it gets has passed sync_contract.check."""
+        hosted = Hosted(self.core, Waking(), self.redactor, DeviceSettings(dormant_after=self.dormant_after))
+        device_sync = DeviceSync(hosted, clock=self.clock, limiter=self.limiter)
+        app = create_sync_app(hosted, device_sync.authenticate, [device_sync.router])
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://hub.tailnet.test", headers=CONTRACT, event_hooks={"response": [checked]}
+        ) as client:
+            yield client
 
 
 @asynccontextmanager
