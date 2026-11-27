@@ -27,7 +27,7 @@ import uuid
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, fields
 
-from . import jobs, store
+from . import conflict_records, jobs, store
 from .blobs import BLOB_REFERENCES, BlobStore, KeptLeftover, has_blob
 from .clock import now_instant
 from .db import Database, Snapshot, Tx
@@ -247,7 +247,9 @@ def _purge(tx: Tx, sha256: str, chosen: tuple[str, ...]) -> tuple[str, PurgeTarg
     ):
         for identifier in ids:
             store.write(tx, EntityRef(entity, identifier), None)
-    tx.execute("DELETE FROM conflict_stash WHERE entity_id IN (SELECT value FROM json_each(?))", (_listed([*target.attachments, *target.items]),))
+    conflict_records.purge_with(
+        tx, [*(EntityRef(Entity.ATTACHMENT, identifier) for identifier in target.attachments), *(EntityRef(Entity.ITEM, identifier) for identifier in target.items)]
+    )
     marked = tuple(note["id"] for note in notes if note["id"] not in target.items)
     for note in notes:
         if note["id"] in marked:
