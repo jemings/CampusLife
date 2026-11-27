@@ -282,6 +282,7 @@ async def run_hub(root: Path, config: HostConfig = HostConfig(), *, registry: Jo
     layout = Layout(safe_data_root(root))
     redactor = Redactor()
     handlers = [file_handler(layout.logs / LOG_FILE, redactor)] if holds_hub(layout) else []
+    logs_to_file = bool(handlers)
     if sys.stderr is not None:
         handlers.append(logging.StreamHandler())
         handlers[-1].setFormatter(RedactingFormatter(redactor, "%(levelname)s %(name)s: %(message)s"))
@@ -298,7 +299,8 @@ async def run_hub(root: Path, config: HostConfig = HostConfig(), *, registry: Jo
                 await serve(core, registry or JobRegistry(), stop, admin_token=token, redactor=redactor, config=config, sync_app=sync_app)
     except Exception as error:
         log.error("the Hub ended: %s: %s", type(error).__name__, error, extra={FILE_ONLY: True})
-        error.add_note(LOGGED)
+        if logs_to_file:
+            error.add_note(LOGGED)
         raise
     finally:
         root_logger.setLevel(level)
