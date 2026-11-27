@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -406,6 +407,33 @@ async def test_an_ingest_running_across_a_purge_queues_no_job_on_the_purged_file
 
     waiting = await db.read(lambda snap: snap.execute("SELECT subject_ref, inputs FROM processing_jobs WHERE job_type = 'ocr' AND state = 'pending'").fetchall())
     assert [json.loads(inputs) for _, inputs in waiting] == [[audio]]
+
+
+async def test_an_ingest_running_across_a_purge_drops_a_job_on_the_purged_blob_with_a_warning(db, device, blob_store, tmp_path, caplog):
+    pdf = await store_bytes(blob_store, tmp_path, b"%PDF to purge")
+    audio = await store_bytes(blob_store, tmp_path, b"recording that stays")
+    capture = two_files(pdf, audio)
+    await apply(db, device, commit(capture))
+    registry = JobRegistry()
+
+    async def never(job, context):
+        raise AssertionError
+
+    registry.handle("render", Pipeline("render-1"), never)
+
+    async def planner(view, context):
+        await purge.purge_blob(db, blob_store, pdf, hooks=PurgeHooks())
+        return [JobSpec("render", f"blob:{sha256}", (audio,), {}) for sha256 in (pdf, audio)]
+
+    registry.plan("renditions", planner)
+    with caplog.at_level(logging.WARNING, logger="campuslife_hub.ingest"):
+        await JobRunner(JobContext(db, blob_store, registry)).run_one()
+
+    [ingest] = await db.read(lambda snap: jobs.of_subject(snap, f"capture:{capture['id']}"))
+    assert ingest.state is JobState.SUCCEEDED
+    waiting = await db.read(lambda snap: snap.execute("SELECT subject_ref FROM processing_jobs WHERE job_type = 'render'").fetchall())
+    assert waiting == [(f"blob:{audio}",)]
+    assert f"dropped the planned render on blob:{pdf}" in caplog.text
 
 
 async def test_a_job_cancelled_by_a_purge_records_no_artifact(db, device, blob_store, tmp_path):
