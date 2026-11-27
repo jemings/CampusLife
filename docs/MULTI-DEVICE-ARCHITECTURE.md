@@ -83,7 +83,7 @@ Hub에는 반쯤 도착한 Capture가 없습니다.
 - `POST /v1/mutations`의 배치는 1–200개이고 순서대로 적용합니다. 한 장치의 배치는 한 번에 하나씩 적용되므로, 응답을 못 받고 다시 보낸 배치는 앞 배치가 끝난 뒤 `duplicate`를 받습니다.
 - Hub의 현재 값이 `from`과 같으면 적용합니다. 다르면 그 필드만 충돌입니다.
   - 스칼라 필드: 충돌한 필드만 제외하고 나머지를 적용합니다.
-  - 텍스트 본문: Hub 값을 유지하고 제출된 값을 보존합니다. ConflictRecord와 비교 UI는 #18이고, 그전에는 동기화하지 않는 `conflict_stash`에 둡니다(D21 E8).
+  - 텍스트 본문: Hub 값을 유지하고 제출된 값을 보존합니다. ConflictRecord와 비교 UI는 #18이고, 그전에는 동기화하지 않는 `conflict_stash`에 둡니다(D21 E8). *(D24로 대체됨: 스칼라를 포함해 진 키 전부가 Mutation당 ConflictRecord 하나에 남고 `entity: conflict_record` 행으로 동기화됩니다. 클라이언트 규칙 본문은 #18 PR7)*
   - Relation·Tag: 독립 행이라 충돌이 없습니다.
   - 지워진 엔터티에 온 patch: `rejected{deleted}`이고 제출 값은 같은 방식으로 보존합니다.
 - 결과 종류: `applied | duplicate | conflict | rejected | retry | not_attempted`(E12). 첫 `retry` 뒤는 `not_attempted`이고, `rejected`는 큐를 막지 않고 "확인 필요" 목록으로 옮깁니다.
