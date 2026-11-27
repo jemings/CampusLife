@@ -15,4 +15,15 @@ class ContractVersionTest {
 
         assertEquals(listOf(CONTRACT_VERSION), declared)
     }
+
+    @Test
+    fun `the client keeps answered Mutations for the SENT_RETENTION_DAYS of the contract package`() {
+        val init = File(System.getProperty("campuslife.contract.init")).readText()
+        val declared = Regex("""^SENT_RETENTION_DAYS = (\d+)$""", RegexOption.MULTILINE)
+            .findAll(init)
+            .map { it.groupValues[1].toLong() }
+            .toList()
+
+        assertEquals(listOf(SENT_RETENTION_DAYS), declared)
+    }
 }
