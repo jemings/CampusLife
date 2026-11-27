@@ -106,9 +106,14 @@ class SyncStore(
         if (to == TransferState.STORED) db.settleHeldCommits()
     }
 
-    /** The copy of a Blob the Hub does not have yet is gone or holds other bytes: the file and its row go. */
+    /**
+     * The uploader found the copy of a Blob the Hub does not have yet gone, or the Hub found the bytes it got
+     * different. Hashed again here, a copy that still holds its bytes is uploaded again; otherwise the file
+     * and its row go.
+     */
     private fun lose(sha256: String) {
         if (db.blobs().get(sha256)?.state.let { it == null || it == TransferState.STORED.column }) return
+        if (files.verify(sha256)) return db.inTransaction { moveBlob(sha256, BlobEvent.SESSION_LOST) }
         files.drop(sha256)
         db.inTransaction {
             if (db.blobs().get(sha256)?.state == TransferState.STORED.column) return@inTransaction

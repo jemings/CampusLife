@@ -42,7 +42,10 @@ enum class BlobEvent : TransferEvent {
     DEFERRED,
     HUB_LOST_BLOB,
 
-    /** This device's copy is gone, cannot be read, or no longer holds these bytes (the Hub answered hash_mismatch). */
+    /**
+     * The copy is not there (ENOENT), or the Hub answered hash_mismatch; the store hashes the copy again before
+     * it drops anything. A read that fails and may pass is DEFERRED.
+     */
     COPY_LOST,
 }
 
