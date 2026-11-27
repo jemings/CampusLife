@@ -283,6 +283,11 @@ def test_while_the_hub_serves_writes_go_through_its_admin_api_and_stop_ends_it(t
         assert hub(root, "status") == 0
         status = capsys.readouterr().out
         assert f"hub_id {hub_id}" in status and "pending=" in status and "runner restarts 0" in status
+        assert "backup never (overdue)" in status
+        assert hub(root, "backup", "--to", str(tmp_path / "drive"), "--keep", "2") == 0
+        assert capsys.readouterr().out.startswith("generation ")
+        assert hub(root, "status") == 0
+        assert re.search(rf"backup last \S+ {re.escape(str((tmp_path / 'drive').resolve()))}\n", capsys.readouterr().out)
         assert hub(root, "open", "--no-browser") == 0
         url = capsys.readouterr().out.strip()
         port = int((root / "admin.port").read_text())
@@ -588,3 +593,64 @@ def test_serve_refuses_an_admin_token_file_that_holds_no_token(tmp_path, capsys)
 
     err = capsys.readouterr().err
     assert "admin token" in err and "Traceback" not in err
+
+
+def test_backup_restore_and_fsck_from_the_cli(tmp_path, capsys):
+    root, restored, drive = tmp_path / "CampusLife", tmp_path / "Restored", tmp_path / "drive"
+    hub(root, "init")
+    hub(root, "import", str(source(tmp_path, "week4.txt")))
+    capsys.readouterr()
+
+    assert hub(root, "backup", "--to", str(drive)) == 0
+    made = capsys.readouterr().out
+    assert hub(root, "fsck") == 0
+    checked = capsys.readouterr().out
+    assert hub(restored, "restore", "--from", str(drive)) == 0
+    said = capsys.readouterr().out
+    assert hub(restored, "fsck") == 0
+    capsys.readouterr()
+    assert hub(restored, "ls") == 0
+
+    generation = made.split()[1]
+    assert "blobs 1 copied 1" in made
+    assert checked.strip() == "no findings"
+    assert f"restored generation {generation}" in said and "pair them again" in said
+    assert "week4.txt" in capsys.readouterr().out
+
+
+def test_fsck_names_each_finding_and_exits_non_zero(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    stray = root / "blobs" / "ab" / "ab" / ("ab" * 32)
+    stray.parent.mkdir(parents=True)
+    stray.write_bytes(b"left by a crash")
+    capsys.readouterr()
+
+    assert hub(root, "fsck") == 1
+    out, err = capsys.readouterr()
+    assert f"orphan  {stray}  no blobs row names this file" in out
+    assert "1 findings" in err
+
+
+def exit_code(*args):
+    try:
+        return hub(*args)
+    except SystemExit as exited:
+        return exited.code
+
+
+@pytest.mark.parametrize(("command", "code", "said"), [
+    (["restore", "--from", "{drive}"], 1, "is not empty"),
+    (["backup", "--to", "{root}/inside"], 1, "inside the data root"),
+    (["backup", "--to", "{drive}", "--keep", "0"], 2, "at least 1"),
+    (["serve", "--backup-warn-days", "0"], 2, "at least 1"),
+])
+def test_backup_and_restore_say_why_they_refuse(tmp_path, capsys, command, code, said):
+    root, drive = tmp_path / "CampusLife", tmp_path / "drive"
+    hub(root, "init")
+    hub(root, "backup", "--to", str(drive))
+    capsys.readouterr()
+
+    assert exit_code(root, *[part.format(drive=drive, root=root) for part in command]) == code
+
+    assert said in capsys.readouterr().err
