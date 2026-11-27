@@ -180,15 +180,18 @@ Windows 로컬 UI는 파일마다 그 파일에 필요한 job(Blob의 identify, 
 |---|---|---|
 | `timeout_s` (child 한 번의 실행 시간) | 120 s | 측정하지 않음. 형식별 추출기(#6·#7·#13)와 변환기(O4)가 수백 MiB 강의 PDF·슬라이드에 필요한 여유로 둠 |
 | `mem_bytes` (child 메모리: POSIX 주소 공간, Windows commit) | 1 GiB | 위와 같음 |
-| `input_max_bytes` (extract·render가 통째로 읽는 Blob) | 256 MiB | 위와 같음. identify는 앞부분만 읽으므로 이 상한을 받지 않음 |
+| `input_max_bytes` (extract·render가 통째로 읽는 Blob) | 256 MiB | 위와 같음. identify는 이 상한을 받지 않음(아래) |
 | `rendition_max_bytes` (변환기가 쓴 PDF) | 512 MiB | 위와 같음 |
 | `stdout_max_bytes` (child 출력) | 64 MiB | text 추출기 측정: `max_blocks`에서 멈춘 출력이 약 10 MiB, 긴 블록 몇 개짜리 한국어 텍스트가 `max_text_chars`에서 멈추면 약 24 MiB |
 | `max_blocks` (본문 하나의 블록) | 20,000 | Hub가 본문을 만들고 검증하는 데 블록당 약 0.78 ms(20,000이면 약 16 s, handler timeout 안). 300쪽 교재 하나(약 3,000블록)를 자르지 않음. 50,000(약 38 s)은 timeout 여유가 적음 |
 | `max_block_text_chars` / `max_text_chars` | 200,000 / 8,000,000자 | 위 출력·본문 상한 안에 들도록 정함 |
 | `body_max_bytes` (Hub가 저장하는 본문, canonical JSON) | 64 MiB | `max_blocks`에서 멈춘 본문이 약 12.6 MiB |
-| `zip_max_members` / `zip_max_total_bytes` / `zip_max_member_bytes` | 10,000 / 1 GiB / 256 MiB | 멤버 10,000개 ZIP의 identify가 0.05 s·26 MiB |
+| `zip_max_members` | 10,000 | 멤버 10,000개 ZIP의 identify가 0.05 s·26 MiB |
+| `zip_max_total_bytes` / `zip_max_member_bytes` | 1 GiB / 256 MiB | 측정하지 않음. 멤버를 읽는 #13이 측정함 |
 | `zip_max_ratio` (멤버 하나의 압축 해제 비율) | 200 | 0으로 채운 64 MiB의 deflate 비율 1,029(zip bomb)와, 한 문단을 140번 반복한 1 MiB Markdown의 비율 3.8 사이 |
 | `zip_max_depth` (ZIP 안의 ZIP) | 2 | 바깥 ZIP과 그 안 한 단계 |
+
+identify는 Blob을 통째로 메모리에 올리지 않으므로 파일 크기와 상관없이 판별합니다. 앞부분을 읽고, ZIP은 멤버 이름만 보고(이름 안전성, 멤버 개수, 중첩 깊이만 검사), OLE 파일은 1 MiB 조각으로 훑어 암호화 표식을 찾습니다. 바이트 상한(`input_max_bytes`, ZIP 멤버·전체 바이트, 압축 비율)은 Blob이나 멤버를 읽는 extract·render job에 걸립니다(D26).
 
 측정은 모두 로컬(Linux, CPython 3.12, 2026-11-28)에서 시험이 만든 합성 입력(한국어·영어 Markdown, ZIP)으로 했고, 사용자 파일이나 운영 데이터가 아닙니다. 수치와 측정 방법은 `limits.py` docstring에 있습니다.
 - 손상/암호화/DRM 자료는 우회하지 않습니다.

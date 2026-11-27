@@ -875,7 +875,8 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - job은 Attachment를 싣지 않습니다. subject는 `blob:<sha>`입니다.
 - **child 경계:** 추출기·변환기는 `[sys.executable, -I, -m, campuslife_hub.extract.child]`로 돌고, stdin 요청 JSON과 stdout 결과 JSON으로만 Hub와 말합니다. child는 DB·네트워크·provider를 쓰지 않습니다. ZIP 계열은 `extract/safe_zip.py` 한 곳만 엽니다. 결과 매핑은 `extract/running.py`가 소유합니다(시간·메모리·출력 상한 초과 → `unsafe_input`, 재시도 없음).
 - **상한 표:** 시간·메모리·출력·블록 수·텍스트·본문·렌디션·ZIP 상한은 frozen dataclass 하나(`extract/limits.py`)입니다. 요청에 실리고 해시가 pipeline 버전에 들어갑니다. 기본값과 출처는 FILE-INGESTION §10에 있습니다.
-  - `input_max_bytes`는 Blob을 통째로 읽는 extract·render job에만 겁니다. identify는 앞부분만 읽으므로 큰 강의 영상·ZIP도 판별하고, 그 Blob을 읽는 추출기 쪽에서 상한을 판단합니다(2026-11-28, #13 grilling이 찾은 결함: 전에는 identify가 `unsafe_input`으로 끝나 그 Blob이 다시 계획되지 않았음). 형식별·추출기별 상한을 어떤 모양으로 둘지는 정하지 않았습니다(#13).
+  - 바이트 상한은 Blob이나 그 멤버를 통째로 읽는 extract·render job에만 겁니다. identify는 파일을 통째로 메모리에 올리지 않습니다. 앞부분을 읽고, ZIP은 멤버 이름만 보며(`safe_zip`의 names_only: 경로 탈출·링크·중복·암호화와 멤버 개수·중첩 깊이만 검사), OLE 파일은 고정 크기 조각으로 훑어 `EncryptedPackage` 표식을 찾습니다. 그래서 큰 강의 영상·ZIP·OLE 문서도 판별하고, 그 Blob을 읽는 추출기 쪽에서 상한에 걸립니다. 멤버·전체 바이트 상한과 압축 비율은 멤버를 읽을 때 겁니다(2026-11-28, #13 grilling과 PR #61 리뷰가 찾은 결함: 전에는 `input_max_bytes`, ZIP 멤버·전체 바이트, child 메모리에 막혀 identify가 `unsafe_input`으로 끝나고 그 Blob이 다시 계획되지 않았음). 형식별·추출기별 상한을 어떤 모양으로 둘지는 정하지 않았습니다(#13). OLE 디렉터리 섹터를 읽는 판별은 #6의 `cfb` 관문이 맡습니다.
+- **상한 표·판별기가 바뀐 뒤의 상태:** 지금 identify pipeline으로 판별된 것이 없으면, 로컬 UI는 마지막으로 성공한 판별(`blob_media`)로 그때의 job과 실패 사유를 보여 주고 "처리 규칙이 바뀌었으니 다시 처리하면 새 규칙으로 읽는다"는 사실을 더합니다. 자동으로 다시 계획하지는 않습니다(결정 5).
 - **재처리는 nonce입니다(결정 5).** `campuslife-hub reprocess --capture <id> | --all`과 로컬 UI 버튼이 `capture.ingest`를 params `reprocess: <nonce>`로 다시 넣습니다(#8의 nonce 관례).
   - planner는 같은 nonce를 identify·extract·render job params에 넣습니다. job_key가 새로 생기므로 다시 돌고, 한 번의 재처리 안에서는 key가 같으므로 여러 Capture가 가진 같은 파일은 한 번만 읽습니다.
   - 재처리 중인 Blob은 그 nonce의 identify가 끝난 뒤에야 판별된 것으로 봅니다.
