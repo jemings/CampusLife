@@ -385,6 +385,7 @@ LENGTHS = {
     "device/pairing_offer#/properties/hub_url": {("maxLength", 267)},
     "device/status#/properties/last_error": {("minLength", 1), ("maxLength", 1000)},
     "artifact/artifact#/$defs/name": {("minLength", 1), ("maxLength", 200)},
+    "artifact/artifact#/allOf/1/then/properties/input_hashes": {("minItems", 1)},
     "artifact/extraction#/properties/extractor/properties/id": {("maxLength", 64)},
     "artifact/extraction#/properties/extractor/properties/version": {("maxLength", 64)},
     "artifact/extraction#/properties/blocks/items/properties/refs": {("minItems", 1)},
