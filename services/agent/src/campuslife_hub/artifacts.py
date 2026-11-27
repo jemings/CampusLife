@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Iterable
 from datetime import datetime
 
 from campuslife_contracts import validate
@@ -29,6 +30,23 @@ class InvalidArtifact(ValueError):
 def made_by(runner: Tx | Snapshot, job_key: str, artifact_type: str) -> dict | None:
     row = runner.execute("SELECT data FROM artifacts WHERE job_key = ? AND artifact_type = ?", (job_key, artifact_type)).fetchone()
     return None if row is None else json.loads(row[0])
+
+
+def current(runner: Tx | Snapshot, subject_ref: str, artifact_type: str) -> dict | None:
+    """The Artifact of artifact_type about subject_ref that stands for the subject: of those not purged, the one
+    recorded last. Search indexes it and #8 cites it (#11 decision 5); another reading of the same Blob is not current."""
+    return current_of(runner, [subject_ref], artifact_type).get(subject_ref)
+
+
+def current_of(runner: Tx | Snapshot, subject_refs: Iterable[str], artifact_type: str) -> dict[str, dict]:
+    """`current` for many subjects in one pass over the Artifacts, by subject; a subject with none is left out."""
+    rows = runner.execute(
+        "SELECT artifacts.data FROM artifacts JOIN sync_index ON sync_index.entity = 'artifact' AND sync_index.id = artifacts.id"
+        " WHERE artifacts.artifact_type = ? AND json_extract(artifacts.data, '$.subject_ref') IN (SELECT value FROM json_each(?))"
+        " ORDER BY sync_index.rev",
+        (artifact_type, json.dumps(list(subject_refs))),
+    )
+    return {artifact["subject_ref"]: artifact for artifact in (json.loads(data) for (data,) in rows)}
 
 
 def record(tx: Tx, job: Job, artifact_type: str, content_blob: str, *, now: datetime | None = None) -> dict:

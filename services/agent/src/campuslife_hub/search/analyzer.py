@@ -54,6 +54,12 @@ _UNBINDABLE = re.compile(r"[\x00-\x1f\x7f-\x9f\ud800-\udfff]")
 """Control characters (a NUL ends an FTS5 string early) and lone surrogates (SQLite cannot bind them)."""
 
 
+def storable(text: str) -> str:
+    """The text NFC, with what SQLite cannot store or FTS5 cannot read as a space: every text an index stores goes
+    through it, as do the analyzed and the folded forms."""
+    return unicodedata.normalize("NFC", _UNBINDABLE.sub(" ", text))
+
+
 _CJK_LETTERS = (
     r"\u1100-\u11ff"  # Hangul Jamo
     r"\u3131-\u318e"  # Hangul Compatibility Jamo
@@ -104,12 +110,10 @@ class HangulBigram:
     fts5_tokenize: str = "unicode61"
 
     def analyze(self, text: str) -> str:
-        nfc = unicodedata.normalize("NFC", _UNBINDABLE.sub(" ", text))
-        return _CJK_RUN.sub(lambda run: f" {_bigrams(run.group())} ", nfc)
+        return _CJK_RUN.sub(lambda run: f" {_bigrams(run.group())} ", storable(text))
 
     def fold_original(self, text: str) -> str:
-        nfc = unicodedata.normalize("NFC", _UNBINDABLE.sub(" ", text))
-        return nfc.lower().translate(_LATIN_WITHOUT_DIACRITIC)
+        return storable(text).lower().translate(_LATIN_WITHOUT_DIACRITIC)
 
     def term(self, term: str) -> IndexedTerm | None:
         token_chars = [_is_unicode61_token_char(char) for char in term]
@@ -153,7 +157,7 @@ def _substring_pattern(term: str) -> str:
 
 def plan_query(query: str, analyzer: TextAnalyzer) -> SearchPlan | None:
     """The plan for a query typed by a user, or None when it holds nothing to search for."""
-    text = unicodedata.normalize("NFC", _UNBINDABLE.sub(" ", query))
+    text = storable(query)
     if len(text) > MAX_QUERY_CHARS:
         raise QueryTooLong(f"a query holds at most {MAX_QUERY_CHARS} characters")
     terms = text.split()
