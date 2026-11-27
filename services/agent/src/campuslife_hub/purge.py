@@ -215,16 +215,10 @@ def plan(runner: Tx | Snapshot, sha256: str) -> PurgePlan:
 
 
 def _cancel_jobs_on(tx: Tx, target: PurgeTarget) -> tuple[str, ...]:
-    """Cancel the jobs still to run on what the purge removes, before it removes it: those whose subject goes, and
-    those reading a Blob that goes. An ingest reads the Attachments its Capture has when it runs, not its inputs, so
-    it goes only with the Capture's last Attachment."""
-    emptied = _ids(
-        tx,
-        "SELECT capture_id FROM attachments WHERE id IN (SELECT value FROM json_each(:gone)) AND NOT EXISTS"
-        " (SELECT 1 FROM attachments AS kept WHERE kept.capture_id = attachments.capture_id AND kept.id NOT IN (SELECT value FROM json_each(:gone)))",
-        {"gone": _listed(target.attachments)},
-    )
-    subjects = [*(f"attachment:{i}" for i in target.attachments), *(f"artifact:{i}" for i in target.artifacts), *(f"capture:{i}" for i in emptied)]
+    """Cancel the jobs still to run on what the purge removes: those whose subject goes, and those reading a Blob that
+    goes. Not an ingest: it reads the Capture as it is when it runs, not its inputs, and a Capture left without
+    Attachments still has its link or note to plan from."""
+    subjects = [*(f"attachment:{i}" for i in target.attachments), *(f"artifact:{i}" for i in target.artifacts)]
     waiting = [
         job_id
         for (job_id,) in tx.execute(
