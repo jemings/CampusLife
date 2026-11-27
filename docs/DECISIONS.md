@@ -586,7 +586,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **사용자 결정**
 - **U1. 백업은 암호화하지 않습니다** (2026-11-26, "결정"). 설치·운영 문서(`services/agent/README.md`)와 PRIVACY-SECURITY에 백업 드라이브 분리 보관과 분실 위험을 적습니다.
 - **U2. 즉시 purge는 Blob 단위입니다** (2026-11-26, "결정").
-  - 그 Blob을 가리키는 모든 Attachment, 거기서 파생된 Artifact·Suggestion(전이 폐쇄), 인덱스·렌디션을 지웁니다.
+  - 그 Blob을 가리키는 모든 Attachment, 거기서 파생된 Artifact·Suggestion(전이 폐쇄), 인덱스·렌디션을 지웁니다. 지운 행의 텍스트가 SQLite 파일 바이트(DB 파일과 WAL)에도 남지 않게, Hub는 쓰기 연결에서 `secure_delete`를 켜고 purge 끝에 WAL을 비웁니다. 다른 연결이 WAL을 읽고 있으면 다음 maintenance에서 끝납니다. 이 수정 이후의 삭제부터 적용되며, 그 전에 지운 페이지에 남은 바이트는 지우지 않습니다(VACUUM 없음).
   - 그 Artifact에서 fork된 Note(사용자 데이터)는 지우지 않고 근거 링크가 사라졌다고 표시합니다. purge 확인 화면에 "이 Note들도 지울까요?"를 함께 보여 줍니다.
   - 백업 세대에는 남아 있음을 알립니다.
 - **U3. 백업은 수동입니다** (2026-11-26, "결정"). 로컬 UI와 CLI로 하고, 마지막 백업에서 7일이 지나면 경고하며, 드라이브에는 최근 5세대를 남깁니다. 둘 다 설정값(`serve --backup-warn-days`, `--backup-keep`)입니다.
@@ -596,7 +596,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 
 **오케스트레이터 결정: 배치와 기동** (2026-11-26, "결정")
 - **E1. 배치:** `services/agent/`(패키지 `campuslife_hub`), `.python-version` 3.12, `uv.lock` 커밋. 계약 패키지는 editable path 의존입니다(non-editable이면 패키지 밖 `schemas/`를 찾지 못함). 루트 uv workspace는 쓰지 않습니다(#20의 패키지별 lock·CI와 충돌).
-- **E2. SQLite 기동 검사:** 하한 3.35(RETURNING)와 기능 probe(fts5, trigram, json_extract, generated column). 실패하면 이유를 출력하고 기동을 거부합니다. 빌드의 버전 번호만으로는 어떤 모듈을 넣고 빌드했는지 알 수 없어서 실제로 시도해 봅니다. WAL, `synchronous=FULL`은 항상입니다.
+- **E2. SQLite 기동 검사:** 하한 3.35(RETURNING)와 기능 probe(fts5, trigram, json_extract, generated column). 실패하면 이유를 출력하고 기동을 거부합니다. 빌드의 버전 번호만으로는 어떤 모듈을 넣고 빌드했는지 알 수 없어서 실제로 시도해 봅니다. WAL, `synchronous=FULL`은 항상입니다. `secure_delete`를 켜지 못하는 빌드도 기동을 거부합니다.
 - **E3. 마이그레이션:** 번호 붙인 SQL 파일과 `PRAGMA user_version`. DB가 코드보다 새로우면 기동을 거부합니다. alembic·ORM은 쓰지 않습니다.
 - **E11. 단일 인스턴스:** `<root>/hub.lock`(`msvcrt.locking`/`fcntl.flock`). 두 번째 실행은 메시지와 함께 0이 아닌 코드로 끝납니다. 쓰기 CLI는 서빙 중인 Hub의 admin API를 거치고, Hub가 없으면 lock을 직접 잡습니다. restore는 채울 빈 root의 lock을 잡습니다.
   - 읽기 명령(`ls`, `fsck`)은 DB에 쓰지 않습니다(2026-11-26, "PR #28 1차"). migrate·신원 발급을 하지 않고, 스키마가 코드와 다르면 거부합니다. 근거: lock을 쥔 옛 Hub가 있는데 새 checkout의 읽기 명령이 DB를 새 버전으로 올리면 옛 Hub가 깨집니다.
@@ -951,6 +951,82 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 
 ---
 
+## D27. 한국어 전문 검색 분석기 (#11, 2026-11-28)
+
+**문제:** 미결 O2입니다.
+- FTS5 `unicode61`은 공백과 문장부호로만 나눕니다. 그래서 조사가 붙은 "자료구조를"이 "자료구조"로 찾히지 않습니다.
+- `trigram`은 3글자 미만 질의를 MATCH로 찾지 못합니다. "과제" 같은 2음절 단어는 LIKE로 따로 처리해야 합니다.
+- Python `sqlite3`에는 FTS5 tokenizer를 등록하는 API가 없습니다. 그래서 사용자 정의 tokenizer는 만들 수 없고, 색인 전에 텍스트를 바꾸는 선토큰화만 할 수 있습니다.
+
+**검토한 안:**
+- A. `unicode61` 단독
+- B. `unicode61` + 질의 항마다 prefix(`"항"*`)
+- C. `trigram` + 3글자 미만 질의는 LIKE
+- D. 한글·CJK 연속 구간을 겹치는 2-gram으로 선토큰화한 뒤 `unicode61`로 색인 + 1글자 질의는 원문 LIKE
+- E. 형태소 분석기로 색인 토큰 생성
+
+**측정:** `services/agent/tools/search_bench.py`가 만든 **로컬 합성** 코퍼스입니다. 강의 노트·공지·transcript 형태 100,000블록, 15.9M자이고 seed는 11입니다. 실행 환경은 WSL2 Linux x86_64, Python 3.12.3, SQLite 3.45.1, warm page cache입니다.
+- 재현율은 질의 항을 모두 부분 문자열로 가진 블록을 정답으로 한 전체 재현율입니다. 오탐은 다섯 안 모두 0입니다. 이것은 합성 코퍼스 기준이고, 질의 가운데 문장부호가 든 것은 "B-tree" 하나뿐입니다. 문장부호가 든 항의 오탐은 아래 질의 규칙과 시험이 다룹니다.
+- 지연은 질의 계획 + 실행 + 상위 10건 fetch입니다.
+- 크기는 VACUUM 뒤 파일 크기입니다. D의 크기에는 스캔에 필요한 원문 테이블(`fold_original`을 거친 원문)이 들어 있습니다. A–C는 FTS 테이블이 원문을 담습니다.
+
+| 안 | 2음절 | 조사 결합 | 합성어 내부 | 1음절 | 영한 혼합 | 크기 | MATCH p95 | 스캔 최대 | 전체 p95 | 색인 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| A unicode61 | 0.33 | 0.34 | 0.03 | 0.23 | 0.22 | 52 MB | 5.9 ms | – | 5.9 ms | 0.8 s |
+| B unicode61 + prefix | 0.89 | 1.00 | 0.09 | 0.67 | 0.88 | 52 MB | 21.2 ms | – | 21.2 ms | 0.7 s |
+| C trigram | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 93 MB | 16.8 ms | 66.6 ms | 64.2 ms | 3.0 s |
+| D bigram(FTS가 분석문 저장) | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 131 MB | 22.2 ms | 61.7 ms | 22.6 ms | 3.9 s |
+| D bigram(contentless FTS) | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 64 MB | 22.2 ms | 63.3 ms | 23.0 ms | 3.7 s |
+
+- SQLite 3.50.4(uv CPython 3.13.13)에서도 재현율과 크기는 같고, 지연은 15–25% 짧습니다.
+- 스캔 지연은 원문 전체를 읽는 비용입니다. 자주 나오는 항은 LIMIT 10에서 일찍 끝나고(p50 0.05 ms), 최대는 결과가 0건인 질의입니다. 그래서 자료가 늘면 선형으로 늘어납니다.
+  - C는 2글자 질의("과제", 결과 0건인 "벚꽃")가 모두 이 스캔이라 전체 p95가 64.2 ms이고, 순위도 없습니다.
+  - D는 1음절 질의만 스캔합니다.
+- MATCH 최대는 자주 나오는 항을 bm25로 정렬하는 비용입니다.
+- D의 색인 시간 3.9 s에는 Python 분석 1.7 s(약 9M자/s)와 원문 접기(`fold_original`)가 들어 있습니다.
+- 위 수치는 #11 계약서 표(grilling 측정)와 조금 다릅니다. 코퍼스가 세 형태로 바뀌었고, D의 크기에 원문을 넣었기 때문입니다.
+- 실 DB 사본 기준 확인은 [사내] #67입니다.
+
+**결정:** D (오케스트레이터 결정 2026-11-28, #11 계약 결정 1). `TextAnalyzer` 구현 `hangul-bigram@1`입니다.
+- **분석:** NFC로 바꾼 뒤 한글(음절·자모)·한자·가나 글자의 연속 구간을 겹치는 2글자 조각으로 바꿉니다(1글자 구간은 그대로). 나머지 텍스트는 `unicode61`이 나눕니다. 예: "자료구조를" → "자료 료구 구조 조를".
+  - 문서와 질의 항이 같은 함수를 지납니다. 그래서 한글·CJK 글자는 질의 항을 부분 문자열로 가진 문서에 걸리고, 공백을 건너서는 걸리지 않습니다.
+  - 라틴 문자와 숫자는 `unicode61`의 토큰 단위로 일치합니다. "26"은 "2026"에 걸리지 않습니다. 대소문자와 라틴 글자의 diacritic은 무시합니다.
+  - 문장부호와 기호는 적힌 그대로 있어야 걸립니다(아래 LIKE 검증).
+- **질의 빌더 `plan_query`가 경계입니다.** 질의 문자열은 신뢰할 수 없는 입력이고, 정규화와 이스케이프를 이 함수 한 곳에서 합니다.
+  - 제어문자와 짝 없는 surrogate는 공백으로 바꿉니다. NUL은 FTS5 문자열을 끊어 `unterminated string` 오류를 내고, surrogate는 SQLite에 bind할 수 없습니다.
+  - 그다음 NFC로 바꾸고, 256자(NFC 기준)나 16항을 넘으면 `QueryTooLong`으로 거부합니다.
+  - 공백으로 나눈 항마다 분석한 phrase를 따옴표로 감싸고(`"`는 두 번), AND로 잇습니다. 그래서 `"`, `*`, `NEAR(`, `col:`, `^`, `AND`/`OR`/`NOT`은 연산자가 아니라 글자입니다.
+  - 항은 셋으로 나뉩니다. LIKE는 `LIKE '%항%' ESCAPE '\'`이고 `%`, `_`, `\`를 이스케이프합니다.
+    - `unicode61` 토큰 글자(L*, N*, Co)로만 된 항: phrase MATCH만 씁니다.
+    - 토큰 글자에 문장부호·기호가 섞인 항(`C++`, `C#`, `3.5`, `과제*`): phrase MATCH에 더해 같은 항의 LIKE 검증을 원문에 겁니다. `unicode61`이 문장부호를 버리므로 phrase만으로는 `C++`가 토큰 `c`가 되어 "C언어"·"비타민 C"에도 걸리기 때문입니다. MATCH가 후보를 이미 좁혀 두어 검증 비용은 작습니다(오케스트레이터 결정 2026-11-28, PR #69 리뷰). 버린 안: "기호는 무시된다"고 문서에만 적는 것. `C++`, `C#`, `3.5` 같은 캠퍼스 질의의 결과가 틀립니다.
+    - 한글·CJK 1글자 구간이 있는 항("힙", "B힙")과 토큰 글자가 없는 항(`*`, `%`): MATCH에서 빼고 LIKE로만 찾습니다. 1글자는 긴 구간 안에서 조각의 반쪽으로만 색인되기 때문입니다. 토큰 글자가 없는 항을 phrase로 두면 빈 phrase가 되어 AND 전체가 0건이 됩니다(SQLite 3.45.1·3.50.4 확인).
+  - **LIKE의 대상은 `fold_original`을 거친 원문 열이고, 패턴도 같은 함수로 접습니다.** 그래야 MATCH 경로와 LIKE 경로가 같은 문서를 찾습니다(PR #69 리뷰).
+    - `fold_original`이 하는 일: NFC, 제어문자와 짝 없는 surrogate를 공백으로 바꾸기(SQLite LIKE는 NUL에서 멈춤), 소문자, ASCII 글자에 붙은 결합 부호 하나 떼기(`unicode61`의 `remove_diacritics 1`과 같음).
+    - `unicode61`과 다르게 접히는 라틴 글자는 µ, İ, ſ, ẛ 넷입니다. 시험이 SQLite가 실제로 만든 토큰과 비교합니다.
+    - `analyze`도 같은 문자를 공백으로 바꾸므로, 그런 문자가 든 문서도 색인됩니다.
+- **근거:**
+  - 2음절·조사 결합·합성어 내부·영한 혼합 모두에서 재현율 1.00, 오탐 0입니다(합성 코퍼스 기준, 위 측정).
+  - C와 달리 2글자 질의도 색인으로 찾고 bm25로 순위를 매깁니다. 스캔은 1음절 질의만 합니다.
+  - 크기는 contentless로 두면 C보다 작습니다.
+- **버린 안:**
+  - A·B는 조사와 합성어 내부를 놓칩니다.
+  - C는 2글자 질의를 순위 없는 전체 스캔으로 처리합니다.
+  - E는 네이티브 의존이 필요하고 측정하지 않았습니다. 나중에 `TextAnalyzer` 구현으로 더할 수 있습니다.
+- **받아들이는 단점:**
+  - 분석기 코드가 필요합니다.
+  - 스캔을 위해 접은 원문을 따로 저장합니다. snippet용 원문도 필요합니다.
+  - 문장부호가 섞인 항은 MATCH로 고른 후보마다 LIKE 검증을 한 번 더 합니다.
+  - 1음절 질의는 자료 크기에 비례해 스캔합니다.
+  - unicode61의 Unicode 표가 Python의 표와 조금 달라서(SQLite 쪽이 오래됨), 드문 글자만으로 된 항은 0건이 될 수 있습니다.
+- 인덱스는 `analyzer_id@version`(`hangul-bigram@1`)을 meta에 기록합니다. 분석기를 바꾸면 cache 파일을 지우고 다시 만듭니다.
+- FTS 테이블 모양(분석문 저장 또는 contentless), 색인 파일, follower, 필터는 #11 PR2–PR3이 정합니다.
+
+**결과:**
+- 코드는 `services/agent/src/campuslife_hub/search/analyzer.py`, 측정은 `services/agent/tools/search_bench.py`입니다(`uv run python tools/search_bench.py`, 출력 첫 줄이 출처).
+- 미결 O2를 닫습니다.
+
+---
+
 ## 미결 결정
 
 모든 수치 기준은 제안값이며, 측정은 합성·공개 데이터로 로컬에서 합니다.
@@ -958,7 +1034,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 | # | 질문 | 판단 기준 |
 |---|---|---|
 | O1 | 로컬 STT(faster-whisper, whisper.cpp 등)를 MVP에 넣을지 | 대상 노트북에서 60분 한국어 강의 음원 처리 시간 ≤ 녹음 길이, cloud STT 대비 CER 차이 ≤ 5%p면 `local_only` 기본 provider로 탑재 |
-| O2 | 한국어 전문 검색 분석기 | 분석기는 `TextAnalyzer` 인터페이스 뒤에 두고 인덱스에 `analyzer_id@version`을 기록, 바꾸면 전체 재색인. 후보: `unicode61` / `trigram` + 3글자 미만 LIKE / 한글 겹침 2-gram 선토큰화 + `unicode61` / 형태소 분석. 합성 코퍼스로 2음절 질의·조사 결합·영한 혼합의 recall@10, p95 응답 시간, 인덱스 크기 측정. `trigram`은 3글자 미만 MATCH가 걸리지 않으므로 단독 사용 불가 |
+| O2 | 한국어 전문 검색 분석기 | **D27로 닫힘**(#11): 한글·CJK 겹침 2-gram 선토큰화 `hangul-bigram@1` + `unicode61`, 1글자 질의는 원문 LIKE |
 | O3 | Android 녹음 구현 수단(D15 a/b/c)과 세그먼트 길이 | 강제 종료·전원 차단 후 복구율, 세그먼트 경계 공백 ≤ 100 ms, 60분 배터리·CPU, 접힘·화면 꺼짐·Samsung 절전에서 FGS 생존 |
 | O4 | HWP 5 변환 도구, Office → PDF 렌디션 도구 | 합성·공개 fixture에서 표·수식 보존률, 라이선스, Windows 설치 난이도 |
 | O5 | `cloud_redacted` 도입 | 한국어 PII(학번, 전화, 이름) 탐지 재현율 ≥ 0.98일 때만 값 추가. 닫힌 enum이므로 첫 배포 뒤에는 계약 버전을 올려야 함(D20) |

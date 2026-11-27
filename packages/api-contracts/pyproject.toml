@@ -34,7 +34,7 @@ packages = ["src/campuslife_contracts"]
 "openapi" = "campuslife_contracts/contract/openapi"
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "schemas", "fixtures", "openapi", "tests", "HARNESS.md"]
+include = ["src", "schemas", "fixtures", "openapi", "ddl", "tests", "HARNESS.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

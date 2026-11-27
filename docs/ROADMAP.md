@@ -126,7 +126,7 @@ README와 Epic #1의 MVP 기준은 이 목록을 따릅니다.
 
 ## Phase 8 — Search & Study Assistant
 
-- SQLite FTS5 전문 검색, NFC 정규화 (한국어 분석기는 측정 후 결정, DECISIONS O2)
+- SQLite FTS5 전문 검색, NFC 정규화 (한국어 분석기는 한글·CJK 겹침 2-gram 선토큰화 `hangul-bigram@1`, DECISIONS D27)
 - 과목/학기/도메인/날짜/태그 필터
 - 근거를 포함하는 AI 질문
 - 플래시카드, 간격 반복 복습, 퀴즈·오답·취약 개념

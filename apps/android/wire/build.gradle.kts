@@ -31,16 +31,21 @@ dependencies {
 
 val contractPackage = layout.projectDirectory.dir("../../../packages/api-contracts")
 val contractFixtures = contractPackage.dir("fixtures")
+val contractSchemas = contractPackage.dir("schemas")
 val contractInit = contractPackage.file("src/campuslife_contracts/__init__.py")
 
 tasks.test {
     inputs.dir(contractFixtures)
         .withPropertyName("contractFixtures")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(contractSchemas)
+        .withPropertyName("contractSchemas")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.file(contractInit)
         .withPropertyName("contractInit")
         .withPathSensitivity(PathSensitivity.NONE)
     systemProperty("campuslife.contract.fixtures", contractFixtures.asFile.canonicalPath)
+    systemProperty("campuslife.contract.schemas", contractSchemas.asFile.canonicalPath)
     systemProperty("campuslife.contract.init", contractInit.asFile.canonicalPath)
 }
 
