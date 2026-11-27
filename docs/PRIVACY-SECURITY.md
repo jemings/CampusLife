@@ -65,7 +65,7 @@ CampusLife는 강의 녹음, 학생 정보, 성적, 행정 문서, 개인 일정
 - SQLite 일관성 백업
 - 원본과 DB를 같은 백업 세대에 포함
 - 최소 분기별 복원 테스트. 복원하면 Hub가 새 `epoch`를 발급하고, 클라이언트가 Hub에 없는 Capture를 다시 올립니다(D3)
-- **복원하면 active였던 클라이언트 장치가 모두 `dormant`가 되어 다시 승인해야 합니다(D21 U6).** 복원 안내가 장치마다 id를 적고, 손에 있는 장치만 `campuslife-hub approve <id>`(또는 로컬 UI "Devices")로 승인합니다. 분실한 장치는 승인하지 말고 `campuslife-hub revoke <id>`로 revoke합니다. 승인하면 그 장치가 쥔 토큰으로 다시 동기화하기 때문입니다. revoked 장치는 revoked로 남고 승인할 수 없습니다. 그래서 백업 뒤에 revoke한 장치도 다시 active가 되지 않습니다. 반대로 백업 뒤에 pairing한 장치는 복원된 Hub가 모르므로 다시 pairing합니다
+- **복원하면 active였던 클라이언트 장치가 모두 `dormant`가 되어 다시 승인해야 합니다(D21 U6).** 복원 안내가 장치마다 id와, 복원한 root를 넣은 명령(`campuslife-hub --root <복원한 root> approve <id>`)을 적습니다. 손에 있는 장치만 그 명령이나 로컬 UI "Devices"로 승인합니다. 분실한 장치는 승인하지 말고 같은 `--root`로 `revoke <id>`합니다. 승인하면 그 장치가 쥔 토큰으로 다시 동기화하기 때문입니다. revoked 장치는 revoked로 남고 승인할 수 없습니다. 그래서 백업 뒤에 revoke한 장치도 다시 active가 되지 않습니다. 반대로 백업 뒤에 pairing한 장치는 복원된 Hub가 모르므로 다시 pairing합니다
 - **백업 뒤에 한 purge는 복원으로 되돌려집니다.** 복원 뒤에는 백업 시각 이후 purge한 파일을 다시 purge합니다(Hub의 복원 안내가 그 시각을 알려 줌)
 - 백업이 한 번도 돌지 않았으면 모바일 원본 자동 정리가 일어나지 않습니다(D14)
 - 학기 종료 시 portable export 생성

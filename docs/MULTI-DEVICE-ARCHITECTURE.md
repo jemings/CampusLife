@@ -119,7 +119,7 @@ WorkManager나 iOS는 "Hub가 켜졌다"는 것을 알 수 없습니다. 그래�
 - **pair를 자동으로 재시도하지 않습니다.** 응답을 잃은 뒤 같은 secret을 다시 보내면 Hub는 재사용으로 판정해 거부하고 처음 등록된 장치까지 revoke합니다. 응답이 없으면 사용자에게 새 코드로 다시 추가하라고 안내합니다.
 - 토큰 재발급(`POST /v1/devices/me/token`) 중에는 새 토큰이 처음 인증에 성공할 때까지 지금 토큰을 지우지 않습니다. 재발급을 다시 요청했다면 가장 최근에 받은 새 토큰만 씁니다. 앞의 새 토큰은 그때 무효가 됐습니다.
 - 토큰에 만료가 없으므로 iOS 백그라운드 URLSession task에 헤더를 고정해 둬도 됩니다. 다만 토큰을 바꾼 뒤에는 옛 토큰을 실은 task를 취소하고 새 토큰으로 다시 만듭니다. 새 토큰이 처음 성공하면 옛 토큰은 `unauthorized`가 됩니다.
-- 401의 `code`로 갈래를 나눕니다. `device_dormant`는 재승인을 기다리라고 안내하고 Outbox와 캐시를 그대로 둡니다(그 응답의 epoch 헤더만으로 캐시를 버리지 않음, 오프라인 열람 보존). `device_revoked`는 다시 pairing하라고 안내하고, 새 device_id로 Outbox를 다시 보냅니다(같은 mutation_id는 `duplicate`, 같은 capture는 새 Capture를 만들지 않음). `unauthorized`는 Hub가 그 토큰을 모른다는 뜻입니다(끝난 토큰이거나, 백업 뒤에 pairing해 복원된 Hub에 없음). 다시 pairing합니다.
+- 401의 `code`로 갈래를 나눕니다. `device_dormant`는 재승인을 기다리라고 안내하고 Outbox와 캐시를 그대로 둡니다(그 응답의 epoch 헤더만으로 캐시를 버리지 않음, 오프라인 열람 보존). `device_revoked`는 다시 pairing하라고 안내하고, 새 device_id로 Outbox를 다시 보냅니다(같은 mutation_id는 `duplicate`, 같은 capture는 새 Capture를 만들지 않음). `unauthorized`는 Hub가 그 요청의 토큰을 모른다는 뜻입니다. 그 토큰이 가장 최근에 받은 토큰이 아니면(재발급으로 끝난 옛 토큰이나 대체된 새 토큰) 가장 최근 토큰으로 바꿔 다시 보냅니다. 가장 최근 토큰이 `unauthorized`일 때만(백업 뒤에 pairing해 복원된 Hub에 없는 경우 등) 다시 pairing합니다.
 
 ## 5. 클라이언트 동작
 
