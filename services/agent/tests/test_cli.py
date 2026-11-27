@@ -1194,3 +1194,21 @@ def test_status_and_tailscale_check_read_the_public_url_the_hub_serves_with(tmp_
     assert "public_url https://old-laptop.tail0a1b2c.ts.net" in reported
     assert "public_url https://old-laptop.tail0a1b2c.ts.net (the serving Hub's)" in checked
     assert "warning:" in checked and "https://campus-laptop.tail0a1b2c.ts.net" in checked
+
+
+def test_tailscale_check_changes_no_data_in_the_root_it_asks_about(tmp_path, monkeypatch):
+    """It may take and leave hub.lock while it looks for a serving Hub; nothing else in the root changes."""
+    root = tmp_path / "CampusLife"
+    assert hub(root, "init") == 0
+    status = {"BackendState": "Running", "Self": {"DNSName": "campus-laptop.tail0a1b2c.ts.net."}}
+    tailscale_serve = {"TCP": {"443": {"HTTPS": True}}, "Web": {"campus-laptop.tail0a1b2c.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8730"}}}}}
+    answers = {("serve", "status", "--json"): tailscale_serve, ("status", "--json"): status}
+    monkeypatch.setattr(tailscale_check, "tailscale", lambda arguments: json.dumps(answers[tuple(arguments)]))
+
+    def held():
+        return {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file() and path.name != "hub.lock"}
+
+    before = held()
+    assert hub(root, "tailscale-check") == 0
+
+    assert held() == before
