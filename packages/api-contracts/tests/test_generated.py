@@ -273,6 +273,8 @@ REQUIRED = {
     "relation/relation#": {"id", "from", "type", "to"},
     "common/error#/allOf/0/then": {"details"},
     "common/error#/$defs/incomplete_details": {"missing_chunks"},
+    "common/error#/allOf/1/then": {"details"},
+    "common/error#/$defs/epoch_changed_details": {"epoch"},
     "device/pair_request#": {"secret", "platform", "device_name", "app_version"},
     "device/pair_response#": {"device_id", "token"},
     "device/pairing_offer#": {"hub_url", "hub_id", "secret"},

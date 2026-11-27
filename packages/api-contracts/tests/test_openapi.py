@@ -205,9 +205,11 @@ RESPONSE_TABLE = {
     ("post", "/v1/mutations", "200"): ((JSON, "mutation/batch_response"), STAMP),
     ("post", "/v1/mutations", "400"): (ERROR, STAMP),
     ("post", "/v1/mutations", "401"): (ERROR, STAMP),
+    ("post", "/v1/mutations", "409"): (ERROR, STAMP),
     ("get", "/v1/changes", "200"): ((JSON, "sync/changes_page"), STAMP),
     ("get", "/v1/changes", "400"): (ERROR, STAMP),
     ("get", "/v1/changes", "401"): (ERROR, STAMP),
+    ("get", "/v1/changes", "409"): (ERROR, STAMP),
     ("get", "/v1/hub", "200"): ((JSON, "sync/hub"), STAMP),
     ("get", "/v1/hub", "400"): (ERROR, STAMP),
     ("get", "/v1/hub", "401"): (ERROR, STAMP),
@@ -231,6 +233,7 @@ HEADER_COMPONENTS = {
 }
 
 CONTRACT_PARAMETER = {"CampusLife-Contract": ("header", True, "sync/request_headers.json#/properties/CampusLife-Contract")}
+EPOCH_PARAMETER = {"CampusLife-Epoch": ("header", True, "sync/request_headers.json#/properties/CampusLife-Epoch")}
 SHA_PARAMETER = {"sha": ("path", True, "common/sha256.json")}
 
 # (method, path) -> {parameter: (in, required, schema)}, path-level parameters included
@@ -244,9 +247,9 @@ PARAMETER_TABLE = {
         "Range": ("header", False, "blob/download_request_headers.json#/properties/Range"),
         "If-None-Match": ("header", False, "blob/download_request_headers.json#/properties/If-None-Match"),
     },
-    ("post", "/v1/mutations"): CONTRACT_PARAMETER,
+    ("post", "/v1/mutations"): {**CONTRACT_PARAMETER, **EPOCH_PARAMETER},
     ("get", "/v1/changes"): {
-        **CONTRACT_PARAMETER,
+        **CONTRACT_PARAMETER, **EPOCH_PARAMETER,
         "since": ("query", True, "sync/changes_query.json#/properties/since"),
         "limit": ("query", False, "sync/changes_query.json#/properties/limit"),
     },
@@ -415,3 +418,24 @@ def test_post_mutations_says_which_batches_get_400():
     assert "400 invalid_request is for a body that is not a batch, and for a batch with an entry no result can describe" in description
     assert "one without a UUIDv4 mutation_id, or one whose op this Hub does not apply yet" in description
     assert "Nothing in such a batch is applied: the client fixes or drops that entry and sends the rest again." in description
+
+
+EPOCH_BOUND = [("get", "/v1/changes"), ("post", "/v1/mutations")]
+
+
+def test_only_the_feed_and_the_writes_send_the_base_epoch_and_hear_409_epoch_changed():
+    """D24 decision 4: what a cursor and an Outbox mean depends on the epoch, so only those two requests name it."""
+    for method, path, operation in operations():
+        names = {deref(parameter)["name"] for parameter in operation.get("parameters", [])}
+        bound = (method, path) in EPOCH_BOUND
+        assert ("CampusLife-Epoch" in names) is bound, (method, path)
+        assert (operation["responses"].get("409") == {"$ref": "#/components/responses/EpochChanged"}) is bound, (method, path)
+
+
+def test_epoch_changed_is_answered_before_the_body_and_changes_nothing():
+    description = prose(SPEC["components"]["responses"]["EpochChanged"]["description"])
+    assert "epoch_changed" in description and "details.epoch" in description
+    assert "before it reads the body" in description and "applies nothing" in description
+    info = prose(SPEC["info"]["description"])
+    assert "GET /v1/changes and POST /v1/mutations also send CampusLife-Epoch" in info
+    assert "The CampusLife-Epoch of a response is for diagnosis; a client does not compare it." in info
