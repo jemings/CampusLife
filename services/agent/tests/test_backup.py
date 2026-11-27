@@ -4,10 +4,13 @@ import json
 import os
 import sqlite3
 import stat
-from contextlib import closing
+import subprocess
+import sys
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from test_blobs import WindowsError_
 from test_capture_commit import feed
 
 from campuslife_hub import artifacts, backup, changes, fsck, jobs, purge
@@ -18,6 +21,10 @@ from campuslife_hub.local_import import import_files
 
 T0 = datetime(2026, 3, 2, 1, 0, tzinfo=UTC)
 SUBJECT = "capture:0f8fad5b-d9cb-469f-a165-70867728950e"
+CRASH = 73
+PHONE = "6ba7b811-9dad-41d1-80b4-00c04fd430c8"
+TABLET = "6ba7b812-9dad-41d1-80b4-00c04fd430c8"
+OLD_PHONE = "6ba7b813-9dad-41d1-80b4-00c04fd430c8"
 
 
 class Clock:
@@ -74,6 +81,7 @@ async def test_a_backup_holds_a_snapshot_the_blobs_it_names_and_a_manifest(tmp_p
         generation = await backup.back_up(core, target, clock=Clock())
 
     manifest = manifest_of(target, generation.name)
+    assert json.loads((target / "campuslife-backup.json").read_text(encoding="utf-8")) == {"format": 1, "hub_id": manifest["hub_id"]}
     assert generation.name == "20260302T010000000000Z"
     assert [blob["sha256"] for blob in manifest["blobs"]] == sorted([pdf, derived])
     assert kept_blobs(target) == sorted([pdf, derived])
@@ -207,19 +215,58 @@ async def test_restoring_the_same_generation_twice_gives_two_epochs(tmp_path):
     assert first.epoch != second.epoch
 
 
-async def test_a_restore_names_the_devices_it_knows_and_says_when_the_backup_was_taken(tmp_path):
+def device_row(device_id, name, state):
+    return (
+        "INSERT INTO devices (id, platform, device_name, app_version, state, created_at)"
+        f" VALUES ('{device_id}', 'android', '{name}', '1.0', '{state}', '2026-03-01T00:00:00.000Z')"
+    )
+
+
+async def test_a_restore_leaves_every_client_device_dormant_and_says_when_the_backup_was_taken(tmp_path):
     target = tmp_path / "drive"
     async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
-        await core.db.write(lambda tx: tx.execute(
-            "INSERT INTO devices (id, platform, device_name, app_version, state, created_at)"
-            " VALUES ('6ba7b811-9dad-41d1-80b4-00c04fd430c8', 'android', '휴대폰', '1.0', 'active', '2026-03-01T00:00:00.000Z')"
-        ))
+        for row in (device_row(PHONE, "잃어버린 휴대폰", "active"), device_row(TABLET, "태블릿", "active"), device_row(OLD_PHONE, "옛 휴대폰", "revoked")):
+            await core.db.write(lambda tx, row=row: tx.execute(row))
         await backup.back_up(core, target, clock=Clock())
+        await core.db.write(lambda tx: tx.execute("UPDATE devices SET state = 'revoked' WHERE id = ?", (PHONE,)))
+        hub_device = core.hub_device
 
     restored = await backup.restore(target, tmp_path / "restored", sync_roots=[])
 
-    assert restored.devices == (backup.KnownDevice("휴대폰", "android", "2026-03-01T00:00:00.000Z"),)
+    async with open_core(tmp_path / "restored", create=False, sync_roots=[]) as core:
+        states = dict(await core.db.read(lambda snap: snap.execute("SELECT id, state FROM devices").fetchall()))
+    assert states == {hub_device: "active", PHONE: "dormant", TABLET: "dormant", OLD_PHONE: "revoked"}
+    assert [device.name for device in restored.devices] == ["잃어버린 휴대폰", "태블릿"]
     assert restored.taken_at == "2026-03-02T01:00:00.000Z"
+
+
+CRASHING_RESTORE = f"""
+import asyncio, os, sys
+from pathlib import Path
+from campuslife_hub import backup
+
+def crash(*args, **kwargs):
+    os._exit({CRASH})
+
+backup._after_restore = crash
+asyncio.run(backup.restore(Path(sys.argv[1]), Path(sys.argv[2]), sync_roots=[]))
+"""
+
+
+async def test_a_restore_that_crashed_after_placing_the_database_never_serves_the_backups_epoch_or_devices(tmp_path):
+    target, restored = tmp_path / "drive", tmp_path / "restored"
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        await imported(core, tmp_path, b"%PDF week 1")
+        await core.db.write(lambda tx: tx.execute(device_row(PHONE, "휴대폰", "active")))
+        old = core.identity.epoch
+        await backup.back_up(core, target, clock=Clock())
+
+    crashed = subprocess.run([sys.executable, "-c", CRASHING_RESTORE, str(target), str(restored)], capture_output=True, timeout=120)
+    assert crashed.returncode == CRASH, crashed.stderr.decode(errors="replace")
+
+    async with open_core(restored, create=False, sync_roots=[]) as core:
+        assert core.identity.epoch != old
+        assert await core.db.read(lambda snap: snap.execute("SELECT state FROM devices WHERE id = ?", (PHONE,)).fetchone()) == ("dormant",)
 
 
 @pytest.mark.parametrize("leftover", ["file", "directory"])
@@ -234,6 +281,27 @@ async def test_a_restore_into_a_root_that_is_not_empty_is_refused_and_writes_not
         await backup.restore(target, root, sync_roots=[])
 
     assert [path.name for path in root.iterdir()] == ["old"]
+
+
+async def test_a_restore_looks_again_under_the_lock_and_refuses_a_root_filled_meanwhile(tmp_path, monkeypatch):
+    target, root = tmp_path / "drive", tmp_path / "restored"
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        await backup.back_up(core, target, clock=Clock())
+    acquire = backup.HubLock.acquire
+
+    @contextmanager
+    def filled_meanwhile(path):
+        (root / "campuslife.sqlite3").write_bytes(b"another Hub's database")
+        with acquire(path) as lock:
+            yield lock
+
+    monkeypatch.setattr(backup.HubLock, "acquire", filled_meanwhile)
+
+    with pytest.raises(RestoreRefused, match="not empty"):
+        await backup.restore(target, root, sync_roots=[])
+
+    assert sorted(path.name for path in root.iterdir()) == ["campuslife.sqlite3", "hub.lock"]
+    assert (root / "campuslife.sqlite3").read_bytes() == b"another Hub's database"
 
 
 async def test_a_restore_from_a_drive_without_a_finished_generation_is_refused(tmp_path):
@@ -301,6 +369,147 @@ async def test_a_backup_into_the_data_root_is_refused(tmp_path):
     async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
         with pytest.raises(BackupRefused):
             await backup.back_up(core, tmp_path / "root" / "backup", clock=Clock())
+
+
+async def test_a_backup_refuses_a_folder_that_holds_the_data_root_and_leaves_the_hub_as_it_is(tmp_path):
+    drive = tmp_path / "drive"
+    async with open_core(drive / "generations" / "CampusLife", create=True, sync_roots=[]) as core:
+        pdf = await imported(core, tmp_path, b"%PDF week 1")
+
+        with pytest.raises(BackupRefused, match="holds the data root"):
+            await backup.back_up(core, drive, clock=Clock())
+
+        assert core.layout.database.exists() and core.blobs.path_of(pdf).exists()
+    assert not (drive / "campuslife-backup.json").exists()
+
+
+async def test_a_backup_refuses_a_folder_holding_generations_or_blobs_it_did_not_write(tmp_path):
+    drive = tmp_path / "drive"
+    (drive / "generations").mkdir(parents=True)
+    (drive / "blobs").mkdir()
+    readme = drive / "generations" / "README.txt"
+    readme.write_text("user file")
+    photo = drive / "blobs" / "holiday.jpg"
+    photo.write_bytes(b"synthetic jpeg")
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        with pytest.raises(BackupRefused, match="no backup of this Hub wrote"):
+            await backup.back_up(core, drive, clock=Clock())
+
+    assert readme.read_text() == "user file" and photo.read_bytes() == b"synthetic jpeg"
+    assert sorted(path.name for path in drive.rglob("*")) == ["README.txt", "blobs", "generations", "holiday.jpg"]
+
+
+@pytest.mark.parametrize("marker", ['{"format": 1, "hub_id": "6ba7b814-9dad-41d1-80b4-00c04fd430c8"}', "not json", "[]"],
+                         ids=["another hub", "not json", "not an object"])
+async def test_a_backup_refuses_a_folder_whose_marker_does_not_name_this_hub(tmp_path, marker):
+    drive = tmp_path / "drive"
+    drive.mkdir()
+    (drive / "campuslife-backup.json").write_text(marker, encoding="utf-8")
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        with pytest.raises(BackupRefused, match="does not name this Hub"):
+            await backup.back_up(core, drive, clock=Clock())
+
+    assert [path.name for path in drive.iterdir()] == ["campuslife-backup.json"]
+
+
+async def test_a_backup_into_a_folder_with_other_files_claims_it_and_pruning_leaves_what_it_did_not_write(tmp_path):
+    drive, clock = tmp_path / "drive", Clock()
+    drive.mkdir()
+    (drive / "photos.zip").write_bytes(b"synthetic archive")
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        pdf = await imported(core, tmp_path, b"%PDF week 1")
+        first = await backup.back_up(core, drive, keep=1, clock=clock)
+        theirs = [
+            drive / "generations" / "README.txt",
+            drive / "generations" / "20200101T000000000000Z",
+            drive / "generations" / "2026 photos" / "manifest.json",
+            drive / "generations" / first.name / "notes.txt",
+            drive / "blobs" / "holiday.jpg",
+            drive / "blobs" / pdf[0:2] / "notes.txt",
+            drive / "blobs" / "zz" / "zz" / ("e" * 64),
+            drive / "blobs" / pdf[0:2] / pdf[2:4] / (pdf + ".txt"),
+        ]
+        for path in theirs:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"not the backup's")
+        clock.advance()
+
+        second = await backup.back_up(core, drive, keep=1, clock=clock)
+
+    assert second.pruned == (first.name,)
+    assert all(path.read_bytes() == b"not the backup's" for path in theirs)
+    assert (drive / "photos.zip").read_bytes() == b"synthetic archive"
+    assert sorted(path.name for path in (drive / "generations" / first.name).iterdir()) == ["notes.txt"]
+    assert backup.generations(drive) == [second.name]
+
+
+async def test_a_drive_copy_of_the_wrong_size_is_copied_again(tmp_path):
+    target, clock = tmp_path / "drive", Clock()
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        pdf = await imported(core, tmp_path, b"%PDF week 1")
+        await backup.back_up(core, target, clock=clock)
+        drive_copy = target / "blobs" / pdf[0:2] / pdf[2:4] / pdf
+        os.chmod(drive_copy, stat.S_IRUSR | stat.S_IWUSR)
+        drive_copy.write_bytes(b"%PDF wee")
+        clock.advance()
+
+        second = await backup.back_up(core, target, clock=clock)
+
+    assert second.copied == 1
+    assert drive_copy.read_bytes() == b"%PDF week 1"
+
+
+async def test_pruning_removes_a_copy_of_a_kept_blob_filed_under_the_wrong_folders(tmp_path):
+    target, clock = tmp_path / "drive", Clock()
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        pdf = await imported(core, tmp_path, b"%PDF week 1")
+        await backup.back_up(core, target, clock=clock)
+        wrong = "00" if pdf[0:2] != "00" else "11"
+        misfiled = target / "blobs" / wrong / wrong / pdf
+        misfiled.parent.mkdir(parents=True)
+        misfiled.write_bytes(b"%PDF week 1")
+        clock.advance()
+
+        await backup.back_up(core, target, clock=clock)
+
+    assert not misfiled.exists() and not misfiled.parent.exists()
+    assert kept_blobs(target) == [pdf]
+
+
+async def test_backup_and_restore_try_again_a_file_step_another_handle_refuses(tmp_path, monkeypatch):
+    target, clock = tmp_path / "drive", Clock()
+    replace, unlink, copy = os.replace, os.unlink, backup.copy_hashing
+    refused = {"replace": 0, "unlink": 0, "copy": 0}
+
+    def refusing_once(name, step):
+        def flaky(*args, **kwargs):
+            if refused[name] == 0:
+                refused[name] = 1
+                if name == "copy":
+                    args[1].write_bytes(b"half a copy")
+                raise WindowsError_(32)
+            return step(*args, **kwargs)
+        return flaky
+
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        pdf = await imported(core, tmp_path, b"%PDF week 1")
+        monkeypatch.setattr(os, "replace", refusing_once("replace", replace))
+        monkeypatch.setattr(backup, "copy_hashing", refusing_once("copy", copy))
+        await backup.back_up(core, target, keep=1, clock=clock)
+        clock.advance()
+        monkeypatch.setattr(os, "unlink", refusing_once("unlink", unlink))
+        second = await backup.back_up(core, target, keep=1, clock=clock)
+    assert refused == {"replace": 1, "unlink": 1, "copy": 1}
+    assert backup.generations(target) == [second.name]
+    assert kept_blobs(target) == [pdf]
+
+    refused.update(replace=0, unlink=0, copy=0)
+    restored = await backup.restore(target, tmp_path / "restored", sync_roots=[])
+
+    assert refused == {"replace": 1, "unlink": 1, "copy": 1}
+    async with open_core(tmp_path / "restored", create=False, sync_roots=[]) as core:
+        assert core.identity.epoch == restored.epoch
+        assert core.blobs.path_of(pdf).read_bytes() == b"%PDF week 1"
 
 
 async def test_a_blob_missing_from_the_hub_is_named_and_gets_no_backed_up_at(tmp_path):
