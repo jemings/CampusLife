@@ -700,7 +700,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **인증 seam (#4 결정 1):** `create_sync_app(hosted, authenticate, routers=())`입니다. `authenticate(bearer) -> DeviceId | Refusal`은 비동기이고, authenticator와 장치 상태(`token_hash`, dormant, revoked, `last_seen`)는 #19 `devices`가 소유합니다.
   - 앱 바깥 래퍼가 OpenAPI `security: []`가 아닌 모든 경로에서 authenticator를 부릅니다(fail-closed). 공개 경로는 `POST /v1/pair`뿐입니다.
   - 라우트는 `device_of(request)`로 DeviceId만 압니다.
-  - #19가 붙기 전의 `serve`는 모든 토큰을 401로 거절합니다.
+  - #19가 붙기 전의 `serve`는 모든 토큰을 401로 거절합니다. 지금은 `devices.authenticate`가 판정합니다(D23).
   - 근거: 상태마다 소유자가 하나여야 합니다(D1). 버린 안은 #4가 `token_hash`를 직접 읽는 것으로, 소유자가 둘이 됩니다.
 - **판정 순서 (#4 결정 3):** 앱 바깥의 ASGI 래퍼 하나가 404·405·500을 포함한 모든 응답에 Hub 헤더와 `common/error` 모양을 씌우고, 요청은 다음 순서로 판정합니다.
   1. `CampusLife-Contract`가 없거나 형식이 틀리면 400 `invalid_request`
@@ -732,7 +732,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
     - 이 노트북의 serve 설정(foreground 세션 포함)과 그것이 내놓는 Tailscale Service(`ServeConfig.Services`) 어디서도 사이트·경로·TCP forward가 admin 포트로 가지 않습니다. loopback은 주소로 판정합니다(`localhost`, 127/8, `::1`, IPv4-mapped). Service가 그 밖에 무엇을 내놓는지는 판정하지 않습니다.
     - Funnel이 꺼져 있습니다.
     - tailnet이 Running이고 MagicDNS 이름이 있습니다.
-    - 하나라도 어기면 problem이고 0이 아닌 코드로 끝납니다. `--public-url`이 MagicDNS 이름과 다르면 경고만 합니다.
+    - 하나라도 어기면 problem이고 0이 아닌 코드로 끝납니다. `--public-url`이 MagicDNS 이름과 다르면 경고만 합니다. `--public-url`을 주지 않으면 도는 Hub의 값과 비교합니다(D23).
 - **업로드를 열 때 "이미 저장됨"(200)을 답하면 그 장치의 그 sha256 세션을 끝냅니다** (2026-11-27, PR #43 리뷰, 오케스트레이터 결정). finalize의 같은 갈래와 같습니다. 근거: 다른 장치가 먼저 올리면 내 세션과 chunk가 7일 동안 남아 공간 판정에도 셉니다.
 
 **결과:**
@@ -747,12 +747,17 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - QR에 담을 pairing offer `{hub_url, hub_id, secret}`에 스키마가 없었습니다.
 - `app_version`에는 패턴이 없어 개행도 통과했습니다.
 - D20은 토큰 재발급을 다시 요청하면 "아직 쓰이지 않은 같은 새 토큰"을 돌려준다고 했습니다. Hub가 토큰의 SHA-256만 저장하는 D6와 함께 지킬 수 없는 문장이고, D20을 정할 때 이 충돌을 보지 못했습니다.
+- 장치 저장, 감사 기록, `hub_url`의 출처, #4 sync 앱과의 경계, 재승인, 관리 화면이 정해져 있지 않았습니다(#19 결정 3–7).
 
 각 결정의 근거와 버린 안은 #19 본문의 "결정"에 있습니다.
 
 **검토한 안:**
 - pairing offer: A. `packages/api-contracts`의 JSON Schema. B. `campuslife://` URI.
 - 반복 재발급: A. 다시 요청하면 새 토큰을 내고 쓰이지 않은 앞의 새 토큰을 대체한다. B. HMAC으로 같은 토큰을 다시 유도한다. C. 대기 토큰의 평문을 메모리에 둔다.
+- `hub_url` 출처: A. `serve --public-url`. B. 실행 중 `tailscale status`로 탐지. C. DB에 저장.
+- `tailscale-check`가 비교할 값: A. 인자로만 받는다. B. 인자가 없으면 도는 Hub가 내주는 값. C. Task Scheduler 작업의 인자를 읽는다.
+- #4와의 경계: A. #4의 바깥 래퍼가 `authenticate`를 부른다. B. #19가 별도 guard로 헤더까지 붙인다. C. 라우트마다 의존성으로 인증한다.
+- pairing 실패 rate limit: A. `POST /v1/pair`에만. B. bearer 인증 실패도 센다.
 
 **결정** (오케스트레이터 결정, 2026-11-27, 사용자가 결정을 위임)
 - **pairing offer (#19 결정 1):** QR에 담기는 JSON은 `device/pairing_offer {hub_url, hub_id, secret}`(열린 모양)입니다.
@@ -768,10 +773,72 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 근거: 같은 토큰을 다시 주려면 평문이나 유도 키가 있어야 해서 해시만 저장하는 D6와 충돌합니다. 응답을 잃어도 클라이언트는 새 토큰이 성공할 때까지 지금 토큰을 쥐고 있으므로 여전히 손해가 없습니다.
   - 버린 안: HMAC 유도는 키 파일과 그 백업 처리가 늘어납니다. 대기 토큰의 평문을 메모리에 두면 Hub를 재시작했을 때 계약을 어깁니다.
   - D20의 토큰 재발급 문장 가운데 반복 요청을 대체합니다.
+- **`audit_log` (#19 결정 3):** `audit_log(seq, at, event, subject, details_json)`를 두고 `audit.record()`로만 씁니다. 트리거가 UPDATE·DELETE를 막는 append-only입니다.
+  - 이벤트는 `pair`, `pair_failed`(사유 `unknown_secret`·`expired_secret`·`secret_reused`), `revoke`(사유 `user`·`pairing_secret_reused`), `approve`, `dormant`(사유 `inactive`·`restore`), `reissue`, `token_retired`입니다.
+  - 토큰과 secret은 넣지 않습니다.
+  - pair 요청에 `Tailscale-User-Login`이 있으면 `tailscale_user`로 남깁니다. 인증 근거로는 쓰지 않습니다. `one_line` 밖 문자는 U+FFFD로 바꾸고 256자로 자릅니다(2026-11-27, PR #46 리뷰). 버린 안: 거부는 serve가 넣는 헤더 때문에 pair를 막게 되고, 그대로 저장하면 지울 수 없는 로그에 무제한 값이 남습니다.
+  - 근거: D3가 revoke 기록을 요구하고, #19가 주 소비자 #8보다 먼저 착륙합니다. #8은 이벤트를 더해 이어 씁니다.
+- **`hub_url` 출처 (#19 결정 4):** `serve --public-url`(`DeviceSettings.public_url`)입니다. 없으면 "장치 추가"가 offer를 만들지 않고 설정 방법을 보여 줍니다.
+  - CLI 경계(`serve`·`tailscale-check`)에서 `device/pairing_offer`의 `hub_url` 스키마로 검사하고, `:443`으로 끝나는 값은 거부합니다(2026-11-28, PR #49 리뷰). 스키마는 클라이언트를 위해 `:443`을 계속 받습니다.
+  - 버린 안: 실행 중 `tailscale status` 탐지(외부 명령에 기대고 포트를 모름), DB 저장, `:443`을 조용히 떼어 냄(출처가 둘이 됨).
+- **`tailscale-check`가 비교할 값** (2026-11-28, #19 PR4, 구현자 판단 — #19가 PR4에 맡김): admin `/api/status`가 `devices.public_url`과 `dormant_after_days`를 내보냅니다. `tailscale-check`는 `--public-url`을 주지 않으면 data root를 서빙하는 Hub에게 그 값을 묻고, MagicDNS 이름과 비교합니다.
+  - Hub가 `--public-url` 없이 돌고 있으면 장치를 추가할 수 없다고 경고합니다. 도는 Hub가 없으면 비교하지 않고 그렇다고 출력합니다. 인자를 주면 인자가 이깁니다(serve 전에 확인할 때).
+  - 근거: 비교할 것은 장치가 실제로 받는 값입니다. 인자만 받으면 사용자가 같은 URL을 두 번 적어야 하고, 틀려도 알 수 없습니다. 노트북의 Tailscale 이름이 바뀐 뒤 QR이 옛 주소를 주는 것과, `--public-url` 없이 도는 Hub를 같은 명령 한 번으로 잡습니다.
+  - 버린 안: 인자로만 비교(위 이유), Task Scheduler 작업 인자 읽기(Windows 전용이고, 작업 없이 띄운 serve는 못 봄).
+  - 단점: `tailscale-check`가 Hub가 돌 때 data root의 admin 토큰을 읽습니다.
+- **#4와의 경계 (#19 결정 5):** #4의 바깥 래퍼가 봉투를 소유하고, `security: []`가 아닌 모든 경로에서 `authenticate`를 부릅니다(fail-closed, 공개 경로는 `POST /v1/pair`뿐).
+  - #19는 `devices.authenticate(core, bearer, *, now, redactor, dormant_after)`와 `sync_devices.DeviceSync`를 냅니다. `DeviceSync`는 요청마다 시계를 읽는 `authenticate`와 라우터(`POST /v1/pair`, `/v1/devices/me/token`, `/v1/devices/me/status`)를 갖습니다. 둘은 시계 하나와 프로세스당 `PairingLimiter` 하나를 함께 씁니다(PR #46·#49 리뷰).
+  - 라우트는 `device_of(request)`로 DeviceId만 압니다.
+  - 버린 안: #19의 별도 guard(봉투 소유자가 둘), 라우트마다 의존성(하나 빠뜨리면 fail-open), 모듈 수준 라우터(limiter가 모듈 전역).
+- **재승인 (#19 결정 6):** 로컬 UI와 CLI의 승인은 dormant → active로 바꾸고 같은 device_id와 토큰을 유지하며, `last_seen_at = now`로 비활동 시계를 다시 시작합니다.
+  - 승인 화면은 마지막 접속과 마지막 거부 시각을 보여 줍니다. revoked는 승인할 수 없고, 다시 pairing하면 새 device_id입니다.
+  - 근거: cursor·Outbox와 D12 레이어 작성자가 device_id에 묶여 있고, 사용자 결정은 "복원 뒤 재승인"입니다.
+  - 단점: 회수하지 못한 분실 장치를 승인하면 되살아납니다. 승인 화면, `devices` 출력, 복원 안내가 이를 경고하고 revoke를 가리킵니다.
+- **그 밖의 규칙 (#19 결정 7, 리뷰 반영 포함):**
+  - 저장:
+    - `device_tokens(token_sha256, device_id, status current|pending, created_at)`. 장치마다 current 하나, pending 하나까지입니다.
+    - `pairing_secrets(secret_sha256, created_at, expires_at, device_id?, used_at?)`. 쓴 secret을 남겨서 Hub를 재시작해도 재사용을 잡습니다. 열린 offer는 하나이고, 새 offer가 이전 것을 끝냅니다.
+    - 토큰과 secret은 SHA-256 hex로만 저장하고 찾습니다. 그래서 저장값과 받은 글자를 비교하는 곳이 없습니다.
+  - 판정표는 `authenticate` 한 곳에 있습니다. 읽기로 판정하고, 써야 할 때 쓰기 트랜잭션 안에서 다시 판정한 결과를 돌려줍니다(PR #46).
+    - 헤더 없음, 형식 불량, 모르는 해시, 끝나거나 대체된 토큰 → `unauthorized`
+    - revoked → `device_revoked`
+    - dormant, 또는 `coalesce(last_seen_at, created_at)`이 기간보다 오래됨 → 그 자리에서 dormant로 바꾸고 `device_dormant`
+    - pending 토큰의 첫 성공 → current로 올리고, 옛 토큰을 끝냄
+  - `last_seen_at`과 `last_rejected_at`은 1시간 넘게 지났을 때만 씁니다(로컬 WSL 합성 측정 commit 4.0 ms).
+  - dormant:
+    - 기간은 기본 90일이고 `serve --dormant-after-days`로 바꿉니다. 1–36500일만 받습니다(PR #49: 그보다 크면 `now - dormant_after`가 넘쳐 모든 인증이 500).
+    - 인증할 때 바로 바꾸고, host 정리 작업도 매 회차 일괄로 바꿉니다. 정리 작업에서는 purge 마무리와 다른 `try`라 한쪽 실패가 다른 쪽을 막지 않습니다.
+    - dormant로 바꿀 때 업로드 세션은 지우지 않습니다. 같은 id로 승인되면 이어 올리고, 아니면 7일 만료가 치웁니다. `windows_hub`는 dormant 전환·revoke·승인 대상이 아닙니다.
+  - pairing rate limit은 `POST /v1/pair`에만 겁니다(PR #46).
+    - 키는 전역입니다. serve를 거친 출처가 모두 127.0.0.1이기 때문입니다.
+    - 실패가 10분에 10회이면 secret을 판정하지 않고 401 + `Retry-After`입니다.
+    - 횟수는 메모리에만 두고 단조 시계로 셉니다. 프로세스당 lock 하나 아래에서 검사·판정·실패 기록을 하므로, 동시에 온 시도도 하나씩 판정됩니다. 판정하지 않은 시도는 세지 않습니다.
+    - 버린 안: bearer 실패도 세면 낡은 장치 하나가 모든 장치를 막습니다.
+  - pair 경계: 본문은 4 KiB까지 읽습니다. secret보다 `device/pair_request` 스키마를 먼저 판정합니다(NFC만 어기면 400 `not_canonical`).
+  - reissue는 `windows_hub`와 revoked 장치에 토큰을 내지 않습니다.
+  - revoke:
+    - 상태를 commit한 뒤 그 장치의 업로드 세션을 지웁니다. 이미 인증된 요청은 끝까지 갑니다.
+    - 다시 pairing하면 새 device_id입니다. Outbox 재전송은 같은 mutation_id면 `duplicate`(`original: applied`)이고, 새 mutation_id·같은 capture면 `applied`입니다. 둘 다 새 Capture를 만들지 않습니다(PR #49).
+  - 응답을 잃은 뒤 다시 보낸 pair도 재사용으로 판정되므로, 클라이언트는 pair를 자동으로 재시도하지 않습니다(MULTI-DEVICE §4).
+  - redaction:
+    - 발급한 secret과 토큰은 등록합니다. 받은 Bearer는 인증에 성공한 뒤에만 등록합니다.
+    - secret은 URL에 두지 않습니다. pairing offer는 POST 응답 본문에만 있고, admin 페이지는 `Cache-Control: no-store`입니다.
+  - 관리 표면:
+    - `device_admin.py`의 라우터를 admin `create_app`이 늘 포함하고, 페이지 틀은 `admin_page.page`입니다.
+    - admin API는 `GET /api/devices`와 `POST /api/devices/{id}/revoke|approve`입니다. 응답은 `{id, state, changed}`이고, 모르는 id는 404, Hub 자신이나 revoked의 승인은 409입니다.
+    - CLI `devices | revoke <id> | approve <id>`는 Hub가 돌면 admin API를 거치고, 아니면 lock을 잡고 직접 합니다. 장치는 전체 id로만 지정합니다.
+  - 화면:
+    - `device_name`·`app_version`을 escape합니다.
+    - 목록은 이름 옆에 장치 id 앞 8자와 pairing 시각을 보여 줍니다(PR #45). `one_line`이 ZWJ 같은 보이지 않는 문자를 막지 않아서, 같아 보이는 이름을 이것으로 가립니다. 버린 안: 패턴 확장(정상 이모지 이름이 깨짐).
+    - QR은 서버가 그린 인라인 SVG입니다. 순수 Python 패키지 segno를 쓰고, 속성만 쓰므로 CSP가 막는 script나 inline style이 없습니다.
+  - 설정은 `HostConfig.devices: DeviceSettings(public_url, dormant_after)`로 admin과 sync 앱에 갑니다. Task Scheduler 작업 인자에도 두 플래그가 들어갑니다.
 
 **결과:**
 - 계약은 `schemas/device/pairing_offer.json`·`pair_request.json`과 `openapi/sync.yaml`의 `reissueToken` 설명에 있고, 하네스 규칙은 `HARNESS.md`에 있습니다.
-- 장치 저장, 인증 판정, revoke, 재승인, `audit_log`, 관리 화면의 결정(#19 결정 3–7)은 #19의 남은 PR이 이 항목에 더합니다.
+- 코드는 `services/agent/src/campuslife_hub/`의 `devices.py`(판정·저장), `audit.py`, `migrations/0008_device_tokens.sql`, `sync_devices.py`(sync 리스너), `device_admin.py`(admin 리스너)에 있습니다.
+- 운영 방법은 `services/agent/README.md`의 "장치", 클라이언트 규칙은 MULTI-DEVICE-ARCHITECTURE §4, 보안 요약은 PRIVACY-SECURITY의 Multi-device Security가 적습니다.
+- D22의 "#19가 붙기 전의 serve" 문장과 `tailscale-check`(#4 결정 9)의 비교 대상은 이 항목을 따릅니다.
+- 범위 밖: 클라이언트 등록 화면과 저장(#3·#16), 실기기 확인(#39·#14), 복원 뒤 클라이언트 재동기화(#18), 재pairing 뒤 annotation layer 이어받기(#17).
 
 ---
 
