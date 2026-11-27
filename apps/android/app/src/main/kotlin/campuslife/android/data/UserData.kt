@@ -16,11 +16,9 @@ import campuslife.wire.textColumns
 import campuslife.wire.textHash
 import campuslife.wire.withExactNumbers
 import campuslife.wire.wireJson
-import java.text.Normalizer
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -151,12 +149,6 @@ class UserData(private val db: CampusLifeDatabase) {
 
     private fun JsonElement.canonical(): JsonElement = nfcStrings().withExactNumbers()
 
-    private fun JsonElement.nfcStrings(): JsonElement = when (this) {
-        is JsonObject -> JsonObject(mapValues { (_, value) -> value.nfcStrings() })
-        is JsonArray -> JsonArray(map { it.nfcStrings() })
-        is JsonPrimitive -> if (isString) JsonPrimitive(nfc(content)) else this
-    }
-
     private companion object {
         const val ID = "id"
         const val FIELDS = "fields"
@@ -164,7 +156,5 @@ class UserData(private val db: CampusLifeDatabase) {
         const val DELETED_AT = "deleted_at"
         val SET_KEY = Regex("[a-z][a-z_]*|fields\\.[a-z][a-z_]*")
         val UNANSWERED = setOf(TransferState.HELD.column, TransferState.PENDING.column)
-
-        fun nfc(text: String): String = Normalizer.normalize(text, Normalizer.Form.NFC)
     }
 }

@@ -11,7 +11,6 @@ import campuslife.wire.Origin
 import campuslife.wire.Timeline
 import campuslife.wire.wireJson
 import java.io.InputStream
-import java.text.Normalizer
 import java.time.Clock
 import java.time.Instant
 import java.util.UUID
@@ -52,13 +51,14 @@ class CaptureOutbox(
             id = UUID.randomUUID().toString(),
             createdAt = clock.instant(),
             origin = origin,
-            categoryHint = categoryHint?.let { nfc(it) },
-            userNote = userNote?.let { nfc(it) },
+            categoryHint = categoryHint,
+            userNote = userNote,
             url = url,
             links = links,
             attachments = emptyList(),
         )
-        db.captures().add(LocalCapture(draft.id, OPEN, wireJson.encodeToString(CaptureCommit.serializer(), draft)))
+        val text = wireJson.encodeToJsonElement(CaptureCommit.serializer(), draft).nfcStrings().toString()
+        db.captures().add(LocalCapture(draft.id, OPEN, text))
         return draft.id
     }
 
@@ -128,7 +128,5 @@ class CaptureOutbox(
         const val OPEN = "open"
         const val SEALED = "sealed"
         val COMMITTED = setOf(TransferState.ACKED, TransferState.PULLING, TransferState.SETTLED)
-
-        fun nfc(text: String): String = Normalizer.normalize(text, Normalizer.Form.NFC)
     }
 }
