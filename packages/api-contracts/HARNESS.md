@@ -32,7 +32,7 @@ Kotlin(#3)·Swift(#16) 앱 모델이 계약과 같은 JSON을 읽고 쓰는지 �
 | 없음과 `null` | 다릅니다. 원본에 없던 멤버를 `null`로 쓰거나, `null`이던 멤버를 빼면 실패입니다. 선택 필드는 "없음"과 "null"을 구분해 모델링합니다(예: Kotlin `explicitNulls`, Swift `encodeIfPresent`와 `encodeNil`). |
 | 문자열 | 코드 포인트 그대로. NFC·NFD 변환, 공백 정리, 대소문자 변경을 하지 않습니다. 이스케이프 형태(`\uac15`와 `강`)는 자유입니다. 예: `original_filename_raw`는 NFD 그대로, `original_filename`은 NFC 그대로 돌아와야 합니다. 비BMP 문자(이모지)도 서로게이트 쌍이 깨지지 않아야 합니다. |
 | 모르는 Item kind | `item/item`의 `kind`는 닫힌 enum이 아닙니다. 모르는 kind는 공통 열(title, 날짜, body)만 읽고 `fields`는 해석하지 않습니다(forward `item/item/unknown_kind`). |
-| Hub가 보내는 열린 값 | Relation `type`, Attachment `role`, Capture `origin.type`, changes의 `entity`, Artifact `artifact_type`, Locator `kind`, Suggestion `action`, 오류 본문(`common/error`)의 `code`는 Hub가 보내는 쪽에서 닫힌 enum이 아닙니다. 스키마에 `x-open: true`로 표시되어 있고 알려진 값은 그 옆 `examples`에 있습니다. 열린 enum의 값은 모두 같은 모양 `^[a-z][a-z_]*$`(소문자로 시작하고 소문자와 `_`만, 숫자 없음)이므로 디코더는 이 규칙 하나로 모르는 값을 받습니다. 모르는 값도 디코드해 그대로 보존하고, 모르는 `entity`의 행은 건너뛰며, 모르는 오류 `code`는 일반 실패로 다룹니다(forward fixture). 클라이언트가 보내는 `capture.commit`·`create`·`patch`에서는 알려진 값만 씁니다. 다른 곳의 `examples`는 설명일 뿐입니다. |
+| Hub가 보내는 열린 값 | Relation `type`, Attachment `role`, Capture `origin.type`, changes의 `entity`, Artifact `artifact_type`, Artifact 본문 block의 `block_type`, extraction 본문 warning의 `code`, Locator `kind`, Suggestion `action`, 오류 본문(`common/error`)의 `code`는 Hub가 보내는 쪽에서 닫힌 enum이 아닙니다. 스키마에 `x-open: true`로 표시되어 있고 알려진 값은 그 옆 `examples`에 있습니다. 열린 enum의 값은 모두 같은 모양 `^[a-z][a-z_]*$`(소문자로 시작하고 소문자와 `_`만, 숫자 없음)이므로 디코더는 이 규칙 하나로 모르는 값을 받습니다. 모르는 값도 디코드해 그대로 보존하고, 모르는 `entity`의 행은 건너뛰며, 모르는 오류 `code`는 일반 실패로 다룹니다(forward fixture). 클라이언트가 보내는 `capture.commit`·`create`·`patch`에서는 알려진 값만 씁니다. 다른 곳의 `examples`는 설명일 뿐입니다. |
 | Mutation 결과 | 멤버마다 나타나는 `result`가 정해져 있습니다: `reason`은 rejected, `original`은 duplicate, `missing_blobs`는 retry, `conflicted_fields`는 conflict, `applied_fields`는 applied·conflict, `conflict_record_ids`는 conflict와 rejected{deleted}. 없는 멤버를 `null`로 쓰면 다른 값이 됩니다. |
 | Locator·Suggestion | Locator(`locator/locator`)의 `kind`와 Suggestion의 `action`은 Hub가 보내는 열린 값입니다. 알려진 값은 갈래(`$defs/known`의 판별 union)로 검사하고, `^[a-z][a-z_]*$`인 모르는 값은 멤버째 보존합니다(forward fixture `kind_unknown`, `action_unknown`). Locator `v`는 1 이상이고 늘 수 있습니다. 모르는 kind도 `blob`(sha256 문자열), `capture`(UUID 문자열), `box`(정규화 `[x, y, w, h]`(D12·E17), `box_extent` 규칙도 적용)는 타입을 지키므로 `blob`을 문자열로 읽어도 됩니다. 클라이언트 규칙: 모르는 kind는 `blob`이 있으면 그 원본의 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. 모르는 action은 표시만 하고 수락할 수 없게 합니다. Suggestion `proposed`는 action에 따라 Item create의 data, `{entity, id, set}`, Relation 모양이며 안쪽도 열려 있습니다. 예외로 patch_item의 `set` 키는 같은 계약의 열 이름이라 열려 있지 않습니다(새 열을 제안하는 patch는 계약 버전이 같은 Hub만 보내며, `tests/test_open_closed.py`의 `FREE_FORM_IN_FEED`가 이 자리를 열림 시험에서 면제합니다). Relation `locators`는 Hub만 쓰고, 규칙 `locator_anchor`는 모르는 Relation type의 locators를 막지 않습니다(알려진 type은 Relation `type`의 `examples`로 판정합니다. `x-open` 필드의 `examples`는 문서용이 아니라 알려진 값 목록(규범)이고 규칙 `locator_anchor`·`set_type`이 읽으며, 목록을 바꾸면 규칙 판정이 함께 바뀌고 fixture와 변이 시험이 고정합니다). 클라이언트가 보내는 쪽에 Locator가 들어가면 닫힌 view `locator/locator#/$defs/input`(알려진 kind, `v` = 1)을 씁니다. 이 view는 `kind`와 `v`만 닫으므로 멤버는 Locator를 싣는 입력 스키마가 닫습니다. |
 | 시각 문자열 | `instant`는 `YYYY-MM-DDTHH:MM:SS.sssZ` 문자열 그대로 돌아와야 합니다. 날짜 타입으로 바꿔 담는다면 밀리초 3자리 형식으로 다시 써야 합니다. |
@@ -73,6 +73,17 @@ uv run campuslife-contracts compare fixtures/valid <out>
 - 빈 문자열 `""`도 텍스트이므로 sha256("") = `e3b0c442…b855`로 해시합니다. `null`은 "열이 없음"만 뜻하고 해시하지 않습니다. 열이 없던 상태의 patch는 `from_hash: null`을 그대로 보냅니다.
 - Python 참조 함수: `campuslife_contracts.text_hash(text)`. 문자열이 아니면 `TypeError`입니다.
 - 하네스는 모든 vector에 대해 그 언어의 함수를 호출하고, 결과가 `hash`와 다르면 vector 경로를 출력하고 0이 아닌 종료 코드로 끝납니다.
+
+## Artifact 본문
+
+Artifact 행(`artifact/artifact`)의 `content_blob`이 구조화 본문이면 그 Blob은 `artifact/body` envelope JSON `{v, blocks:[{id, block_type, text?, payload?, refs:[Locator]}]}`입니다(D13, #5 결정 8). `artifact_type`마다 본문 스키마가 envelope을 좁히며, 지금은 `extraction`(`artifact/extraction`)이 있습니다. 하네스는 두 스키마를 다른 Hub 송신 모양처럼 왕복하고 forward를 디코드합니다.
+
+- `blocks`의 순서가 ordinal(0부터)입니다. `refs`는 블록의 근거 위치이고, 비어 있으면 근거 없는 블록으로 표시합니다. 모르는 `block_type`은 `text`만으로 표시하고 `payload`는 해석하지 않습니다.
+- block `id`는 Hub가 만드는 소문자 hex SHA-256이고, LLM은 이 id로만 인용합니다(D13). 클라이언트는 id를 다시 계산하지 않고 그대로 보존합니다.
+- extraction 본문은 추출기 하나의 한 버전이 Blob 하나(`blob`, Artifact의 `subject_ref`는 `blob:<blob>`)에서 읽은 블록입니다. 규칙 두 개는 Hub 검증기만 봅니다.
+  - `block_id`: 블록 `id`는 `canonical_json([blob, extractor.id, extractor.version, ordinal])`의 SHA-256입니다. 같은 Blob·추출기 버전이면 id가 같고, 버전이 바뀌면 새 Artifact에 새 id가 생깁니다(옛 Artifact는 남음).
+  - `block_anchor`: 모든 ref는 그 `blob` 안의 위치입니다(`capture` 앵커 없음). 정확한 위치를 모르는 블록은 `document`를 씁니다.
+- extraction `warnings[].code`는 읽지 못했거나 일부만 읽은 이유입니다(`no_text_layer`, `limit_reached`, `replaced_characters`). 처리 결과(`outcome_code`)는 ProcessingJob이 가지며 본문에 싣지 않습니다(D1).
 
 ## HTTP 표면 (OpenAPI)
 
