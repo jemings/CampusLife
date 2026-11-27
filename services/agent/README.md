@@ -176,7 +176,7 @@ uv run campuslife-hub --root D:\CampusLife-restored restore --from E:\CampusLife
 |---|---|
 | 원본 Blob | 무기한(읽기 전용). Attachment·Artifact·Relation 어느 것도 가리키지 않게 된 Blob은 마지막으로 받은 지 7일 뒤 정리 |
 | tombstone(삭제 표시) | 무기한. purge 뒤에도 남음 |
-| purge | 즉시: Blob, 그것을 가리키는 Attachment, 파생 Artifact·Suggestion과 그 Relation. fork된 Note는 남기고 근거가 지워졌다고 표시(U2). 백업 세대에는 남음 |
+| purge | 즉시: Blob, 그것을 가리키는 Attachment, 파생 Artifact·Suggestion과 그 Relation(SQLite 파일과 WAL의 바이트까지. `secure_delete` 켬, purge 끝에 WAL 비움). fork된 Note는 남기고 근거가 지워졌다고 표시(U2). 백업 세대에는 남음 |
 | 끝나지 않은 업로드 세션 | 마지막으로 열거나 chunk를 받은 지 7일. 그사이 다른 장치가 같은 Blob을 올렸으면 다시 열 때 바로 끝남 |
 | Mutation 결과(`applied_mutations`) | 90일. 그보다 오래된 재전송은 create·patch는 다시 판정되어 해가 없고, delete·restore·Relation create는 다시 적용됨(수용) |
 | 백업 세대 | 드라이브마다 최근 N개(기본 5) |

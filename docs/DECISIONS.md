@@ -586,7 +586,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **사용자 결정**
 - **U1. 백업은 암호화하지 않습니다** (2026-11-26, "결정"). 설치·운영 문서(`services/agent/README.md`)와 PRIVACY-SECURITY에 백업 드라이브 분리 보관과 분실 위험을 적습니다.
 - **U2. 즉시 purge는 Blob 단위입니다** (2026-11-26, "결정").
-  - 그 Blob을 가리키는 모든 Attachment, 거기서 파생된 Artifact·Suggestion(전이 폐쇄), 인덱스·렌디션을 지웁니다.
+  - 그 Blob을 가리키는 모든 Attachment, 거기서 파생된 Artifact·Suggestion(전이 폐쇄), 인덱스·렌디션을 지웁니다. 지운 행의 텍스트가 SQLite 파일 바이트(DB 파일과 WAL)에도 남지 않게, Hub는 쓰기 연결에서 `secure_delete`를 켜고 purge 끝에 WAL을 비웁니다.
   - 그 Artifact에서 fork된 Note(사용자 데이터)는 지우지 않고 근거 링크가 사라졌다고 표시합니다. purge 확인 화면에 "이 Note들도 지울까요?"를 함께 보여 줍니다.
   - 백업 세대에는 남아 있음을 알립니다.
 - **U3. 백업은 수동입니다** (2026-11-26, "결정"). 로컬 UI와 CLI로 하고, 마지막 백업에서 7일이 지나면 경고하며, 드라이브에는 최근 5세대를 남깁니다. 둘 다 설정값(`serve --backup-warn-days`, `--backup-keep`)입니다.
