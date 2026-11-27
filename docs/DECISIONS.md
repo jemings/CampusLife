@@ -862,7 +862,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 버린 안: D18 원안(필드당 행 + Blob), inline과 Blob 혼합, uuid5로 유도한 id.
   - 단점: 피드 행 하나가 최대 8 MiB(D22)입니다. 한 Mutation이 기록 둘을 낼 op가 생기면 그 op가 기록 종류를 additive로 더합니다.
 - **수명 (#18 결정 2):** 열린 기록은 `set`을 가집니다. 해소하면 `set`을 지우고 `resolved:{at, mutation_id}`를 씁니다. 스키마는 둘 중 정확히 하나를 요구하고, 클라이언트는 `set`이 있을 때만 열린 기록으로 봅니다.
-  - 닫힌 `state` enum을 두지 않으므로 첫 배포 뒤에도 새 상태를 선택 멤버로 더할 수 있습니다(D20).
+  - 닫힌 `state` enum을 두지 않습니다. 기록을 닫는 새 방식은 `resolved` 안의 멤버(예: `resolved.how`)로 더하므로, 첫 배포 뒤에도 옛 클라이언트가 열림과 해소를 가립니다(D20). `set`도 `resolved`도 없는 제3의 상태는 허용하지 않습니다(옛 클라이언트가 열림·해소를 가를 수 없음).
   - 해소된 작은 행은 무기한 남아 중복을 막습니다. 90일 넘은 재전송은 CAS가 다시 `conflict`로 판정하되, `conflict_record_ids`에 기존 id를 싣고 기록을 다시 열지 않습니다.
   - 휴지통 만료는 열린 기록이 있는 Item을 건너뜁니다. 즉시 purge는 사용자의 명시적 파괴이므로 그 엔터티의 기록을 같은 트랜잭션에서 tombstone으로 만듭니다. 복구 없이 사라진 대상(Tag 등)의 열린 기록은 `set` 없는 `conflict.resolve`로 닫습니다.
   - 버린 안: 값 영구 보존(진 본문이 모든 캐시와 백업에 남음), 해소할 때 tombstone(91일 재전송이 되살림), 닫힌 `state` enum.

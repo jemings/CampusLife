@@ -73,7 +73,7 @@ Hub에는 반쯤 도착한 Capture가 없습니다.
 - `GET /v1/changes?since=N`은 `rev > N`인 행의 현재 상태를 돌려줍니다. 클라이언트는 행을 덮어쓰고 cursor를 저장합니다. full reconcile은 `since=0`입니다.
 - tombstone은 무기한 보존하므로 cursor가 만료되는 일이 없습니다.
 - 클라이언트는 다음 두 경우를 확인합니다.
-  - `epoch`가 바뀌면(Hub 복원·이전) 캐시를 버리고 `since=0`부터 다시 받습니다. ACK를 받았지만 Hub에 없는 Capture는 다시 올리고, 미전송 Mutation은 다시 보냅니다.
+  - `epoch`가 바뀌면(Hub 복원·이전) 캐시를 버리고 `since=0`부터 다시 받습니다. ACK를 받았지만 Hub에 없는 Capture는 다시 올리고, 미전송 Mutation은 다시 보냅니다. *(D24로 대체됨: 응답의 epoch을 비교하지 않고, 기준 epoch 요청 헤더에 대한 409 `epoch_changed`가 유일한 트리거입니다. 클라이언트 규칙 본문은 #18 PR7)*
   - `hub_id`가 pairing 때와 다르면 동기화를 중단합니다.
 - 피드에 넣지 않는 것: ContentBlock, ProcessingJob 상세, FTS. 노트 본문은 Artifact Blob으로 필요할 때 받습니다.
 
@@ -119,7 +119,7 @@ WorkManager나 iOS는 "Hub가 켜졌다"는 것을 알 수 없습니다. 그래�
 - **pair를 자동으로 재시도하지 않습니다.** 응답을 잃은 뒤 같은 secret을 다시 보내면 Hub는 재사용으로 판정해 거부하고 처음 등록된 장치까지 revoke합니다. 응답이 없으면 사용자에게 새 코드로 다시 추가하라고 안내합니다.
 - 토큰 재발급(`POST /v1/devices/me/token`) 중에는 새 토큰이 처음 인증에 성공할 때까지 지금 토큰을 지우지 않습니다. 재발급을 다시 요청했다면 가장 최근에 받은 새 토큰만 씁니다. 앞의 새 토큰은 그때 무효가 됐습니다.
 - 토큰에 만료가 없으므로 iOS 백그라운드 URLSession task에 헤더를 고정해 둬도 됩니다. 다만 토큰을 바꾼 뒤에는 옛 토큰을 실은 task를 취소하고 새 토큰으로 다시 만듭니다. 새 토큰이 처음 성공하면 옛 토큰은 `unauthorized`가 됩니다.
-- 401의 `code`로 갈래를 나눕니다. `device_dormant`는 재승인을 기다리라고 안내하고 Outbox와 캐시를 그대로 둡니다(그 응답의 epoch 헤더만으로 캐시를 버리지 않음, 오프라인 열람 보존). `device_revoked`는 다시 pairing하라고 안내하고, 새 device_id로 Outbox를 다시 보냅니다(같은 mutation_id는 `duplicate`, 같은 capture는 새 Capture를 만들지 않음). `unauthorized`는 Hub가 그 요청의 토큰을 모른다는 뜻입니다. 그 토큰이 가장 최근에 받은 토큰이 아니면(재발급으로 끝난 옛 토큰이나 대체된 새 토큰) 가장 최근 토큰으로 바꿔 다시 보냅니다. 가장 최근 토큰이 `unauthorized`일 때만(백업 뒤에 pairing해 복원된 Hub에 없는 경우 등) 다시 pairing합니다.
+- 401의 `code`로 갈래를 나눕니다. `device_dormant`는 재승인을 기다리라고 안내하고 Outbox와 캐시를 그대로 둡니다(그 응답의 epoch 헤더만으로 캐시를 버리지 않음, 오프라인 열람 보존). *(D24로 대체됨: 응답의 epoch 헤더는 어느 응답에서도 비교하지 않으며, 재승인 뒤 첫 pull·push가 받는 409 `epoch_changed`가 재동기화를 시작합니다. 클라이언트 규칙 본문은 #18 PR7)* `device_revoked`는 다시 pairing하라고 안내하고, 새 device_id로 Outbox를 다시 보냅니다(같은 mutation_id는 `duplicate`, 같은 capture는 새 Capture를 만들지 않음). `unauthorized`는 Hub가 그 요청의 토큰을 모른다는 뜻입니다. 그 토큰이 가장 최근에 받은 토큰이 아니면(재발급으로 끝난 옛 토큰이나 대체된 새 토큰) 가장 최근 토큰으로 바꿔 다시 보냅니다. 가장 최근 토큰이 `unauthorized`일 때만(백업 뒤에 pairing해 복원된 Hub에 없는 경우 등) 다시 pairing합니다.
 
 ## 5. 클라이언트 동작
 
