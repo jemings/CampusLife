@@ -91,6 +91,8 @@ def _hub_url(text: str) -> str:
     """serve --public-url and tailscale-check --public-url alike, so both mean the hub_url pairing hands out."""
     if not devices.is_hub_url(text):
         raise argparse.ArgumentTypeError(f"{text!r} is not a hub_url: https://<name>.<tailnet>.ts.net, lowercase, with no path or trailing /")
+    if text.endswith(":443"):
+        raise argparse.ArgumentTypeError(f"{text!r} names port 443; write it without :443, as the Hub hands out every hub_url")
     return text
 
 
