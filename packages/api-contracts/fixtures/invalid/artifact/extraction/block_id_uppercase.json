@@ -1,0 +1,73 @@
+{
+  "v": 1,
+  "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "extractor": {
+    "id": "text",
+    "version": "1"
+  },
+  "blocks": [
+    {
+      "id": "CD2D688F3A490F90E828681F99E2343054549FEBCE81E5892CC2E8B265296F20",
+      "block_type": "heading",
+      "text": "1. 과제 안내",
+      "refs": [
+        {
+          "v": 1,
+          "kind": "doc_path",
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "heading_path": [],
+          "block_index": 0
+        }
+      ]
+    },
+    {
+      "id": "a69121f30ad35a7f7115cac6f5a1f5416b344df7440d08a18cc902d940ef88e9",
+      "block_type": "paragraph",
+      "text": "보고서는 PDF로 제출합니다.",
+      "refs": [
+        {
+          "v": 1,
+          "kind": "doc_path",
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "heading_path": [
+            "1. 과제 안내"
+          ],
+          "block_index": 0
+        }
+      ]
+    },
+    {
+      "id": "2d00db9a4368e5610fc0e35adc4064cadb7d4c04dbc0c0e7e133ca82f7491cb8",
+      "block_type": "heading",
+      "text": "1.1 마감",
+      "refs": [
+        {
+          "v": 1,
+          "kind": "doc_path",
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "heading_path": [
+            "1. 과제 안내"
+          ],
+          "block_index": 1
+        }
+      ]
+    },
+    {
+      "id": "777c3216cbc12325ada7c72bb2805b7ae790b32e3e4ad8c46ef9f9015c48aacf",
+      "block_type": "paragraph",
+      "text": "3월 14일 23:59까지입니다.",
+      "refs": [
+        {
+          "v": 1,
+          "kind": "doc_path",
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "heading_path": [
+            "1. 과제 안내",
+            "1.1 마감"
+          ],
+          "block_index": 0
+        }
+      ]
+    }
+  ]
+}
