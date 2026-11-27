@@ -92,7 +92,7 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 | exam | course_id, scope_text | MVP |
 | task | progress(inbox/planned/in_progress/blocked/completed/cancelled), reminders[] | MVP |
 | note | forked_from_artifact? (`refs[]`는 #8이 추가, E20) | MVP |
-| event | category?, place?, organization_id?, url? | 시작은 `starts_at`. 끝 시각은 #10 |
+| event | category?, place_text?, organization_id?, url? | 시작은 `starts_at`. 끝 시각은 #10 |
 | announcement | category?, organization_id?, url? | 본문은 `body`, 공지가 정한 기한은 `due_at` |
 | opportunity | category?, eligibility_text?, due_text?, organization_id?, url? | 접수 시작 `starts_at`, 마감 `due_at` |
 | organization | category?, url? | 다른 kind가 `organization_id`로 가리킴 |
@@ -101,7 +101,8 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 - 일정 로직에 필요한 날짜(`starts_at`, `due_at`, `all_day`)는 공통 열입니다. `all_day`가 true면 날짜는 `local_date`, 아니면 `instant`입니다. 상태 공통 열은 없습니다(U4).
 - `kind`는 `^[a-z][a-z_]*$`인 열린 값입니다.
 - event·announcement·opportunity·organization(#9 결정 8)
-  - `category`는 닫힌 enum이 아니라 `^[a-z][a-z_]*$`인 열린 이름입니다. 스키마의 `examples`는 클라이언트가 고르기 목록으로 내놓는 값이고, 그 밖의 값도 보존합니다.
+  - `category`는 닫힌 enum이 아니라 `common/open_name`(`^[a-z][a-z_]*$`)인 열린 이름입니다. kind마다 `examples`는 클라이언트가 고르기 목록으로 내놓는 값이고, 그 밖의 값도 보존합니다.
+  - 여러 kind가 함께 쓰는 field(`category`, `organization_id`, `url`)는 정의 하나를 `$ref`합니다. patch의 `fields.<key>`는 그 키를 정의한 kind 가운데 하나에만 맞아도 통과하므로, 한 kind만 느슨해지면 모든 kind의 patch가 느슨해지기 때문입니다.
   - 소속은 `organization_id`(organization Item의 id)로 가리킵니다. `course.term_id`와 같은 방식입니다.
   - `url`은 Capture `url`과 같은 규칙(`http(s)://`, 공백·제어문자 없음)입니다.
   - 날짜는 공통 열을 씁니다(D10). 행사 끝 시각과 알림(reminders)은 #10이 정합니다.
