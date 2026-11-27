@@ -464,6 +464,7 @@ async def test_the_sync_listener_refuses_every_token_until_devices_pair_and_answ
 
 
 async def test_tokens_paired_and_reissued_over_the_sync_listener_reach_neither_hub_log_nor_the_database(tmp_path):
+    """Two of the tokens are never sent back, so only being registered when they were issued keeps them out of the log."""
     redactor = Redactor()
     log_file = tmp_path / "logs" / "hub.log"
     handler = file_handler(log_file, redactor)
@@ -473,16 +474,20 @@ async def test_tokens_paired_and_reissued_over_the_sync_listener_reach_neither_h
     root.setLevel(logging.DEBUG)
     try:
         async with serving(tmp_path, redactor=redactor, sync_app=sync_devices.sync_app) as (core, client, listening, *_):
-            offer = await devices.offer(core, now=datetime.now(UTC), public_url="https://campus-laptop.tail0a1b2c.ts.net", redactor=redactor)
             async with httpx.AsyncClient(
                 base_url=f"http://127.0.0.1:{listening.sync[1]}", headers={"CampusLife-Contract": "1"}, trust_env=False, event_hooks={"response": [checked]}
             ) as sync:
-                body = {"secret": offer.secret, "platform": "android", "device_name": "Fold8", "app_version": "0.1.0"}
-                paired = (await sync.post("/v1/pair", json=body)).json()["token"]
-                reissued = (await sync.post("/v1/devices/me/token", headers={"Authorization": f"Bearer {paired}"})).json()["token"]
-                synced = await sync.get("/v1/changes", params={"since": "0"}, headers={"Authorization": f"Bearer {reissued}"})
-            logging.getLogger("campuslife_hub.test").warning("paired with %s, then given %s for %s", paired, reissued, offer.secret)
-            texts = [offer.secret, paired, reissued]
+
+                async def paired():
+                    offer = await devices.offer(core, now=datetime.now(UTC), public_url="https://campus-laptop.tail0a1b2c.ts.net", redactor=redactor)
+                    body = {"secret": offer.secret, "platform": "android", "device_name": "Fold8", "app_version": "0.1.0"}
+                    return offer.secret, (await sync.post("/v1/pair", json=body)).json()["token"]
+
+                (secret, unused), (other_secret, used) = await paired(), await paired()
+                reissued = (await sync.post("/v1/devices/me/token", headers={"Authorization": f"Bearer {used}"})).json()["token"]
+                synced = await sync.get("/v1/changes", params={"since": "0"}, headers={"Authorization": f"Bearer {used}"})
+            texts = [secret, other_secret, unused, used, reissued]
+            logging.getLogger("campuslife_hub.test").warning("issued %s", " ".join(texts))
             assert synced.status_code == 200
             assert held_by_the_database(core, texts) == []
             assert core.layout.database.with_name(core.layout.database.name + "-wal").stat().st_size > 0
@@ -495,6 +500,21 @@ async def test_tokens_paired_and_reissued_over_the_sync_listener_reach_neither_h
     assert "POST /v1/pair" in written
     assert [text for text in texts if text in written] == []
     assert held_by_the_database(core, texts) == []
+
+
+async def test_a_paired_devices_token_opens_nothing_on_the_admin_listener(tmp_path):
+    redactor = Redactor()
+    async with serving(tmp_path, redactor=redactor, sync_app=sync_devices.sync_app) as (core, client, listening, *_):
+        offer = await devices.offer(core, now=datetime.now(UTC), public_url="https://campus-laptop.tail0a1b2c.ts.net", redactor=redactor)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{listening.sync[1]}", headers={"CampusLife-Contract": "1"}, trust_env=False) as sync:
+            body = {"secret": offer.secret, "platform": "android", "device_name": "Fold8", "app_version": "0.1.0"}
+            token = (await sync.post("/v1/pair", json=body)).json()["token"]
+            assert (await sync.get("/v1/hub", headers={"Authorization": f"Bearer {token}"})).status_code == 200
+
+        device = {"Authorization": f"Bearer {token}"}
+        answers = [await client.get("/api/status", headers=device), await client.post("/api/login", headers=device), await client.post("/api/stop", headers=device)]
+
+    assert [answer.status_code for answer in answers] == [401, 401, 401]
 
 
 def held_by_the_database(core, texts):
