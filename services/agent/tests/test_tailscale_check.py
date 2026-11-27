@@ -7,10 +7,16 @@ import subprocess
 
 import pytest
 
-from campuslife_hub import cli, tailscale_check
+from campuslife_hub import admin_client, cli, tailscale_check
 from campuslife_hub.tailscale_check import TailscaleUnavailable, check, hub_url, judge
 
 NAME = "hub-laptop.tail1234.ts.net"
+
+
+@pytest.fixture(autouse=True)
+def root_without_a_hub(tmp_path, monkeypatch):
+    """The command asks the Hub serving the data root for its public_url; no test's default root holds a Hub."""
+    monkeypatch.setenv("CAMPUSLIFE_ROOT", str(tmp_path / "CampusLife"))
 STATUS = {"BackendState": "Running", "Self": {"DNSName": f"{NAME}.", "HostName": "hub-laptop"}}
 
 
@@ -294,3 +300,73 @@ def test_the_command_without_tailscale_says_so_and_fails(monkeypatch, capsys):
 
     assert cli.main(["tailscale-check"]) == 1
     assert "no tailscale command" in capsys.readouterr().err
+
+
+def serving_hub_with(public_url):
+    """admin_client.call as the Hub serving the data root answers GET /api/status, started with public_url."""
+
+    def call(layout, method, target, body=None):
+        assert (method, target) == ("GET", "/api/status")
+        return {"devices": {"public_url": public_url, "dormant_after_days": 90}}
+
+    return call
+
+
+def warnings_in(printed):
+    return [line for line in printed.splitlines() if line.startswith("warning:")]
+
+
+def test_without_a_public_url_given_the_command_compares_the_one_the_serving_hub_hands_out(monkeypatch, capsys):
+    run, _ = fake_tailscale()
+    monkeypatch.setattr(tailscale_check, "tailscale", run)
+    monkeypatch.setattr(admin_client, "call", serving_hub_with("https://old-name.tail1234.ts.net"))
+
+    assert cli.main(["tailscale-check"]) == 0
+
+    printed = capsys.readouterr().out
+    assert "public_url https://old-name.tail1234.ts.net (the serving Hub's)" in printed
+    assert len(warnings_in(printed)) == 1 and "old-name" in warnings_in(printed)[0]
+
+
+def test_a_serving_hub_handing_out_this_machines_name_raises_no_warning(monkeypatch, capsys):
+    run, _ = fake_tailscale()
+    monkeypatch.setattr(tailscale_check, "tailscale", run)
+    monkeypatch.setattr(admin_client, "call", serving_hub_with(f"https://{NAME}"))
+
+    assert cli.main(["tailscale-check"]) == 0
+    assert warnings_in(capsys.readouterr().out) == []
+
+
+def test_a_serving_hub_started_without_a_public_url_is_a_warning_saying_what_to_give_it(monkeypatch, capsys):
+    run, _ = fake_tailscale()
+    monkeypatch.setattr(tailscale_check, "tailscale", run)
+    monkeypatch.setattr(admin_client, "call", serving_hub_with(None))
+
+    assert cli.main(["tailscale-check"]) == 0
+
+    [warning] = warnings_in(capsys.readouterr().out)
+    assert "no device can be added" in warning and f"--public-url https://{NAME}" in warning
+
+
+def test_with_no_hub_serving_and_no_public_url_given_nothing_is_compared(monkeypatch, capsys, tmp_path):
+    run, _ = fake_tailscale()
+    monkeypatch.setattr(tailscale_check, "tailscale", run)
+
+    assert cli.main(["tailscale-check"]) == 0
+
+    printed = capsys.readouterr().out
+    assert f"public_url - (no Hub serves {(tmp_path / 'CampusLife').resolve()}; give --public-url to compare one)" in printed
+    assert warnings_in(printed) == []
+
+
+def test_a_public_url_given_is_compared_without_asking_the_hub(monkeypatch, capsys):
+    run, _ = fake_tailscale()
+    monkeypatch.setattr(tailscale_check, "tailscale", run)
+
+    def unasked(*arguments):
+        raise AssertionError("the Hub was asked")
+
+    monkeypatch.setattr(admin_client, "call", unasked)
+
+    assert cli.main(["tailscale-check", "--public-url", f"https://{NAME}"]) == 0
+    assert f"public_url https://{NAME} (given)" in capsys.readouterr().out

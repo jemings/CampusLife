@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
-from campuslife_hub import admin_client, admin_token, backup, devices, host, mutations
+from campuslife_hub import admin_client, admin_token, backup, devices, host, mutations, tailscale_check
 from campuslife_hub.admin_auth import hub_proof
 from campuslife_hub.cli import main
 from campuslife_hub.core import open_core
@@ -253,11 +253,12 @@ def test_ls_refuses_a_root_inside_a_sync_folder_it_detects_itself(tmp_path, caps
     assert "sync folder" in capsys.readouterr().err
 
 
-def served(root):
+def served(root, *options):
     """A `campuslife-hub serve` process on root, its output going to a file, once its admin listener has left its port."""
     with open(root.parent / "serve.out", "wb") as output:
         process = subprocess.Popen(
-            [sys.executable, "-m", "campuslife_hub.cli", "--root", str(root), "serve", "--admin-port", "0", "--sync-port", "0"], stdout=output, stderr=output,
+            [sys.executable, "-m", "campuslife_hub.cli", "--root", str(root), "serve", "--admin-port", "0", "--sync-port", "0", *options],
+            stdout=output, stderr=output,
         )
     deadline = time.monotonic() + 30
     while not (root / "admin.port").exists():
@@ -1122,3 +1123,28 @@ def test_a_device_named_by_anything_but_its_whole_id_is_refused_before_the_hub_i
     assert exit_code(tmp_path / "CampusLife", command, given) == 2
 
     assert f"argument ID: {given!r} is not a device id" in capsys.readouterr().err
+
+
+def test_status_and_tailscale_check_read_the_public_url_the_hub_serves_with(tmp_path, capsys, monkeypatch):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    status = {"BackendState": "Running", "Self": {"DNSName": "campus-laptop.tail0a1b2c.ts.net."}}
+    tailscale_serve = {"TCP": {"443": {"HTTPS": True}}, "Web": {"campus-laptop.tail0a1b2c.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8730"}}}}}
+    answers = {("serve", "status", "--json"): tailscale_serve, ("status", "--json"): status}
+    monkeypatch.setattr(tailscale_check, "tailscale", lambda arguments: json.dumps(answers[tuple(arguments)]))
+    process = served(root, "--public-url", "https://old-laptop.tail0a1b2c.ts.net")
+    try:
+        assert hub(root, "status") == 0
+        reported = capsys.readouterr().out
+        assert hub(root, "tailscale-check") == 0
+        checked = capsys.readouterr().out
+        assert hub(root, "stop") == 0
+        assert process.wait(timeout=30) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+
+    assert "public_url https://old-laptop.tail0a1b2c.ts.net" in reported
+    assert "public_url https://old-laptop.tail0a1b2c.ts.net (the serving Hub's)" in checked
+    assert "warning:" in checked and "https://campus-laptop.tail0a1b2c.ts.net" in checked
