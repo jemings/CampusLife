@@ -299,8 +299,11 @@ paths:
       description: >-
         The batch is handled in order and stops at the first retry; every
         Mutation gets a result (E12). A Mutation that breaks its schema is
-        rejected{schema} inside a 200. 400 is only for a body that is not a
-        batch at all.
+        rejected{schema} inside a 200. 400 invalid_request is for a body that
+        is not a batch, and for a batch with an entry no result can describe:
+        one without a UUIDv4 mutation_id, or one whose op this Hub does not
+        apply yet. Nothing in such a batch is applied: the client fixes or
+        drops that entry and sends the rest again.
       parameters:
         - $ref: "#/components/parameters/Contract"
       requestBody:

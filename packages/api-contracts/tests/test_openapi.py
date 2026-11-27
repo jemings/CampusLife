@@ -397,3 +397,12 @@ def test_open_upload_says_a_hub_short_of_space_answers_hub_storage_full():
     description = prose(SPEC["paths"]["/v1/blobs/uploads"]["post"]["description"])
     assert "400 hub_storage_full" in description
 
+
+
+def test_post_mutations_says_which_batches_get_400():
+    """#4 review: an entry without a mutation_id a result could carry fails the whole batch, as the Hub's applier does."""
+    description = prose(SPEC["paths"]["/v1/mutations"]["post"]["description"])
+    assert "A Mutation that breaks its schema is rejected{schema} inside a 200." in description
+    assert "400 invalid_request is for a body that is not a batch, and for a batch with an entry no result can describe" in description
+    assert "one without a UUIDv4 mutation_id, or one whose op this Hub does not apply yet" in description
+    assert "Nothing in such a batch is applied: the client fixes or drops that entry and sends the rest again." in description
