@@ -53,9 +53,12 @@
 ### 3.1 수집 업로드 (D7)
 
 1. 클라이언트는 Capture가 `sealed`가 되기 전에도 닫힌 파일(녹음 세그먼트, 사진)의 Blob부터 올릴 수 있습니다.
-2. `POST /v1/blobs/uploads {sha256, size, chunk_size}`를 보냅니다. Hub에 이미 있으면 `exists`가 오고 업로드할 필요가 없습니다. 없으면 이미 받은 chunk 목록을 돌려줍니다.
-3. chunk는 순서와 무관하게 `PUT`하며, 같은 바이트를 다시 보내도 no-op입니다. 그래서 iOS 백그라운드 task가 뒤섞인 순서로 끝나도 안전합니다.
-4. finalize에서 Hub는 전체 sha256·size를 검증하고 같은 볼륨에서 원자 이동한 뒤 Blob을 등록합니다. 해시가 맞지 않으면 chunk를 폐기합니다.
+2. `POST /v1/blobs/uploads {sha256, size}`를 보냅니다(`blob/upload_request`). Hub에 이미 있으면 `200 {sha256, size}`가 오고 업로드할 필요가 없습니다. 없으면 `201 {sha256, size, chunk_size, received:[i…]}`로 세션을 열거나 이어 갑니다(`blob/upload_session`).
+   - 세션 키는 (Device, sha256)이고, chunk 크기는 Hub가 정하며 세션 동안 바뀌지 않습니다. chunk 번호는 0부터이고 `received`는 이미 받은 번호입니다(D20).
+   - 열린 세션에 다른 size를 보내거나, Hub의 남은 공간이 size의 두 배보다 작으면 400 `invalid_request`입니다.
+   - 이미 저장된 Blob과 다른 size를 보내도 400 `invalid_request`입니다.
+3. chunk는 순서와 무관하게 `PUT /v1/blobs/uploads/{sha}/chunks/{i}`하며, 같은 바이트를 다시 보내도 no-op입니다. 그래서 iOS 백그라운드 task가 뒤섞인 순서로 끝나도 안전합니다. 이미 받은 번호에 다른 바이트가 오면 409 `chunk_mismatch`입니다.
+4. `POST /v1/blobs/uploads/{sha}/finalize`에서 Hub는 전체 sha256·size를 검증하고 같은 볼륨에서 원자 이동한 뒤 Blob을 등록합니다(200 `{sha256, size}`). 빠진 chunk가 있으면 409 `incomplete`(`missing_chunks`), 해시가 맞지 않으면 chunk를 폐기하고 409 `hash_mismatch`입니다. 이미 저장된 Blob의 finalize는 세션이 없어도 200이라 다시 보내도 됩니다.
 5. 모든 Blob이 올라가면 `capture.commit` Mutation을 보냅니다. 참조한 Blob 중 하나라도 없으면 `retry{missing_blobs}`가 오고, 모두 있으면 한 트랜잭션으로 Capture·Attachment·초기 ProcessingJob을 등록하고 `applied`(= ACK)를 돌려줍니다.
 6. 같은 capture_id + 같은 내용은 이전 결과를 반환하고, 다른 내용이면 `409 id_reuse`입니다.
 7. 로컬 원본은 ACK + Hub `backed_up_at` + 보존 기간이 지나야 정리합니다(D14).

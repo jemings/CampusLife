@@ -1,13 +1,15 @@
+import logging
 from dataclasses import replace
 from datetime import UTC, date, datetime
 
 import pytest
 from conftest import contract_fixture
 
-from campuslife_hub import capture_commit, jobs
+from campuslife_hub import capture_commit, jobs, store
 from campuslife_hub.ingest import INGEST, INGEST_PIPELINE, ingest_spec
 from campuslife_hub.job_runner import JobContext, JobRegistry, JobRunner
 from campuslife_hub.jobs import JobSpec, JobState, Pipeline, Succeeded
+from campuslife_hub.store import Entity, EntityRef
 from test_capture_commit import apply, blob_store, commit, device, feed, new_id, store_bytes, text_capture
 
 __all__ = ["blob_store", "device"]
@@ -238,24 +240,58 @@ async def test_a_planner_that_proposes_a_job_that_cannot_be_stored_keeps_out_onl
     assert await queued(db, "transcribe") == []
 
 
-@pytest.mark.parametrize("gone", ["subject", "input"])
-async def test_a_planned_job_whose_subject_or_input_the_hub_no_longer_holds_is_dropped(db, device, blob_store, tmp_path, gone):
-    registry = handled("extract.text")
+@pytest.mark.parametrize("subject", ["attachment", "capture", "blob", "nothing the hub stores"])
+async def test_a_planned_job_on_a_subject_that_never_existed_keeps_out_its_planners_jobs_and_the_ingest_runs_again(
+    db, device, blob_store, tmp_path, subject
+):
+    registry = handled("extract.text", "transcribe")
+    registry.plan("speech", planning("transcribe"))
     capture = await committed(db, device, blob_store, tmp_path)
     [attachment] = capture["attachments"]
+    never = {"attachment": f"attachment:{new_id()}", "capture": f"capture:{new_id()}", "blob": f"blob:{'e' * 64}",
+             "nothing the hub stores": f"lecture:{new_id()}"}[subject]
 
     async def plan(view, context):
-        if gone == "subject":
-            return [JobSpec("extract.text", f"attachment:{new_id()}", (attachment["blob_sha256"],)),
-                    JobSpec("extract.text", f"capture:{new_id()}", (attachment["blob_sha256"],), {"n": 2})]
-        return [JobSpec("extract.text", f"attachment:{attachment['id']}", ("e" * 64,))]
+        return [JobSpec("extract.text", f"attachment:{attachment['id']}", (attachment["blob_sha256"],)),
+                JobSpec("extract.text", never, (attachment["blob_sha256"],), {"n": 2})]
 
     registry.plan("extract", plan)
     await ran_ingest(db, blob_store, registry)
 
+    [ingest] = await ingest_of(db, capture)
+    assert (ingest.state, ingest.error) == (
+        JobState.RETRY_WAIT, f"PlanningFailed: extract: the Hub holds no {never}, the subject of a planned extract.text, and has no record of removing it"
+    )
+    assert await queued(db, "extract.text") == []
+    assert len(await queued(db, "transcribe")) == 1
+
+
+@pytest.mark.parametrize("gone", ["subject", "input"])
+async def test_a_planned_job_whose_subject_or_input_the_hub_no_longer_holds_is_dropped_with_a_warning(
+    db, device, blob_store, tmp_path, caplog, gone
+):
+    registry = handled("extract.text")
+    capture = await committed(db, device, blob_store, tmp_path)
+    [attachment] = capture["attachments"]
+    subject = f"attachment:{attachment['id']}"
+
+    async def plan(view, context):
+        if gone == "subject":
+            await context.db.write(lambda tx: store.write(tx, EntityRef(Entity.ATTACHMENT, attachment["id"]), None))
+            return [JobSpec("extract.text", subject, (attachment["blob_sha256"],))]
+        return [JobSpec("extract.text", subject, ("e" * 64,))]
+
+    registry.plan("extract", plan)
+    with caplog.at_level(logging.WARNING, logger="campuslife_hub.ingest"):
+        await ran_ingest(db, blob_store, registry)
+
     assert await queued(db, "extract.text") == []
     [ingest] = await ingest_of(db, capture)
     assert ingest.state is JobState.SUCCEEDED
+    [warned] = [record for record in caplog.records if record.name == "campuslife_hub.ingest"]
+    assert (warned.levelno, warned.getMessage()) == (
+        logging.WARNING, f"dropped the planned extract.text on {subject}: the Hub does not hold its subject or an input"
+    )
 
 
 async def test_without_planners_the_ingest_succeeds_and_queues_nothing(db, device, blob_store, tmp_path):

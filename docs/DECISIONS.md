@@ -174,7 +174,7 @@
   - 사용자가 "토큰 재발급"을 누르면 새 토큰을 발급합니다. 이전 토큰은 클라이언트가 새 토큰 저장을 확인한 뒤에 폐기합니다. *(D20으로 대체됨: 재발급은 클라이언트 앱이 `POST /v1/devices/me/token`으로 시작하고, 이전 토큰은 새 토큰의 첫 인증 성공 때 폐기됨)*
 - **revoke:** 해당 토큰 요청은 401 `device_revoked`가 되고 열린 업로드 세션도 폐기합니다.
   - 그 장치의 미전송 데이터는 재pairing 후 다시 올릴 수 있습니다. Capture는 ID로 멱등이고, Mutation은 CAS로 재판정되기 때문입니다.
-- **Windows UI·CLI는 Device가 아닙니다.** admin 포트를 씁니다. 로컬 import의 출처 표기에만 `hub` pseudo-device를 씁니다.
+- **Windows UI·CLI는 Device가 아닙니다.** admin 포트를 씁니다. 로컬 import의 출처 표기에만 `hub` pseudo-device를 씁니다. *(D21로 대체됨: 출처는 Hub 자신의 `windows_hub` Device 행입니다(E15, #20 A7). 복원하면 Hub 자신을 뺀 active 장치가 모두 dormant가 됩니다(U6))*
 
 ---
 
@@ -397,7 +397,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **문제:** "보존 정책이 정해지기 전까지 삭제하지 않는다"만 있어 폰 저장 공간이 계속 찼습니다. 반대로 ACK 직후 지우면 원본이 노트북 한 대에만 남고, Hub를 복원할 때(D3) 다시 올릴 원천도 없습니다.
 
 **결정:**
-- Hub는 백업 세대가 완료되면 해당 Blob을 참조하는 Attachment의 `backed_up_at`을 갱신해 피드로 보냅니다.
+- Hub는 백업 세대가 완료되면 해당 Blob을 참조하는 Attachment의 `backed_up_at`을 갱신해 피드로 보냅니다. *(D21로 대체됨: 그 Blob을 처음 담은 세대가 끝날 때 한 번 찍습니다)*
 - **자동 삭제 조건:** `committed ∧ backed_up_at 존재 ∧ 보존 기간(기본 7일, 설정) 경과`. ACK 전 삭제는 어떤 설정으로도 허용하지 않습니다.
 - **수동 정리:** 사용자가 "공간 확보"를 누르면 committed 항목만 대상입니다. `backed_up_at`이 없으면 "노트북에만 있음" 경고를 거칩니다.
 - **백업이 없을 때:** 백업이 한 번도 돌지 않았으면 자동 삭제가 일어나지 않고 Hub와 앱이 경고합니다.
@@ -447,13 +447,13 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **프로세스 구성:** 단일 Hub 프로세스(FastAPI + asyncio job runner)로 시작합니다.
   - 상주 방식: Windows 로그온 시 Task Scheduler로 시작합니다. 재부팅 후 로그인 전에는 Hub가 없다는 한계를 문서화하고, Windows 서비스로 바꿀지는 미결 O8에서 판단합니다.
   - SQLite는 WAL 모드로 쓰고 ACK 경로는 `synchronous=FULL`입니다. 쓰기는 연결 하나로 직렬화합니다.
-  - 기동 시 `sqlite_version() ≥ 3.34`와 FTS5 컴파일 여부를 검사하고, 조건이 맞지 않으면 기동을 거부합니다.
+  - 기동 시 `sqlite_version() ≥ 3.34`와 FTS5 컴파일 여부를 검사하고, 조건이 맞지 않으면 기동을 거부합니다. *(D21로 대체됨: 하한 3.35(RETURNING)와 fts5·trigram·json_extract·generated column 기능 probe(E2))*
 - **외부 도구 격리:** extractor, FFmpeg, LibreOffice는 subprocess로 실행합니다. 실행 시간 제한, Windows Job Object 메모리 상한을 두고, 결과는 stdout JSON으로 받습니다. parser가 크래시하거나 멈춰도 Hub는 살아 있습니다.
 - **백업 순서:**
   1. SQLite Online Backup API로 DB 스냅샷을 만듭니다.
   2. 스냅샷이 참조하는 Blob 중 백업 대상에 없는 것만 복사합니다. 내용 주소 저장이라 증분 판단이 자명합니다.
   3. 세대 manifest를 기록합니다.
-  4. 해당 Attachment의 `backed_up_at`을 갱신합니다.
+  4. 해당 Attachment의 `backed_up_at`을 갱신합니다. *(D21로 대체됨: 그 세대가 처음 담은 Blob의 Attachment에만 한 번)*
   - 백업에서 복원하면 새 `epoch`를 발급합니다.
 - **무결성 점검:** `hub fsck` 명령으로 해시를 재계산하고 고아·누락 Blob을 탐지합니다.
 
@@ -496,7 +496,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 텍스트 본문(Note body): 충돌하면 Hub 값을 유지하고, 제출된 값은 `ConflictRecord{entity_ref, field, theirs_rev, mine_value_blob, state}`로 보존합니다. 사용자가 비교 UI에서 고르거나 직접 합친 결과를 일반 patch로 보내면 해소됩니다. 자동 텍스트 병합은 하지 않습니다.
   - Relation·Tag: 각각 독립 행이고 추가·삭제가 멱등이라 충돌이 없습니다. Relation ID는 `"{from}|{type}|{to}"`입니다.
   - delete: 소프트 삭제라 항상 적용됩니다. 삭제된 엔터티에 patch가 오면 거부하되 제출 값은 ConflictRecord로 보존합니다.
-- **재전송:** `mutation_id`는 Hub `applied_mutations`의 PK이고 90일 보관합니다. 그보다 오래된 재전송이 와도 CAS가 다시 판정하므로 두 번 적용되지 않습니다.
+- **재전송:** `mutation_id`는 Hub `applied_mutations`의 PK이고 90일 보관합니다. 그보다 오래된 재전송이 와도 CAS가 다시 판정하므로 두 번 적용되지 않습니다. *(D21로 대체됨: create·patch만 그렇습니다. CAS가 없는 delete·restore·Relation create는 90일 넘은 재전송이 다시 적용됩니다(수용))*
 - **클라이언트 동작:** 로컬에 낙관적으로 먼저 반영합니다. conflict 응답을 받으면 Hub 상태로 덮어쓰고 ConflictRecord(동기화 대상)를 표시합니다.
 - last-write-wins는 어디에도 없습니다. 결과가 같은 값으로 모이는 경우는 충돌이 아닙니다.
 
@@ -546,7 +546,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - `box`는 `[x, y, w, h]`이고, 각 원소는 `[0,1]`, x+w ≤ 1, y+h ≤ 1입니다(규칙 `box_extent`). 표시 방향 기준이며, `image_region`은 EXIF 회전을 적용한 뒤 기준입니다.
   - `media_time`은 Capture 녹음 타임라인 기준 `start_ms` ≤ `end_ms`입니다.
   - kind는 Hub가 보내는 쪽에서 열려 있고 `v`는 1 이상입니다(아래 값을 더하는 규칙). `annotation` kind는 #17이 더합니다. D13의 예시 목록과 box 예시를 대체합니다.
-  - evidence Relation의 근거 위치는 `locators: [Locator]`(1개 이상, 중복 없음, Hub 소유)입니다. 수락하면 Hub가 evidence의 anchor(blob 또는 capture)마다 `item:<id> —evidence→ blob:<sha> | capture:<id>`를 하나씩 만들고 locators를 합집합으로 모읍니다. add_relation은 만든 Relation의 locators에 둡니다. 각 locator의 anchor는 `to`와 같고, 다른 알려진 type에는 locators가 없습니다(규칙 `locator_anchor`).
+  - evidence Relation의 근거 위치는 `locators: [Locator]`(1개 이상, 중복 없음, Hub 소유)입니다. 수락하면 Hub가 evidence의 anchor(blob 또는 capture)마다 `item:<id> —evidence→ blob:<sha> | capture:<id>`를 하나씩 만들고 locators를 합집합으로 모읍니다. add_relation은 만든 Relation의 locators에 둡니다. *(D21로 대체됨: 만든 Relation이 evidence type이면 anchor가 `to`인 Locator만 넣고, 다른 type은 locators 없이 만듭니다. 근거는 accepted Suggestion의 `evidence`에 남습니다. patch_item은 결과가 키를 하나라도 적용할 때만 근거 Relation을 만듭니다)* 각 locator의 anchor는 `to`와 같고, 다른 알려진 type에는 locators가 없습니다(규칙 `locator_anchor`).
 - **토큰 재발급:** 클라이언트 앱이 `POST /v1/devices/me/token`(지금 토큰으로 인증, 본문 없음)으로 시작합니다. 이전 토큰은 새 토큰이 처음 인증에 성공할 때 폐기됩니다. 그 첫 사용이 "새 토큰을 저장했다"는 확인을 대신하고, 그전까지는 두 토큰이 모두 유효합니다. 같은 요청을 다시 보내면 아직 쓰이지 않은 같은 새 토큰을 돌려줍니다. D6의 재발급 문장을 대체합니다.
 - **sync 포트:** 경로, 상태 코드, 헤더는 `openapi/sync.yaml`(OpenAPI 3.1)이 적고, 본문·파라미터·헤더 모양은 모두 JSON Schema를 `$ref`합니다.
   - 모든 응답에 `CampusLife-Hub-Id`·`CampusLife-Epoch`이 붙고, 요청은 `CampusLife-Contract`를 보냅니다.
@@ -574,6 +574,119 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **결과:**
 - 세 언어가 같은 fixture로 같은 판정을 하고, 규칙(`nfc`, `calendar`, `tz_exists`, `range_order`, `box_extent`, `owner`, `set_type`, `locator_anchor`, `a1_order`, `conflict_self` 등)은 Python 검증기 `validate()` 한 곳에 있습니다.
 - D1·D3·D4·D6·D7·D8·D9·D10·D11·D12·D13·D15·D17·D18의 해당 문장과 미결 O5는 이 항목을 따릅니다.
+
+---
+
+## D21. Windows Hub 코어 (#2, 2026-11-26 ~ 2026-11-27)
+
+**문제:** Hub 코어(#2)를 PR 여덟 개로 구현하면서 D1–D4·D14·D16·D18이 정하지 않았거나 구현과 맞지 않는 곳이 드러났습니다. 배치와 도구, 기동 검사, 쓰기 직렬화, 변경 피드 저장층, 멱등 단위, 업로드 세션, 작업 큐와 격리, 프로세스 host와 admin 인증, 백업·복원·purge의 범위, 설치가 그렇습니다. 각 결정의 근거와 재현은 #2 본문의 해당 절(괄호 안 이름)에 있습니다.
+
+**결정:** 사용자가 정한 것과 오케스트레이터가 근거로 정한 것을 나눠 적습니다. 오케스트레이터 결정에는 구현자가 제안하고 리뷰가 받아들인 것도 들어 있습니다. 앞 항목에서 이 결정과 어긋나는 문장에는 `D21로 대체됨`을 달았습니다. U·E 번호는 #2 본문의 번호입니다(D20의 같은 번호와 별개).
+
+**사용자 결정**
+- **U1. 백업은 암호화하지 않습니다** (2026-11-26, "결정"). 설치·운영 문서(`services/agent/README.md`)와 PRIVACY-SECURITY에 백업 드라이브 분리 보관과 분실 위험을 적습니다.
+- **U2. 즉시 purge는 Blob 단위입니다** (2026-11-26, "결정").
+  - 그 Blob을 가리키는 모든 Attachment, 거기서 파생된 Artifact·Suggestion(전이 폐쇄), 인덱스·렌디션을 지웁니다.
+  - 그 Artifact에서 fork된 Note(사용자 데이터)는 지우지 않고 근거 링크가 사라졌다고 표시합니다. purge 확인 화면에 "이 Note들도 지울까요?"를 함께 보여 줍니다.
+  - 백업 세대에는 남아 있음을 알립니다.
+- **U3. 백업은 수동입니다** (2026-11-26, "결정"). 로컬 UI와 CLI로 하고, 마지막 백업에서 7일이 지나면 경고하며, 드라이브에는 최근 5세대를 남깁니다. 둘 다 설정값(`serve --backup-warn-days`, `--backup-keep`)입니다.
+- **U4. CI는 ubuntu에서 항상, windows-latest에서는 path filter(`services/agent/**`, `packages/api-contracts/**`)로 전체 pytest를 돌립니다** (2026-11-26, "결정").
+- **U5. 웹 계층은 D16대로 FastAPI입니다** (2026-11-27, "PR #32 1차 리뷰 반영"). uvicorn은 그대로 쓰고, 계약 검증은 `validate()` 한 곳에 둡니다(FastAPI 모델층으로 두 번째 스키마를 만들지 않음). 자동 OpenAPI 문서(`/docs`, `/redoc`)는 끕니다.
+- **U6. 복원하면 Hub 자신을 뺀 active 장치가 모두 dormant가 됩니다** (2026-11-27, "PR #37 1차 리뷰 반영"). D6대로 재승인이 필요하고 데이터·cursor·Outbox는 남습니다. revoked는 revoked로 둡니다. 재승인 흐름은 #19입니다.
+
+**오케스트레이터 결정: 배치와 기동** (2026-11-26, "결정")
+- **E1. 배치:** `services/agent/`(패키지 `campuslife_hub`), `.python-version` 3.12, `uv.lock` 커밋. 계약 패키지는 editable path 의존입니다(non-editable이면 패키지 밖 `schemas/`를 찾지 못함). 루트 uv workspace는 쓰지 않습니다(#20의 패키지별 lock·CI와 충돌).
+- **E2. SQLite 기동 검사:** 하한 3.35(RETURNING)와 기능 probe(fts5, trigram, json_extract, generated column). 실패하면 이유를 출력하고 기동을 거부합니다. 빌드의 버전 번호만으로는 어떤 모듈을 넣고 빌드했는지 알 수 없어서 실제로 시도해 봅니다. WAL, `synchronous=FULL`은 항상입니다.
+- **E3. 마이그레이션:** 번호 붙인 SQL 파일과 `PRAGMA user_version`. DB가 코드보다 새로우면 기동을 거부합니다. alembic·ORM은 쓰지 않습니다.
+- **E11. 단일 인스턴스:** `<root>/hub.lock`(`msvcrt.locking`/`fcntl.flock`). 두 번째 실행은 메시지와 함께 0이 아닌 코드로 끝납니다. 쓰기 CLI는 서빙 중인 Hub의 admin API를 거치고, Hub가 없으면 lock을 직접 잡습니다. restore는 채울 빈 root의 lock을 잡습니다.
+  - 읽기 명령(`ls`, `fsck`)은 DB에 쓰지 않습니다(2026-11-26, "PR #28 1차"). migrate·신원 발급을 하지 않고, 스키마가 코드와 다르면 거부합니다. 근거: lock을 쥔 옛 Hub가 있는데 새 checkout의 읽기 명령이 DB를 새 버전으로 올리면 옛 Hub가 깨집니다.
+- **E23. data root 검사:** 경로와 알려진 동기화 루트 목록을 받는 순수 함수로 판정하고, 동기화 루트 탐지(`OneDrive*` 환경 변수, Dropbox `info.json`)는 얇은 진입부에 둡니다. `\\`로 시작하는 드라이브(UNC 공유 등)도 거부합니다(2026-11-26, "PR #28 2차": SQLite가 file URI의 authority를 거부함). `\\?\C:\…`는 `C:\…`로 판정합니다.
+- **E21. 설치:** git checkout + `uv sync --frozen` + venv의 gui-script 런처(pythonw)를 Task Scheduler XML로 등록합니다. 로그온 트리거, `ExecutionTimeLimit PT0S`, 배터리 시작·중지 조건 끔, `MultipleInstancesPolicy IgnoreNew`입니다. MS Store Python(`WindowsApps` 경로)은 `%LOCALAPPDATA%` 쓰기를 가상화하므로 거부합니다.
+  - 구현자 결정, PR #38 리뷰에서 받아들임(2026-11-27): 런처는 `campuslife-hubw`, 작업은 이 사용자로 `InteractiveToken`·`LeastPrivilege`, 이름은 `CampusLife Hub`이고 `campuslife-hub autostart xml|register|unregister`가 다룹니다. 작업 인자에는 등록 시점의 data root와 준 serve 옵션만 들어갑니다. Store Python 거부는 기동만이 아니라 모든 CLI 명령에서 합니다(어느 명령이든 data root를 가상화된 곳에 읽고 쓰게 되므로).
+  - pythonw로 뜬 Hub에는 stderr가 없으므로 기동 거부 이유를 `<root>/logs/hub.log`에 남깁니다(2026-11-27, PR #38 리뷰, 오케스트레이터 결정). `run_hub`은 로그 파일을 붙인 뒤 Hub를 끝낸 오류를 기록하고, CLI는 stderr가 없을 때 그보다 앞선 실패(Store Python 거부 등)를 같은 파일에 덧붙입니다.
+    - `run_hub`의 그 기록은 파일에만 갑니다. 콘솔이 있으면 CLI의 한 줄만 보입니다. CLI는 Hub가 있는 data root(DB 파일이 있는 곳)에만 덧붙입니다. 실패한 init이 root를 남기거나, 거부된 restore가 root를 비어 있지 않게 만들지 않기 위해서입니다(2026-11-27, PR #38 재리뷰, 오케스트레이터 결정).
+  - 재부팅 뒤 로그인 전에는 Hub가 없다는 D16의 한계는 그대로이고, 알림은 Hub와 상관없습니다(D19). 실기기의 로그온 자동 시작·장시간 생존은 #14가 확인합니다.
+
+**오케스트레이터 결정: 저장과 쓰기 경로** (2026-11-26, "결정")
+- **E4. 쓰기 직렬화:** 쓰기 연결 하나를 전용 스레드가 소유하고(`await db.write(fn)` → `BEGIN IMMEDIATE`), 읽기는 별도 연결입니다.
+- **E5. 변경 피드 저장층 `store`:** `store.write(tx, ref, data | None) -> rev`가 `change_seq`를 올리고 `sync_index(entity, id, rev UNIQUE, deleted)`를 갱신하는 유일한 함수입니다. Mutation 적용기, 백업(`backed_up_at`), purge, jobs(Artifact·Suggestion, `processing_summary`를 다시 보내는 `store.touch`)가 모두 이것을 부릅니다. 행마다 고유 rev입니다. 근거: 한 트랜잭션의 여러 행이 같은 rev면 changes 페이지 경계에서 행을 건너뜁니다(grilling 재현). tombstone은 purge 뒤에도 남습니다.
+- **E6. Mutation 적용기 `apply(batch, device)`:** 출처(sync·로컬 UI·import)와 상관없이 모든 Mutation에 `validate()`를 부릅니다. 규칙 매핑은 `nfc`→`not_canonical`, `owner`→`owner`, 그 밖은 표에 없으면 `schema`입니다. Mutation마다 트랜잭션이고 첫 `retry` 뒤는 `not_attempted`입니다.
+  - 위반 우선순위는 schema > owner > not_canonical입니다(2026-11-26, "PR #28 1차", 구현자 결정 받아들임).
+  - 적용기가 아직 처리하지 않는 계약 op가 배치에 있으면 아무것도 쓰기 전에 배치 전체를 거부합니다(배치 일부만 commit되고 결과가 사라지지 않게). op가 문자열이 아니거나 계약에 없으면 지금처럼 `rejected{schema}`입니다(2026-11-26, "PR #28 1차·2차").
+- **E7. 멱등 단위:** capture.commit·create는 엔터티 id 기준이고, 처음 payload의 `canonical_json` sha256을 행에 저장해 비교합니다(현재 행과 비교하면 뒤의 patch 때문에 거짓 `id_reuse`가 남). mutation_id가 달라도 내용이 같으면 `applied`(no-op)입니다. `from_hash`는 `text_hash()` 하나로 계산합니다.
+- **E8. #18 전의 x-text 충돌값:** 제출값을 동기화하지 않는 내부 `conflict_stash`에 보존합니다. #18이 ConflictRecord로 옮깁니다.
+- **CAS가 먼저, schema는 마지막** (2026-11-27, "PR #30 1차"): patch는 키마다 CAS를 먼저 판정합니다. `rejected{schema}`는 모든 키의 `from`이 맞는데 결과 행이 계약을 깰 때만입니다. 행 적합성이 함께 걸린 키 묶음(`all_day`·`starts_at`·`due_at`)은 한 단위로 판정하고, 묶음 밖 키는 각자의 CAS대로 적용합니다. 진 키가 있는 patch에서 묶음 밖의 이긴 키가 혼자 행을 깨면 그 키만 충돌로 돌립니다(구현자 결정 받아들임).
+- **E15. 로컬 import:** NFC 파일명(다르면 `original_filename_raw`), cloud_policy 해석, Hub 자신의 `windows_hub` Device 행으로 payload를 만들고 같은 `apply()`를 부릅니다(#20 A7). import 한 번이 Capture 하나입니다. 파일명이 UTF-8로 인코딩되지 않으면 Blob을 저장하기 전에 그 파일을 거부합니다(2026-11-26, "PR #28 1차").
+- **E22.** `suggestion.accept`·`dismiss`는 이 적용기가 구현합니다(판정 지점 하나). `edits`의 `fields.<key>`가 kind 스키마에 맞는지, 제안에 있는 키인지는 적용기가 Suggestion을 읽고 판정해 `rejected{schema}`로 답합니다.
+
+**적용기 판정 (받아들인 구현자 결정)** — 클라이언트가 결과로 보는 것
+- Relation의 끝이나 commit `links[]`의 대상이 없거나 tombstone이면 `rejected{link_target_missing}`입니다. soft-delete된 Item은 있는 것으로 봅니다(2026-11-26 "PR #28 1차", Relation create까지 넓힌 것은 2026-11-27 "PR #30 1차").
+- 계약이 fields를 정하지 않은 kind의 Item create는 `rejected{schema}`입니다(2026-11-27, "PR3(#30) 범위 메모"에서 제안, "PR #30 1차"에서 받아들임). 이 아래 넷의 출처도 같습니다.
+- 지울 것이 없는 delete(이미 지워졌거나 없는 대상)는 `applied`입니다. 대상은 결국 없는 상태가 됩니다.
+- 없거나 soft-delete된 Item에 온 patch는 `rejected{deleted}`이고 제출값은 `conflict_stash`에 남깁니다. 없는 Item의 restore도 `rejected{deleted}`이며, 남길 값이 없으므로 stash하지 않습니다.
+- Tag를 지우면 그 Tag를 끝으로 가진 Relation도 tombstone이 됩니다.
+- 이미 `to` 값을 가진 키는 수렴으로 보고 `applied`로 답하며 아무것도 쓰지 않습니다(D18).
+- 한 commit 안에서 Attachment id가 겹치면 `rejected{schema}`입니다(2026-11-26, "PR #28 1차").
+- 로컬 import가 링크한 과목의 기본 `cloud_policy`가 여럿이면 가장 엄격한 값(min)을 씁니다(2026-11-26, "PR #28 1차", D8).
+- 이미 저장된 Blob을 다른 size로 열면 업로드를 거부합니다. HTTP에서는 400 `invalid_request`이고 매핑은 #4가 합니다(2026-11-26, "PR #29 1차"·"#20 종료 뒤 반영" E10).
+
+**오케스트레이터 결정: Blob과 업로드** (2026-11-26, "결정"·"PR #29 1차"·"PR3 첫 할 일")
+- **E9. Blob 저장:** `staging/`(같은 볼륨)에 쓰기 → fsync → sha256 → 최종 경로가 이미 있으면 staging만 버리고, 없으면 `os.replace` → 읽기 전용 → `blobs` 행. Windows 잠금(WinError 5/32)은 상한 있는 재시도입니다. 기동 때 lock을 쥔 쪽이 `staging/`의 잔여물을 지우고, 지우지 못한 것은 기록하고 건너뜁니다.
+- **E10. 업로드 세션:** 키는 `(device_id, sha256)`, 디렉터리는 `uploads/<session uuid>/<index>`입니다. 같은 sha의 중복 제거는 finalize에서 합니다. revoke하면 그 장치의 세션을 지웁니다. 7일 동안 건드리지 않은 세션과, 어떤 참조도 없고 마지막으로 받은 지 7일이 지난 Blob은 정리합니다. 참조 테이블 목록은 `BLOB_REFERENCES` 한 곳입니다(Attachment, Artifact, Relation 끝; 뒤에 AnnotationLayer).
+  - 세션을 열 때 `2 × size`가 data root 볼륨의 남은 공간보다 크면 `invalid_request`입니다. 근거: 아무 size나 받으면 `size=2**63-1` 한 번으로 finalize가 `MemoryError`를 냅니다. finalize는 chunk를 둔 채 결합본을 써서 약 두 배가 필요합니다.
+  - 같은 index의 chunk는 배타적으로 만듭니다. 같은 바이트면 no-op, 다르면 `chunk_mismatch`입니다. "이미 저장됨"(200)을 답할 때도 7일 시계를 다시 시작합니다.
+
+**오케스트레이터 결정: 작업 큐와 격리** (2026-11-26 "결정", 2026-11-27 "PR #31 1차"·"PR5 첫 할 일")
+- **E12. jobs:** 상태는 D1의 일곱 개, `outcome_code`는 `unsafe_input`을 더한 여덟 개입니다. `enqueue(tx, JobSpec)`이 handler 설정과 합쳐 job_key를 내부에서 계산합니다. 허용 전이는 표 하나이고 `UPDATE … WHERE state IN (이전 상태)`로 적용해, 취소된 job을 끝난 handler가 덮지 않습니다. 시도는 시작할 때 세고 backoff는 30초·2분·10분·1시간, 최대 5회입니다. 기동 때 running은 retry_wait(상한을 넘으면 failed)로 돌립니다.
+  - runner는 죽지 않습니다: 계약 밖 결과, 기록 실패, handler 예외, handler 시간 상한(기본 30분) 초과는 모두 defer로 처리합니다. 취소를 무시하는 handler는 배경에 두고 다음 job으로 가며, 그 job은 다시 claim하지 않습니다.
+- **E13. `isolate.run`:** Windows는 ctypes Job Object(`KILL_ON_JOB_CLOSE`, 메모리 상한), POSIX는 `setrlimit`입니다. stdout도 상한(기본 16 MiB)을 넘으면 트리를 죽입니다. 근거: 메모리 상한 256 MiB인 자식이 끝없이 쓰면 Hub RSS가 1.8 GiB까지 올랐습니다(재현). 세션·Job 밖으로 나간 프로세스는 죽이지 못합니다.
+- **E14. 초기 job:** `capture.commit` 트랜잭션은 `capture.ingest` job 하나만 등록하고, 그 handler가 트랜잭션 밖에서 #5·#8의 planner로 fan-out합니다(남의 코드 실패가 ACK를 깨지 않게).
+  - planner마다 spec 검사(저장 경로와 같은 직렬화)를 그 planner 안에서 합니다. 예외를 냈거나, handler가 없는 job, 저장할 수 없는 job, Hub에 한 번도 없던 subject의 job을 낸 planner는 자기 job만 빠지고 ingest는 `PlanningFailed`로 다시 시도합니다(2026-11-27, "PR #31 1차"·"PR8 첫 할 일").
+    - "한 번도 없던 subject"는 행도 tombstone도 없는 엔터티이고, Blob이면 `blobs` 행도 없고 그 Blob을 지운 purge 기록도 없는 것입니다. 그런 spec을 하나라도 낸 planner는 job 전부가 빠집니다(구현자 결정, PR #38 리뷰에서 받아들임, 2026-11-27). 참조 없는 Blob 정리는 기록을 남기지 않으므로 그렇게 지운 Blob도 여기에 듭니다.
+  - 계획하는 동안 purge가 subject(tombstone이 남음)나 입력 Blob을 지운 spec은 버리고 warning으로 남깁니다(2026-11-27, "PR #37 2차"·"PR8 첫 할 일").
+
+**오케스트레이터 결정: host와 admin** (2026-11-26 "결정", 2026-11-27 "PR #32 1차·2차"·"PR6 첫 할 일")
+- **E17. 프로세스 host `serve`:** admin·로컬 UI 리스너와 job runner를 한 프로세스에서 돌리고, 1시간마다 세션 만료·Blob 정리·Mutation 결과 정리·끝나지 않은 purge 마무리를 합니다. sync 리스너는 #4가 `create_sync_app`으로 끼웁니다. 포트는 설정값입니다(admin 8731, sync 8730).
+- **E18. admin 인증:** DPAPI로 보호한 admin 토큰(POSIX 시험 환경은 0600 파일), CLI가 여는 1회용 로그인 URL, HttpOnly·SameSite=Strict 쿠키, Host·Origin 검사(DNS rebinding)입니다. 출발지 주소로 인가하지 않습니다. 원본은 `Content-Disposition: attachment`, `nosniff`, `CSP: sandbox`로 보냅니다.
+  - CLI는 토큰을 보내기 전에 Hub가 자기를 증명하게 합니다(nonce에 대한 토큰 키 HMAC). 증명과 요청 서명에는 대상 Host(`127.0.0.1:<port>`)가 들어가고 Hub는 자기 실제 listen 주소로 검증합니다. 근거: 남은 `admin.port`를 믿으면 그 포트의 아무 프로세스에나 토큰을 보내고(재현), Host를 묶지 않으면 중계 가짜가 진짜 Hub의 로그인 코드를 씁니다(재현).
+  - lock을 잡은 Hub는 즉시 옛 `admin.port`를 지우고, CLI는 lock을 쥔 채 stale `admin.port`를 지웁니다. 인증 전 경로의 본문은 1 KiB로 제한합니다.
+- **E19. 로그 redaction:** 등록된 비밀 값(admin 토큰, #19가 장치 토큰·pairing secret 추가)과 강의 본문 필드를 로그에서 가립니다.
+
+**오케스트레이터 결정: Artifact와 Suggestion** (2026-11-27, "PR6(#36) 계약 어긋남 판정"·"PR #36 1차")
+- add_relation을 수락할 때 만든 Relation이 evidence type이면 anchor가 `to`인 Locator만 그 locators에 넣고, 다른 type은 locators 없이 만듭니다. 근거는 accepted Suggestion의 `evidence`에 그대로 남습니다. 근거: 검증기(`relation.json`, 규칙 `locator_anchor`)가 강제하는 쪽이고 되돌리기 쉽습니다.
+- patch_item은 결과가 키를 하나라도 적용할 때만 근거 Relation을 만듭니다(`applied_fields`가 빈 `conflict`면 만들지 않음).
+- 옛 Artifact의 재실행은 더 나중에 만든 Artifact의 open Suggestion을 덮지 않습니다. `propose`는 x-text 열을 LF로 바꿔 저장하고, Hub에 없는 anchor의 제안은 거부합니다. 근거 Locator는 합칠 때 중복을 거릅니다.
+
+**오케스트레이터 결정: 백업·복원·purge·fsck** (2026-11-26 "결정", 2026-11-27 "PR #37 1차·2차")
+- **E20. 백업:** SQLite Online Backup API 스냅샷, 참조 Blob(Artifact 포함) 증분 복사, 세대 manifest(마지막에 씀), `backed_up_at`을 `store.write`로 찍기 순서입니다. 백업은 스냅샷부터 끝까지 Blob 제거를 막습니다.
+  - 백업 폴더에는 첫 백업 때 marker `campuslife-backup.json`(hub_id)을 둡니다. marker 없이 `generations/`·`blobs/`가 있거나 다른 hub_id면 거부하고, data root와 백업 폴더가 어느 방향으로든 서로를 담으면 거부합니다. prune은 자기가 쓴 이름의 파일만 지웁니다. 근거: 남의 파일과 data root 안의 live DB까지 지웠습니다(재현).
+  - Hub가 꺼진 CLI `backup`은 `--keep`을 주지 않으면 prune하지 않습니다. 유지 세대 수를 data root에 저장하지 않아서 사용자가 정한 세대를 기본값 5로 지울 수 있기 때문입니다.
+  - 큰 첫 백업이 CLI 요청 시간(600초)을 넘을 수 있습니다. 배경 작업으로 바꾸지 않고 문서에 적습니다.
+- **복원:** 빈 data root에, 그 lock을 잡은 뒤 비었는지 다시 확인하고 합니다. 스냅샷이 DB 자리에 놓이기 전에 `.part`에서 새 epoch(UUIDv4)를 쓰고 장치를 dormant로 바꿉니다(U6). 그래서 놓인 DB는 언제나 새 epoch입니다(D3). 근거: 놓은 뒤 크래시하면 옛 epoch로 serve했습니다(재현).
+  - 세대의 Blob 하나라도 없거나 손상됐으면 전체를 거부합니다. `--allow-missing`은 만들지 않습니다(부분 복원은 조용한 데이터 손실). 다른 세대·다른 드라이브를 씁니다.
+  - DB를 놓은 뒤 기록 전에 크래시하면 그 세대의 `backups` 행과 `backed_up_at`이 빠집니다. 다음 백업이 다시 찍고 데이터는 잃지 않으므로 받아들입니다.
+  - 복원 안내는 "모든 장치를 다시 승인, 분실·revoke한 장치는 승인하지 말 것"과 "백업 뒤에 한 purge는 되돌려졌으니 다시 purge"를 출력합니다.
+- **E16. purge:** durable `purge_journal`과 `purge.register(name, fn)` 훅입니다. 행 삭제와 journal 행을 한 트랜잭션에 commit하고, 그 뒤 훅과 파일 삭제를 멱등으로 실행하며, 기동 때 끝나지 않은 것을 재개합니다(FTS는 별도 DB라 한 트랜잭션에 묶을 수 없음).
+  - 지워지는 Blob·Attachment·Artifact·Suggestion과 고른 fork Note를 끝으로 가진 Relation도 함께 지웁니다(2026-11-27, "PR #36 1차" 경계 메모·"PR7 첫 할 일").
+  - 폐쇄는 실제로 지워질 content Blob만 따라가는 고정점입니다. 남는 계보와 바이트를 공유하는 Artifact에서 만든 것은 남습니다.
+  - 지워지는 것을 subject로 가진 job과, 지워지는 Blob을 입력으로 가진 job은 취소합니다. `capture.ingest`는 취소하지 않습니다. 실행할 때 live 상태를 다시 읽고, Attachment 없는 Capture도 ingest 대상이기 때문입니다.
+  - fork Note의 표시는 hub 소유 계약 열 `evidence_purged_at`(purge 시각)입니다. 확인 화면에서 고른 fork Note는 휴지통 없이 tombstone이 됩니다. 수락으로 생긴 Item은 표시 없이 근거 Relation만 잃습니다(셋 다 구현자 판단, 2026-11-27 "PR #37 1차"에서 받아들임).
+  - purge 뒤에 오프라인 fork Note가 create로 오면 Hub가 `evidence_purged_at`을 찍습니다(2026-11-27, "PR #37 1차" 6, 오케스트레이터 결정).
+- **fsck:** 해시를 다시 계산하고 missing·corrupt·orphan Blob과 끝나지 않은 purge를 보고합니다. 잠그지 않으므로 Hub가 도는 동안에는 그 사이 저장·정리되는 Blob이 거짓 양성으로 보일 수 있습니다.
+
+**보존**
+- `applied_mutations`는 90일 보관합니다(E6). create·patch는 그보다 오래된 재전송도 CAS·내용 비교로 다시 판정되어 해가 없습니다. **delete·restore·Relation create는 CAS가 없어서 90일 넘은 재전송이 다시 적용됩니다.** 단일 사용자 Hub에서 90일 넘게 보내지 못한 Outbox는 드물어 받아들입니다(2026-11-27, "PR #30 1차").
+- **`backed_up_at`은 그 Blob을 처음 담은 세대가 끝날 때 한 번 찍습니다** (2026-11-27, "PR #37 1차", 구현자 결정 받아들임). 뒤 세대도 무엇이 가리키는 동안은 그 Blob을 담기 때문입니다.
+- 업로드 세션 7일, 참조 없는 Blob 7일, tombstone 무기한, 백업 세대는 드라이브마다 최근 N개(기본 5), `logs/hub.log`는 지금 파일과 이전 파일 5개(각 5 MiB, 최대 30 MiB)입니다.
+
+**클라이언트 규칙(#3·#16이 구현)**
+- `starts_at`·`due_at` patch에는 `all_day`를 함께 싣습니다(2026-11-27, "PR4 첫 할 일"). 싣지 않으면 그사이 바뀐 `all_day`를 CAS가 보지 못해, `from`이 다 맞는데 행이 깨지는 patch가 `conflict`가 아니라 `rejected{schema}`가 됩니다.
+- 복원 뒤에는 epoch가 바뀌고(D3) 장치가 dormant가 됩니다(U6). 앱은 재승인을 안내합니다(#19).
+
+**결과:**
+- Hub 코어는 `services/agent`에 있고, 설치·업데이트·제거와 운영은 `services/agent/README.md`가 적습니다.
+- `change_seq`를 쓰는 곳(Mutation, 백업, purge, jobs)은 모두 `store.write` 하나를 거칩니다.
+- D2·D6·D14·D16·D18·D20의 해당 문장은 이 항목을 따릅니다. 범위 밖은 #4(sync HTTP), #19(pairing·토큰·재승인), #18(ConflictRecord·휴지통), #5·#8(extractor·provider), #11(FTS), #9(Suggestion 화면), #14(실기기 확인)입니다.
 
 ---
 

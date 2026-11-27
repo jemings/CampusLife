@@ -90,6 +90,11 @@ def touch(tx: Tx, ref: EntityRef) -> int | None:
     return None if data is None else write(tx, ref, data)
 
 
+def ever_written(runner: Tx | Snapshot, ref: EntityRef) -> bool:
+    """Whether the row was ever stored: it is, or its tombstone is."""
+    return runner.execute("SELECT 1 FROM sync_index WHERE entity = ? AND id = ?", (ref.entity.value, ref.id)).fetchone() is not None
+
+
 def get(runner: Tx | Snapshot, ref: EntityRef) -> dict | None:
     row = runner.execute(f"SELECT data FROM {TABLES[ref.entity]} WHERE id = ?", (ref.id,)).fetchone()
     return None if row is None else json.loads(row[0])

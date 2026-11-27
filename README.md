@@ -75,6 +75,7 @@ CampusLife는 강의 녹음·정리만을 위한 앱이 아닙니다. 수업, �
 | [보안·개인정보·데이터 수명주기](docs/PRIVACY-SECURITY.md) | cloud policy, 인증, 백업, 위협 모델 |
 | [구현 로드맵](docs/ROADMAP.md) | 단일 MVP 정의, Phase, 이슈 의존성 |
 | [UX/UI 디자인 기준](docs/UX-DESIGN.md) | Fold8 Cover/Inner, iPad Study Workspace |
+| [Windows Hub](services/agent/README.md) | Hub 설치·업데이트·제거, 백업·복원 운영 |
 | [iPadOS Companion](apps/ipados/README.md) | iPad 앱 시작점 |
 | [AI 코딩 에이전트 지침](AGENTS.md) | 구현 시 지켜야 할 경계 |
 

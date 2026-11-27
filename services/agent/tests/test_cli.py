@@ -264,6 +264,128 @@ def served(root):
     return process
 
 
+NO_CONSOLE = """
+import sys
+sys.stdin = sys.stdout = sys.stderr = None
+{setup}
+from campuslife_hub.cli import main
+raise SystemExit(main({argv!r}))
+"""
+STORE = r"C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0"
+
+
+def no_console(setup, argv):
+    """The CLI run as pythonw runs it: every standard stream None."""
+    return subprocess.run([sys.executable, "-c", NO_CONSOLE.format(setup=setup, argv=argv)], capture_output=True, timeout=60)
+
+
+@pytest.mark.parametrize(
+    ("refusal", "setup", "reason"),
+    [("database too new", "", "schema version 999"), ("store python", f"sys.base_prefix = {STORE!r}", "Microsoft Store")],
+    ids=["database too new", "store python"],
+)
+def test_without_a_console_serve_leaves_why_it_refused_in_the_log_once(tmp_path, capsys, refusal, setup, reason):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    if refusal == "database too new":
+        with sqlite3.connect(root / "database" / "campuslife.sqlite3") as conn:
+            conn.execute("PRAGMA user_version = 999")
+        conn.close()
+
+    finished = no_console(setup, ["--root", str(root), "serve", "--admin-port", "0"])
+
+    assert (finished.returncode, finished.stdout, finished.stderr) == (1, b"", b"")
+    log = root / "logs" / "hub.log"
+    said = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    assert len([line for line in said if reason in line]) == 1
+
+
+def test_without_a_console_init_on_a_store_python_creates_nothing(tmp_path):
+    root = tmp_path / "CampusLife"
+
+    finished = no_console(f"sys.base_prefix = {STORE!r}", ["--root", str(root), "init"])
+
+    assert finished.returncode == 1
+    assert not root.exists(), sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+
+
+def test_without_a_console_a_refused_restore_leaves_the_root_empty(tmp_path):
+    root = tmp_path / "Restored"
+
+    finished = no_console("", ["--root", str(root), "restore", "--from", str(tmp_path / "no-drive")])
+
+    assert finished.returncode == 1
+    assert not root.exists(), sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+
+
+def test_without_a_console_a_refused_restore_leaves_an_empty_root_it_was_given_empty(tmp_path):
+    root = tmp_path / "Restored"
+    root.mkdir()
+
+    finished = no_console("", ["--root", str(root), "restore", "--from", str(tmp_path / "no-drive")])
+
+    assert finished.returncode == 1
+    assert list(root.iterdir()) == []
+
+
+def test_without_a_console_a_failure_on_a_root_without_a_hub_writes_no_log_there(tmp_path):
+    root = tmp_path / "Folder"
+    root.mkdir()
+    (root / "notes.txt").write_text("not a Hub", encoding="utf-8")
+
+    finished = no_console("", ["--root", str(root), "ls"])
+
+    assert finished.returncode == 1
+    assert sorted(path.name for path in root.iterdir()) == ["notes.txt"]
+
+
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="chmod 000 keeps out only a POSIX user other than root")
+def test_without_a_console_a_root_the_cli_may_not_look_into_still_ends_with_1(tmp_path, monkeypatch):
+    shut = tmp_path / "shut"
+    shut.mkdir()
+    shut.chmod(0)
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    try:
+        assert main(["--root", str(shut / "CampusLife"), "stop"]) == 1
+    finally:
+        shut.chmod(0o700)
+
+
+def test_with_a_console_the_reason_serve_refused_shows_once_and_is_in_the_log(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    with sqlite3.connect(root / "database" / "campuslife.sqlite3") as conn:
+        conn.execute("PRAGMA user_version = 999")
+    conn.close()
+    capsys.readouterr()
+
+    assert hub(root, "serve", "--admin-port", "0") == 1
+
+    shown = [line for line in capsys.readouterr().err.splitlines() if "schema version 999" in line]
+    assert len(shown) == 1
+    assert shown[0].startswith("campuslife-hub: the database is at schema version 999")
+    logged = (root / "logs" / "hub.log").read_text(encoding="utf-8").splitlines()
+    assert len([line for line in logged if "schema version 999" in line]) == 1
+
+
+def test_without_a_console_an_unexpected_error_that_ends_serve_is_in_the_log_once(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    setup = (
+        "import campuslife_hub.host as h\n"
+        "async def ended(*args, **kwargs):\n"
+        "    raise RuntimeError('the admin listener ended')\n"
+        "h.serve = ended"
+    )
+
+    finished = no_console(setup, ["--root", str(root), "serve", "--admin-port", "0"])
+
+    assert finished.returncode == 1
+    said = (root / "logs" / "hub.log").read_text(encoding="utf-8").splitlines()
+    assert len([line for line in said if "the admin listener ended" in line]) == 1
+
+
 def test_while_the_hub_serves_writes_go_through_its_admin_api_and_stop_ends_it(tmp_path, capsys, monkeypatch):
     root = tmp_path / "CampusLife"
     hub(root, "init")
@@ -656,6 +778,18 @@ def exit_code(*args):
         return hub(*args)
     except SystemExit as exited:
         return exited.code
+
+
+@pytest.mark.parametrize(("option", "said"), [
+    ("--admin-port", "argument --admin-port: 'abc' is not a port (0 to 65535)"),
+    ("--backup-keep", "argument --backup-keep: 'abc' is not a whole number of at least 1"),
+])
+def test_a_serve_option_that_is_not_a_number_is_refused_in_words_a_person_reads(tmp_path, capsys, option, said):
+    assert exit_code(tmp_path / "CampusLife", "serve", option, "abc") == 2
+
+    shown = capsys.readouterr().err
+    assert said in shown
+    assert "_port" not in shown and "_at_least_one" not in shown
 
 
 @pytest.mark.parametrize(("command", "code", "said"), [

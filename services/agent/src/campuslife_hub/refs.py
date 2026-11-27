@@ -1,4 +1,4 @@
-"""Entity references, "<entity>:<id>" (E14), and whether the Hub holds what one names."""
+"""Entity references, "<entity>:<id>" (E14), and whether the Hub holds, or once held, what one names."""
 
 from __future__ import annotations
 
@@ -15,3 +15,16 @@ def exists(runner: Tx | Snapshot, entity_ref: str) -> bool:
         return has_blob(runner, identifier)
     ref = EntityRef.parse(entity_ref)
     return ref is not None and store.get(runner, ref) is not None
+
+
+def ever_existed(runner: Tx | Snapshot, entity_ref: str) -> bool:
+    """What exists, a tombstone, and a Blob a purge removed; not what the Hub has no record of, which includes a Blob
+    the collection of unreferenced Blobs removed, as it keeps none."""
+    entity, _, identifier = entity_ref.partition(":")
+    if entity == "blob":
+        purged = runner.execute(
+            "SELECT 1 FROM purge_journal, json_each(purge_journal.target, '$.blobs') WHERE json_each.value = ?", (identifier,)
+        ).fetchone()
+        return has_blob(runner, identifier) or purged is not None
+    ref = EntityRef.parse(entity_ref)
+    return ref is not None and store.ever_written(runner, ref)

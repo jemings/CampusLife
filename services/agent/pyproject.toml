@@ -14,6 +14,9 @@ dependencies = [
 [project.scripts]
 campuslife-hub = "campuslife_hub.cli:main"
 
+[project.gui-scripts]
+campuslife-hubw = "campuslife_hub.cli:main"
+
 [dependency-groups]
 dev = [
     "httpx>=0.29.0",

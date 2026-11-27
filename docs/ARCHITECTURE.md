@@ -130,23 +130,35 @@ https://developers.openai.com/api/docs/guides/images-vision
 
 각 단계는 job_key로 멱등한 ProcessingJob입니다. 외부 provider를 부르는 단계는 `ProviderGateway`를 통과해야 하고, 입력이 여러 개면 가장 엄격한 정책을 따릅니다(D8). word-level timestamp가 없는 전사 결과는 구간 단위로만 연결하고 정밀 타임스탬프를 꾸며내지 않습니다.
 
-## 6. 저장 설계 (D2, D16)
+## 6. 저장 설계 (D2, D16, D21)
 
 Windows 파일시스템이 바이트의 원천이고, SQLite에는 메타데이터, 관계, 작업 상태, 변경 피드, 인덱스를 저장합니다.
 
-    %LOCALAPPDATA%\CampusLife\     (설치 시 선택, 동기화 폴더 아래면 거부)
-    ├── blobs\ab\cd\<sha256>      # 원본·Artifact·필기 payload, 읽기 전용
-    ├── uploads\<sha256>\          # 검증 전 chunk (blobs와 같은 볼륨)
-    ├── database\campuslife.sqlite3 # WAL
-    ├── cache\                     # FTS 인덱스, 썸네일, overlay 렌더링 — 백업 안 함
-    ├── logs\
-    └── exports\                   # 사람이 읽는 트리 복사본
+    %LOCALAPPDATA%\CampusLife\         (설치 시 선택, 동기화 폴더 아래나 \\ 드라이브면 거부)
+    ├── hub.lock                       # 단일 인스턴스 lock (E11)
+    ├── admin.token                    # admin 토큰, DPAPI로 보호 (E18)
+    ├── admin.port                     # 서빙 중인 Hub의 admin 포트, 서빙하는 동안만 있음
+    ├── database\campuslife.sqlite3     # WAL, synchronous=FULL. purge_journal·backups 표 포함
+    ├── blobs\ab\cd\<sha256>            # 원본·Artifact 본문·필기 payload, 읽기 전용
+    ├── staging\                       # 해시를 확인하기 전 파일 (blobs와 같은 볼륨, 기동 때 잔여물 삭제)
+    ├── uploads\<session uuid>\<index>  # 업로드 세션의 chunk (blobs와 같은 볼륨, 7일 지난 세션 정리)
+    ├── logs\hub.log                   # 지금 파일 + 이전 5개(각 5 MiB), 비밀 값·강의 본문 가림 (E19)
+    ├── cache\                         # 이후(#11 등): FTS 인덱스, 썸네일, overlay 렌더링 — 백업 안 함
+    └── exports\                       # 이후: 사람이 읽는 트리 복사본
+
+    <백업 드라이브의 폴더>\
+    ├── campuslife-backup.json         # 이 폴더에 백업하는 Hub의 hub_id (marker)
+    ├── generations\<name>\             # campuslife.sqlite3(스냅샷), manifest.json(마지막에 씀)
+    └── blobs\ab\cd\<sha256>            # 세대끼리 공유하는 Blob
 
 - 같은 바이트는 한 번만 저장하고 덮어쓰지 않습니다.
 - 삭제는 tombstone → 휴지통(30일) → 참조 없는 Blob 정리 순서입니다. 교수자·참여자 요청은 즉시 purge합니다.
+- purge는 Blob 단위입니다. 그 Blob의 Attachment, 파생 Artifact·Suggestion(전이 폐쇄), 그 끝을 가진 Relation, 인덱스·렌디션을 지우고, fork된 Note는 남겨 근거가 지워졌다고 표시합니다(U2). DB 삭제와 `purge_journal` 행을 한 트랜잭션에 commit한 뒤 훅과 파일 삭제를 실행하고, 끊기면 기동 때 마저 합니다(E16).
 - Artifact는 재실행 결과가 다를 수 있으므로 백업 대상입니다. 캐시는 FTS·썸네일·overlay뿐입니다.
-- 백업은 DB 스냅샷 → 참조 Blob 증분 복사 → 세대 manifest → `backed_up_at` 갱신 순서이며, 복원하면 새 `epoch`를 발급합니다.
-- `hub fsck`로 해시와 고아·누락 Blob을 점검합니다.
+- 백업은 수동이고 암호화하지 않습니다(U1, U3). DB 스냅샷 → 참조 Blob 증분 복사 → 세대 manifest → `backed_up_at`(그 Blob을 처음 담은 세대에 한 번) 순서입니다. 백업은 marker가 없거나 다른 Hub의 폴더를 거부하고, 자기가 쓴 파일만 지웁니다.
+- 복원은 빈 data root에 하고 새 `epoch`를 발급하며, active인 client 장치를 모두 dormant로 바꿉니다. revoked 장치와 Hub 자신(`windows_hub`)은 그대로입니다(D3, D21 U6).
+- `hub fsck`로 해시와 고아·누락 Blob, 끝나지 않은 purge를 점검합니다.
+- 설치·업데이트·제거와 백업·복원 운영은 [`services/agent/README.md`](../services/agent/README.md)에 있습니다.
 
 ## 7. 검색
 
