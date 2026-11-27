@@ -545,6 +545,21 @@ async def test_a_reissued_token_used_while_its_device_is_dormant_retires_nothing
         assert await b.authenticate(paired.token) == paired.device_id
 
 
+async def test_the_hubs_own_device_is_never_given_a_token(tmp_path):
+    async with bench(tmp_path) as b:
+        with pytest.raises(HubDeviceRefused):
+            await b.reissue(b.core.hub_device)
+
+
+async def test_a_revoked_device_is_never_given_another_token(tmp_path):
+    async with bench(tmp_path) as b:
+        paired = await b.paired()
+        await b.revoke(paired.device_id)
+        with pytest.raises(RevokedDevice):
+            await b.reissue(paired.device_id)
+        assert [entry for entry in await b.core.db.read(audit.entries) if entry.event == AuditEvent.REISSUE] == []
+
+
 async def test_every_token_of_a_revoked_device_answers_device_revoked(tmp_path):
     async with bench(tmp_path) as b:
         paired = await b.paired()
@@ -614,10 +629,10 @@ async def test_no_device_operation_logs_a_token_or_a_secret(tmp_path, caplog):
     async with bench(tmp_path) as b:
         offer = await b.offer()
         paired = await b.pair(offer.secret)
-        await b.pair(offer.secret)
         reissued = await b.reissue(paired.device_id)
         for token in (paired.token, reissued.token, None, "A" * 43):
             await b.authenticate(token)
+        await b.pair(offer.secret)
         await b.revoke(paired.device_id)
 
     logged = "\n".join(record.getMessage() for record in caplog.records)
