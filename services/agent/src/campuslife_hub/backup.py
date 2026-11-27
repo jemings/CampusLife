@@ -14,9 +14,10 @@ holds gets backed_up_at through store.write (D14): the end of the first generati
 since every later generation holds it as well while anything names it. Then the generations beyond the
 newest `keep` go, with the Blobs no kept generation names.
 
-A restore goes into an empty data root, under its hub.lock, and issues a new epoch (D3), so every
-client syncs again from since=0 and sends again the Captures the Hub no longer has. A device paired
-after the backup is unknown to the restored Hub and pairs again; one revoked after it is active again.
+A restore goes into an empty data root, under its hub.lock. Before the snapshot takes the database's
+place it gets a new epoch (D3), so every client syncs again from since=0 and sends again the Captures
+the Hub no longer has, and every client device turns dormant (D6), to be approved again: a device
+revoked after the backup is not active again, and one paired after it is unknown.
 """
 
 from __future__ import annotations
@@ -112,7 +113,7 @@ class Restored:
     """When the snapshot was taken; a device paired after this pairs again."""
     epoch: str
     devices: tuple[KnownDevice, ...]
-    """The client devices the restored Hub knows and does not count as revoked."""
+    """The client devices the restored Hub knows and did not count as revoked when the backup was taken, all dormant now."""
 
 
 @dataclass(frozen=True)
@@ -331,13 +332,22 @@ def _restore_blob(source: Path, layout: Layout, sha256: str) -> None:
     os.chmod(final, READ_ONLY)
 
 
-def _place(source: Path, name: str, manifest: dict, layout: Layout) -> None:
+def _reissue(database: Path, epoch: str) -> None:
+    """Give the snapshot its new epoch and make its client devices dormant before it takes the database's place, so a
+    crash after that never serves the backup's epoch (D3) or a device revoked since the backup (D6)."""
+    with closing(sqlite3.connect(database)) as copy, copy:
+        copy.execute("UPDATE hub_state SET epoch = ?", (epoch,))
+        copy.execute("UPDATE devices SET state = 'dormant' WHERE platform != 'windows_hub' AND state = 'active'")
+
+
+def _place(source: Path, name: str, manifest: dict, layout: Layout, epoch: str) -> None:
     snapshot = source / GENERATIONS / name / manifest["database"]["file"]
     layout.database.parent.mkdir(parents=True, exist_ok=True)
     partial = layout.database.with_name(layout.database.name + PARTIAL)
     try:
         if copy_hashing([snapshot], partial).sha256 != manifest["database"]["sha256"]:
             raise RestoreRefused(f"the snapshot of generation {name} is damaged")
+        _reissue(partial, epoch)
         for blob in manifest["blobs"]:
             _restore_blob(source, layout, blob["sha256"])
         _replace_durably(partial, layout.database)
@@ -345,9 +355,7 @@ def _place(source: Path, name: str, manifest: dict, layout: Layout) -> None:
         _remove(partial)
 
 
-def _after_restore(tx: Tx, manifest: dict, source: Path) -> tuple[str, tuple[KnownDevice, ...]]:
-    epoch = str(uuid.uuid4())
-    tx.execute("UPDATE hub_state SET epoch = ?", (epoch,))
+def _after_restore(tx: Tx, manifest: dict, source: Path) -> tuple[KnownDevice, ...]:
     held = [blob["sha256"] for blob in manifest["blobs"]]
     tx.execute(
         "INSERT OR IGNORE INTO backups (generation, target, finished_at, blob_count, copied_count) VALUES (?, ?, ?, ?, ?)",
@@ -357,7 +365,7 @@ def _after_restore(tx: Tx, manifest: dict, source: Path) -> tuple[str, tuple[Kno
     devices = tx.execute(
         "SELECT device_name, platform, created_at FROM devices WHERE platform != 'windows_hub' AND state != 'revoked' ORDER BY created_at, id"
     ).fetchall()
-    return epoch, tuple(KnownDevice(*device) for device in devices)
+    return tuple(KnownDevice(*device) for device in devices)
 
 
 def _holds_only_its_lock(root: Path, layout: Layout) -> bool:
@@ -365,7 +373,8 @@ def _holds_only_its_lock(root: Path, layout: Layout) -> bool:
 
 
 async def restore(source: Path, root: Path, *, generation: str | None = None, sync_roots: Iterable[Path] | None = None) -> Restored:
-    """Restore a generation, the newest finished one by default, into an empty data root and issue a new epoch.
+    """Restore a generation, the newest finished one by default, into an empty data root under a new epoch, with every
+    client device dormant.
 
     RestoreRefused, writing nothing, when the root is not empty or the drive has no such generation; and when the
     drive holds the generation damaged, after removing what it had placed."""
@@ -381,12 +390,13 @@ async def restore(source: Path, root: Path, *, generation: str | None = None, sy
     if not _holds_only_its_lock(layout.root, layout):
         raise RestoreRefused(f"{layout.root} is not empty; restore into an empty or new data root")
     layout.root.mkdir(parents=True, exist_ok=True)
+    epoch = str(uuid.uuid4())
     with HubLock.acquire(layout.lock_file) as lock:
         try:
-            await asyncio.to_thread(_place, source, name, manifest, layout)
+            await asyncio.to_thread(_place, source, name, manifest, layout, epoch)
             db = await Database.open(layout, lock=lock, create=False)
             try:
-                epoch, devices = await db.write(lambda tx: _after_restore(tx, manifest, source))
+                devices = await db.write(lambda tx: _after_restore(tx, manifest, source))
             finally:
                 await db.close()
         except BaseException:

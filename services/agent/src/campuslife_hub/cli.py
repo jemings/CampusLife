@@ -5,7 +5,7 @@
   open     open the local UI in the browser through a one-time login link
   import   store files as Blobs and commit them as one Capture
   backup   write a backup generation to a folder on a backup drive and keep the newest ones
-  restore  restore a backup generation into an empty data root, under a new epoch
+  restore  restore a backup generation into an empty data root, under a new epoch, every device dormant
   fsck     recompute every Blob's hash and find missing, corrupt and orphan Blobs
   status   what the serving Hub reports about itself
   stop     ask the serving Hub to stop
@@ -149,10 +149,10 @@ async def _restore(root: Path, source: Path, generation: str | None) -> None:
     restored = await backup.restore(source, root, generation=generation)
     print(f"restored generation {restored.generation}, taken {restored.taken_at}, into {restored.root}")
     print(f"epoch {restored.epoch}")
-    print(f"Devices paired after {restored.taken_at} are unknown to this Hub: pair them again.")
-    print("Devices revoked after then are active again: revoke them again.")
+    print("Every device must be approved again; do not approve a device that was lost or revoked.")
+    print(f"Purges made after {restored.taken_at} are undone: purge those files again.")
     for device in restored.devices:
-        print(f"device {device.platform} {device.name} paired {device.paired_at}")
+        print(f"device {device.platform} {device.name} paired {device.paired_at} dormant")
 
 
 async def _fsck(root: Path) -> None:
