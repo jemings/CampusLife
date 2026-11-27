@@ -228,7 +228,9 @@ FREE_FORM_IN_FEED = {
 HASHED = {("artifact/extraction", ("extractor", "params"))}
 """Open objects a rule hashes: a member added there is another value, which the block ids follow (rule block_id)."""
 KEYED_BY_CELL = {(schema_id, ("payload", "formulas")) for schema_id in ("artifact/body", "artifact/extraction")}
-"""A table_row's formulas map names cells, not members: a new name is another cell, not a newer Hub's member."""
+"""A table_row's formulas map names cells, not members: a new name is another cell, not a newer Hub's member.
+The exemption matches the path suffix payload/formulas only, so a formulas member of another block_type's payload is
+exempt too."""
 OPEN_SAMPLES = [
     (f"{c.schema_id}/{c.name}", c.schema_id, read_strict(c.path))
     for c in CASES if c.kind is FixtureKind.VALID and c.schema_id in OPEN
@@ -283,6 +285,8 @@ def test_the_open_samples_reach_the_nested_feed_shapes():
         ("conflict_record/conflict_record", ("resolved",)),
         ("sync/changes_page", ("changes", "data", "set", "body")),
         ("sync/changes_page", ("changes", "data", "resolved")),
+        ("artifact/body", ("blocks", "payload")),
+        ("artifact/extraction", ("blocks", "payload")),
     } <= shapes
 
 
