@@ -51,6 +51,12 @@ CampusLife is a local-first personal campus-life information hub, not only a lec
 
 - Test fixtures must be synthetic. Put them under `examples/` or a `fixtures/` directory; `.gitignore` blocks media files everywhere else.
 
+## Pull requests and history
+
+- PRs land by **squash merge** (the default); merge commits and rebase merges are also allowed in this repository. The squash commit title is the PR title, so write the PR title as a Conventional Commit. `Closes #N` goes in a commit message or the PR body of the PR that finishes the issue.
+- History inside a PR branch need not be tidy: add review fixes as new commits on top, catch up with the base by `git merge origin/main` (or a rebase), and avoid force-pushing a branch that is under review.
+- Verify once at the PR HEAD: run the full test suite on the exact SHA you push, plus CI. Do not run the suite on every commit of the branch; while fixing, run only the failing tests and the tests the change touches.
+
 ## Multi-device requirements
 
 - Treat Windows as the primary local data hub, not as the only UI client.
