@@ -32,8 +32,8 @@ uv run campuslife-hub open
    - 기본 data root는 `%LOCALAPPDATA%\CampusLife`입니다. 다른 곳을 쓰려면 모든 명령에 `campuslife-hub --root D:\CampusLife <명령>`처럼 `--root`를 명령 앞에 주거나, 환경 변수 `CAMPUSLIFE_ROOT`를 둡니다.
    - 동기화 폴더(OneDrive·Dropbox) 아래와 `\\`로 시작하는 드라이브(네트워크 공유 등)는 거부합니다(D2, E23).
 4. `autostart register`는 이 사용자가 로그온할 때 Hub를 시작하는 Task Scheduler 작업 `CampusLife Hub`를 등록합니다(E21).
-   - 작업은 `.venv\Scripts\campuslife-hubw.exe --root <data root> serve`를 실행합니다. 콘솔 창이 없으므로 Hub의 로그와, 기동을 거부한 이유(Store Python, 더 새 DB, 맞지 않는 SQLite, 이미 도는 Hub, 쓰고 있는 포트, 동기화 폴더 등)는 `<data root>\logs\hub.log`에 남습니다. 이 파일은 5 MiB가 차면 `hub.log.1`…`hub.log.5`로 밀려나 최대 6개(30 MiB)를 둡니다.
-   - 작업이 곧바로 끝났는데 `hub.log`에 이유가 없으면(로그 폴더를 쓸 수 없는 경우 등) 콘솔에서 같은 명령 `uv run campuslife-hub --root <data root> serve`를 실행해 이유를 봅니다.
+   - 작업은 `.venv\Scripts\campuslife-hubw.exe --root <data root> serve`를 실행합니다. 콘솔 창이 없으므로 Hub의 로그와, 기동을 거부한 이유(Store Python, 더 새 DB, 맞지 않는 SQLite, 이미 도는 Hub, 쓰고 있는 포트, 동기화 폴더 등)는 `<data root>\logs\hub.log`에 남습니다. 이유가 남는 것은 data root에 Hub(`database\campuslife.sqlite3`)가 있을 때뿐입니다. Hub가 없는 root에는 파일을 만들지 않습니다. 이 파일은 5 MiB가 차면 `hub.log.1`…`hub.log.5`로 밀려나 최대 6개(30 MiB)를 둡니다.
+   - 작업이 곧바로 끝났는데 `hub.log`에 이유가 없으면(data root에 Hub가 없는 경우, 로그 폴더를 쓸 수 없는 경우 등) 콘솔에서 같은 명령 `uv run campuslife-hub --root <data root> serve`를 실행해 이유를 봅니다.
    - 시간 제한 없음, 배터리 사용 중에도 시작·유지, 이미 돌고 있으면 새 시작은 무시합니다.
    - 등록 시점의 data root와, register에 준 serve 옵션(`--admin-port`, `--backup-keep`, `--backup-warn-days`)만 작업 인자에 들어갑니다. 바꾸려면 같은 명령을 다시 실행합니다(같은 이름의 작업을 교체). 이름은 `--name`으로 바꿀 수 있습니다.
    - `uv run campuslife-hub autostart xml`은 등록할 작업 XML을 출력만 합니다(인코딩 선언 없음). `--out task.xml`을 주면 register가 schtasks에 넘기는 것과 같은 UTF-16 파일을 씁니다.

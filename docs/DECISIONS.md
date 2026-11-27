@@ -604,6 +604,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **E21. 설치:** git checkout + `uv sync --frozen` + venv의 gui-script 런처(pythonw)를 Task Scheduler XML로 등록합니다. 로그온 트리거, `ExecutionTimeLimit PT0S`, 배터리 시작·중지 조건 끔, `MultipleInstancesPolicy IgnoreNew`입니다. MS Store Python(`WindowsApps` 경로)은 `%LOCALAPPDATA%` 쓰기를 가상화하므로 거부합니다.
   - 구현자 결정, PR #38 리뷰에서 받아들임(2026-11-27): 런처는 `campuslife-hubw`, 작업은 이 사용자로 `InteractiveToken`·`LeastPrivilege`, 이름은 `CampusLife Hub`이고 `campuslife-hub autostart xml|register|unregister`가 다룹니다. 작업 인자에는 등록 시점의 data root와 준 serve 옵션만 들어갑니다. Store Python 거부는 기동만이 아니라 모든 CLI 명령에서 합니다(어느 명령이든 data root를 가상화된 곳에 읽고 쓰게 되므로).
   - pythonw로 뜬 Hub에는 stderr가 없으므로 기동 거부 이유를 `<root>/logs/hub.log`에 남깁니다(2026-11-27, PR #38 리뷰, 오케스트레이터 결정). `run_hub`은 로그 파일을 붙인 뒤 Hub를 끝낸 오류를 기록하고, CLI는 stderr가 없을 때 그보다 앞선 실패(Store Python 거부 등)를 같은 파일에 덧붙입니다.
+    - `run_hub`의 그 기록은 파일에만 갑니다. 콘솔이 있으면 CLI의 한 줄만 보입니다. CLI는 Hub가 있는 data root(DB 파일이 있는 곳)에만 덧붙입니다. 실패한 init이 root를 남기거나, 거부된 restore가 root를 비어 있지 않게 만들지 않기 위해서입니다(2026-11-27, PR #38 재리뷰, 오케스트레이터 결정).
   - 재부팅 뒤 로그인 전에는 Hub가 없다는 D16의 한계는 그대로이고, 알림은 Hub와 상관없습니다(D19). 실기기의 로그온 자동 시작·장시간 생존은 #14가 확인합니다.
 
 **오케스트레이터 결정: 저장과 쓰기 경로** (2026-11-26, "결정")
