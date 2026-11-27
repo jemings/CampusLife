@@ -1,15 +1,22 @@
 package campuslife.android.data
 
 import campuslife.wire.AttachmentRole
+import campuslife.wire.CaptureCommit
 import campuslife.wire.CapturedAtPrecision
 import campuslife.wire.CaptureLink
 import campuslife.wire.CloudPolicy
+import campuslife.wire.CommitAttachment
+import campuslife.wire.CommitCapture
 import campuslife.wire.Origin
 import campuslife.wire.Timeline
+import campuslife.wire.wireJson
 import java.io.InputStream
+import java.text.Normalizer
 import java.time.Clock
 import java.time.Instant
+import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
 /** The write seam for Captures (decision 5): ids, Blob files and the capture.commit are made in here. */
 class CaptureOutbox(
@@ -40,13 +47,88 @@ class CaptureOutbox(
         categoryHint: String? = null,
         userNote: String? = null,
         url: String? = null,
-    ): String = TODO()
+    ): String {
+        val draft = CaptureCommit(
+            id = UUID.randomUUID().toString(),
+            createdAt = clock.instant(),
+            origin = origin,
+            categoryHint = categoryHint?.let { nfc(it) },
+            userNote = userNote?.let { nfc(it) },
+            url = url,
+            links = links,
+            attachments = emptyList(),
+        )
+        db.captures().add(LocalCapture(draft.id, OPEN, wireJson.encodeToString(CaptureCommit.serializer(), draft)))
+        return draft.id
+    }
 
     /** Copies [source] into the Blob store and adds it to the open Capture; returns the Attachment id. */
-    fun addFile(captureId: String, source: InputStream, file: NewFile): String = TODO()
+    fun addFile(captureId: String, source: InputStream, file: NewFile): String {
+        requireOpen(captureId)
+        val kept = files.put(source)
+        val name = file.filename?.takeIf(String::isNotEmpty)
+        val canonical = name?.let { nfc(it) }
+        val attachment = CommitAttachment(
+            id = UUID.randomUUID().toString(),
+            blobSha256 = kept.sha256,
+            role = file.role,
+            seq = file.seq,
+            originalFilename = canonical,
+            originalFilenameRaw = name?.takeIf { it != canonical },
+            declaredMime = file.declaredMime,
+            capturedAt = file.capturedAt,
+            capturedAtPrecision = file.capturedAtPrecision,
+            capturedMonoNs = file.capturedMonoNs,
+            cloudPolicy = file.cloudPolicy,
+        )
+        db.inTransaction {
+            requireOpen(captureId)
+            val body = wireJson.encodeToString(CommitAttachment.serializer(), attachment)
+            val position = db.captures().attachmentCount(captureId)
+            db.captures().addAttachment(LocalAttachment(attachment.id, captureId, position, kept.sha256, body))
+            db.blobs().addIfAbsent(BlobRow(kept.sha256, kept.size, TransferState.WAITING.column))
+        }
+        return attachment.id
+    }
 
     /** Seals the Capture; its capture.commit goes out once every Blob is stored (decision 6). Sealing again does nothing. */
-    fun seal(captureId: String, timeline: Timeline? = null): Unit = TODO()
+    fun seal(captureId: String, timeline: Timeline? = null): Unit = db.inTransaction {
+        val capture = requireNotNull(db.captures().get(captureId)) { "no capture $captureId" }
+        if (capture.seal == SEALED) return@inTransaction
+        val draft = wireJson.decodeFromString(CaptureCommit.serializer(), capture.draft)
+        val attachments = db.captures().attachments(captureId)
+            .map { wireJson.decodeFromString(CommitAttachment.serializer(), it.body) }
+        db.captures().setSeal(captureId, SEALED)
+        val commit = draft.copy(attachments = attachments, timeline = timeline)
+        db.enqueue(CommitCapture(UUID.randomUUID().toString(), commit), TransferState.HELD)
+        db.promoteHeldCommits()
+    }
 
-    fun observe(): Flow<List<CaptureView>> = TODO()
+    fun observe(): Flow<List<CaptureView>> = db.captures().observeSummaries().map { rows -> rows.map(::view) }
+
+    private fun requireOpen(captureId: String) {
+        val capture = requireNotNull(db.captures().get(captureId)) { "no capture $captureId" }
+        check(capture.seal == OPEN) { "capture $captureId is sealed; what comes after goes in a new Capture (D7)" }
+    }
+
+    private fun view(row: CaptureSummary) = CaptureView(row.id, row.seal == SEALED, transferOf(row), row.attachments)
+
+    private fun transferOf(row: CaptureSummary): CaptureTransfer {
+        val commit = row.commitState?.let(TransferState::of)
+        return when {
+            commit == TransferState.REJECTED -> CaptureTransfer.NEEDS_ATTENTION
+            commit != null && commit in COMMITTED -> CaptureTransfer.COMMITTED
+            row.retrying > 0 -> CaptureTransfer.RETRY_WAIT
+            row.uploading > 0 || commit == TransferState.PENDING -> CaptureTransfer.UPLOADING
+            else -> CaptureTransfer.PENDING
+        }
+    }
+
+    private companion object {
+        const val OPEN = "open"
+        const val SEALED = "sealed"
+        val COMMITTED = setOf(TransferState.ACKED, TransferState.PULLING, TransferState.SETTLED)
+
+        fun nfc(text: String): String = Normalizer.normalize(text, Normalizer.Form.NFC)
+    }
 }
