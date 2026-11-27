@@ -87,7 +87,8 @@ uv run campuslife-contracts compare fixtures/valid <out>
 - pairing(`device/pair_request`)의 `platform`은 `android`·`ipados`만 받습니다. `windows_hub`는 Hub 자신의 Device 행입니다. `device_name`·`last_error` 같은 표시 문자열은 제어문자, 줄·문단 구분자(U+2028, U+2029), 양방향 서식 문자(U+202A–U+202E, U+2066–U+2069)를 받지 않습니다.
 - 토큰 재발급 `POST /v1/devices/me/token`은 지금 토큰으로 인증하고 본문 없이 보내며, 응답은 `device/pair_response` 모양입니다. 이전 토큰은 새 토큰이 처음 인증에 성공할 때 폐기되고, 그전까지는 둘 다 유효합니다. 다시 요청하면 아직 쓰이지 않은 같은 새 토큰을 돌려줍니다.
 - 업로드 세션의 키는 (이 Device, sha256)입니다(E19). 같은 sha256으로 열린 세션에 다른 `size`를 보내면 400 `invalid_request`이고, revoke하면 그 Device의 열린 세션이 폐기됩니다(D6). 이미 저장된 Blob의 finalize는 세션이 없어도 200입니다(D7).
-- 업로드 chunk 번호는 0부터이고, chunk i는 바이트 `[i*chunk_size, min((i+1)*chunk_size, size))`입니다. chunk는 ceil(size/chunk_size)개이고 `received`의 값은 모두 그보다 작습니다(규칙 `chunk_index`). 크기 0인 Blob은 chunk가 없고 바로 finalize합니다(E19). 경로의 `{i}`는 정수 파라미터라서 스키마는 `07` 같은 선행 0 표기를 거르지 않습니다. 클라이언트는 `7`처럼 선행 0 없이 쓰고, Hub가 그 밖의 표기를 어떻게 다룰지는 Hub 구현(#2)이 정합니다.
+- 업로드 chunk 번호는 0부터이고, chunk i는 바이트 `[i*chunk_size, min((i+1)*chunk_size, size))`입니다. chunk는 ceil(size/chunk_size)개이고 `received`의 값은 모두 그보다 작습니다(규칙 `chunk_index`). 크기 0인 Blob은 chunk가 없고 바로 finalize합니다(E19). 경로의 `{i}`는 정수 파라미터라서 스키마는 `07` 같은 선행 0 표기를 거르지 않습니다. 클라이언트는 `7`처럼 선행 0 없이 쓰고, Hub는 그 밖의 표기를 400 `invalid_request`로 거절합니다.
+- chunk 본문은 정확히 그 chunk의 길이입니다. Hub는 본문을 읽기 전에 거절할 수 있으면(401, 404, 다른 `Content-Length` 등) 본문을 기다리지 않고 바로 답하고, 남은 본문은 서버가 읽어 버리므로 연결은 계속 쓸 수 있습니다. `Expect: 100-continue`로 보낸 요청이 그렇게 거절되면 클라이언트는 그 연결에 선언한 본문을 마저 보내거나 연결을 닫습니다. 본문 없이 같은 연결에 다음 요청을 보내면 Hub는 그것을 본문으로 읽어 계약 밖 응답을 내고 연결을 닫습니다.
 - 쿼리 값(`sync/changes_query`)과 헤더 값은 도착한 그대로의 문자열로 검사합니다. 숫자 문자열(`since`, `Range`, `Content-Range`)의 숫자는 int64 범위 안이고(규칙 `int64_text`: `9223372036854775807`까지), 바이트 범위는 first ≤ last이며 `Content-Range`의 last는 크기보다 작습니다(규칙 `byte_range`). 416은 `Content-Range: bytes */<size>`(`blob/range_not_satisfiable_headers`)를 싣습니다.
 
 ## HTTP 헤더 이름
