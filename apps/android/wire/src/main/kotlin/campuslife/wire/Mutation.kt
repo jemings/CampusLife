@@ -159,7 +159,7 @@ sealed interface Seen {
 }
 
 /** The x-text columns of each entity: a patch sends the from_hash of their text, not the text (E11). */
-val textColumns: Map<MutableEntity, Set<String>> = emptyMap()
+val textColumns: Map<MutableEntity, Set<String>> = mapOf(MutableEntity.ITEM to setOf("body"))
 
 /** from and from_hash exclude each other, and each may be null, so the entry is read and written as a whole. */
 object SetEntrySerializer : KSerializer<SetEntry> {
