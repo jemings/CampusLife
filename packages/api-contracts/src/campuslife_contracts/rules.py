@@ -293,8 +293,12 @@ def _box_extent(validator, enabled, instance, schema):
         yield ValidationError(f"box {instance!r} reaches past the unit square")
 
 
-def _fitting_blocks(validator, schema, instance) -> Iterator[tuple[int, dict]]:
-    """(ordinal, block) for each block that fits its own schema, when the source blob and the extractor do."""
+def _extracted_blocks(validator, schema, instance) -> Iterator[tuple[int, dict, Callable[[], bool]]]:
+    """(ordinal, block, fits) for each object block, when the source blob and the extractor fit their schemas.
+
+    fits says whether the block fits its own schema. A rule asks it only for a block it would report, so a body
+    whose blocks hold is validated once, by `items`, and not again per rule.
+    """
     if not isinstance(instance, dict) or not all(name in instance for name in ("blob", "extractor", "blocks")):
         return
     if not _members_fit(validator, schema, instance, ["blob", "extractor"]):
@@ -303,19 +307,19 @@ def _fitting_blocks(validator, schema, instance) -> Iterator[tuple[int, dict]]:
         return
     block_schema = schema.get("properties", {}).get("blocks", {}).get("items", True)
     for ordinal, block in enumerate(instance["blocks"]):
-        if isinstance(block, dict) and _fits(validator, block, block_schema):
-            yield ordinal, block
+        if isinstance(block, dict):
+            yield ordinal, block, lambda block=block: _fits(validator, block, block_schema)
 
 
 def _block_id(validator, enabled, instance, schema):
     """A block's id is sha256(canonical_json([blob, extractor id, extractor version, extractor params, ordinal])), the
     ordinal its index."""
-    for ordinal, block in _fitting_blocks(validator, schema, instance):
+    for ordinal, block, fits in _extracted_blocks(validator, schema, instance):
         extractor = instance["extractor"]
         derived = [instance["blob"], extractor.get("id"), extractor.get("version"), extractor.get("params"), ordinal]
         if not isinstance(block.get("id"), str) or not all(isinstance(part, str) for part in derived[:3]) or not isinstance(derived[3], dict):
             continue
-        if block["id"] != hashlib.sha256(canonical_json(derived)).hexdigest():
+        if block["id"] != hashlib.sha256(canonical_json(derived)).hexdigest() and fits():
             yield ValidationError(f"block {ordinal}'s id is not derived from its blob, extractor and ordinal",
                                   path=["blocks", ordinal, "id"])
 
@@ -323,15 +327,16 @@ def _block_id(validator, enabled, instance, schema):
 def _block_anchor(validator, enabled, instance, schema):
     """Every ref of an extracted block names the blob it was extracted from, whatever its kind, and none is in a
     recording."""
-    for ordinal, block in _fitting_blocks(validator, schema, instance):
+    for ordinal, block, fits in _extracted_blocks(validator, schema, instance):
         refs = block.get("refs")
         for index, ref in enumerate(refs if isinstance(refs, list) else []):
             if not isinstance(ref, dict):
                 continue
             at = ["blocks", ordinal, "refs", index]
             if ref.get("blob") != instance["blob"]:
-                yield ValidationError("the ref does not name the extracted blob", path=[*at, "blob"])
-            elif "capture" in ref:
+                if fits():
+                    yield ValidationError("the ref does not name the extracted blob", path=[*at, "blob"])
+            elif "capture" in ref and fits():
                 yield ValidationError("an extracted block is not in a recording", path=[*at, "capture"])
 
 
