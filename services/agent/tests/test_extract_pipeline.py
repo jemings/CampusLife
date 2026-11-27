@@ -52,7 +52,7 @@ async def test_a_text_file_is_identified_then_extracted_into_an_extraction_artif
         ("paragraph", "트리는 계층 구조입니다.", [{"v": 1, "kind": "doc_path", "blob": blob, "heading_path": ["1장"], "block_index": 0}]),
         ("paragraph", "둘째 문단", [{"v": 1, "kind": "doc_path", "blob": blob, "heading_path": ["1장"], "block_index": 1}]),
     ]
-    assert [block["id"] for block in body["blocks"]] == [bodies.block_id(blob, "text", TEXT.version, ordinal) for ordinal in range(3)]
+    assert [block["id"] for block in body["blocks"]] == [bodies.block_id(blob, {"id": "text", "version": TEXT.version, "params": {"syntax": "markdown"}}, ordinal) for ordinal in range(3)]
     assert (await hub.media(blob)).media_type == "text/plain"
     attachment = await hub.attachment(capture["attachments"][0]["id"])
     assert attachment["detected_mime"] == "text/markdown"
@@ -71,6 +71,9 @@ async def test_a_blob_under_two_names_is_identified_once_and_extracted_once_per_
     extractions = await hub.artifacts("extraction")
     assert len(extractions) == 2
     assert len({artifact["content_blob"] for artifact in extractions}) == 2
+    plain, markdown = [(await hub.body(artifact))[0] for artifact in extractions]
+    assert {block["id"] for block in plain["blocks"]}.isdisjoint(block["id"] for block in markdown["blocks"])
+    assert sorted(body["extractor"]["params"]["syntax"] for body in (plain, markdown)) == ["markdown", "plain"]
 
 
 async def test_a_later_capture_of_an_identified_blob_is_planned_without_identifying_it_again(db, device, blob_store, tmp_path):
