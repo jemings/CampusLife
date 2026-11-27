@@ -93,7 +93,7 @@ uv run campuslife-hub autostart unregister
 | `approve <id>` | dormant 장치를 다시 승인. 같은 id와 토큰으로 이어서 동기화함 |
 | `tailscale-check` | `tailscale serve`가 sync 리스너만 노출하는지 확인하고 기대 `hub_url`을 출력(`--sync-port`, `--admin-port`, `--public-url`) |
 
-Hub가 도는 동안 `init`·`import`·`backup`·`devices`·`revoke`·`approve`는 그 Hub의 admin API를 거치고, Hub가 없으면 직접 data root를 잠그고 씁니다(E11). `restore`는 빈 data root를 잠그고 채우므로 그 root에서 도는 Hub가 없어야 합니다. `open`·`status`·`stop`은 도는 Hub가 있어야 합니다. `ls`·`fsck`는 잠그지 않고 읽기만 합니다(SQLite가 `-wal`·`-shm` 파일을 만들 수는 있음). `tailscale-check`는 data root에 쓰지 않습니다. `--public-url`을 주지 않으면 그 root에서 도는 Hub에게 `public_url`을 묻습니다.
+Hub가 도는 동안 `init`·`import`·`backup`·`devices`·`revoke`·`approve`는 그 Hub의 admin API를 거치고, Hub가 없으면 직접 data root를 잠그고 씁니다(E11). `restore`는 빈 data root를 잠그고 채우므로 그 root에서 도는 Hub가 없어야 합니다. `open`·`status`·`stop`은 도는 Hub가 있어야 합니다. `ls`·`fsck`는 잠그지 않고 읽기만 합니다(SQLite가 `-wal`·`-shm` 파일을 만들 수는 있음). `tailscale-check`는 data root의 데이터를 바꾸지 않습니다. `--public-url`을 주지 않으면 그 root에서 도는 Hub에게 `public_url`을 묻는데, 도는 Hub를 찾을 때 다른 명령처럼 `hub.lock`을 만들거나 멈춘 Hub가 남긴 `admin.port`를 지울 수 있습니다. Hub에게 묻지 못하면(admin 토큰을 읽을 수 없음 등) 그 이유를 `warning:` 한 줄로 알리고 비교 없이 노출 검사를 계속합니다.
 
 CLI 요청은 600초를 기다립니다. 그보다 오래 걸리는 큰 첫 백업이나 큰 import는 CLI가 시간 초과로 끝나도 Hub가 계속 처리합니다. 백업은 `status`의 `backup last`로, import는 `ls`로 끝났는지 확인합니다. 시간 초과 뒤 import를 다시 하면 같은 파일의 Capture가 둘 생깁니다.
 
@@ -160,7 +160,7 @@ uv run campuslife-hub --root D:\CampusLife-restored restore --from E:\CampusLife
 
 - 비어 있거나 없는 data root에만 복원합니다. 기본으로 가장 최근에 끝난 세대를 고릅니다. 복원한 root를 계속 쓰려면 `campuslife-hub --root D:\CampusLife-restored autostart register`로 작업을 다시 등록합니다.
 - 복원하면 새 `epoch`를 발급합니다. 클라이언트는 `since=0`부터 다시 받고, Hub에 없는 Capture를 다시 올립니다(D3).
-- **active였던 클라이언트 장치가 모두 dormant가 되어 다시 승인해야 합니다.** 출력이 그 장치들을 `device <id> <플랫폼> <이름> paired <시각> dormant`로 적습니다. 복원한 root로 Hub를 띄운 뒤, 손에 있는 장치는 `campuslife-hub --root <복원한 root> approve <id>`로 승인하고, 분실한 장치는 `revoke <id>`로 revoke합니다. 로컬 UI의 Devices에서도 됩니다. revoked 장치는 revoked로 남고 승인할 수 없습니다.
+- **active였던 클라이언트 장치가 모두 dormant가 되어 다시 승인해야 합니다.** 출력이 그 장치들을 `device <id> <플랫폼> <이름> paired <시각> dormant`로 적고, 복원한 root를 넣은 승인·revoke 명령(`campuslife-hub --root <복원한 root> approve <id>`, `… revoke <id>`)을 알려 줍니다. 장치가 없으면 이 안내는 없습니다. 복원한 root로 Hub를 띄운 뒤, 손에 있는 장치는 승인하고 분실한 장치는 revoke합니다. `approve`는 승인한 장치의 플랫폼, 이름, 승인 전 마지막 접속·거부 시각을 출력합니다. 로컬 UI의 Devices에서도 됩니다. revoked 장치는 revoked로 남고 승인할 수 없습니다.
 - 백업 뒤에 pairing한 장치는 복원한 Hub가 모르므로(401 `unauthorized`) 다시 pairing합니다.
 - **백업 뒤에 한 purge는 복원으로 되돌려집니다.** 출력이 알려 주는 시각 뒤에 purge한 파일은 다시 purge합니다.
 - 세대의 Blob이 하나라도 드라이브에 없거나 손상됐으면 복원 전체를 거부합니다(부분 복원은 조용한 데이터 손실이라 그런 옵션은 없습니다). `--generation`으로 다른 세대를 고르거나 다른 백업 드라이브를 씁니다. 원래 Hub가 남아 있으면 `fsck`로 그 Blob을 확인하고 새 백업을 만듭니다.
