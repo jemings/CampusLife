@@ -1,4 +1,5 @@
 import unicodedata
+from pathlib import Path
 
 import pytest
 
@@ -141,3 +142,189 @@ def test_cli_rejects_a_missing_expected_directory(tmp_path, capsys):
     with pytest.raises(SystemExit) as exit_info:
         main(["compare", str(tmp_path / "nope"), str(tmp_path)])
     assert exit_info.value.code == 2
+
+
+SPELLING_SCHEMA = {
+    "common/x": {
+        "type": "object",
+        "properties": {
+            "seq": {"type": "integer"},
+            "credits": {"type": "number"},
+            "list": {"type": "array", "items": {"type": "integer"}},
+        },
+    }
+}
+
+
+@pytest.mark.parametrize("spelling", ["0.0", "1E0", "1.0e0", "-0.0", "1e2", "10E-1"])
+def test_integer_place_written_with_fraction_or_exponent_is_a_mismatch(dirs, make_contract, spelling):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", '{"seq": 1, "list": [1]}')
+    write(actual, "common/x/case.json", '{"seq": 1, "list": [1]}'.replace('"seq": 1', f'"seq": {spelling}'))
+    found = [str(m) for m in compare_dirs(expected, actual, make_contract(SPELLING_SCHEMA))]
+    assert any(line.startswith("common/x/case.json#/seq:") for line in found)
+
+
+def test_integer_spelling_is_judged_inside_arrays(dirs, make_contract):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", '{"list": [1, 2]}')
+    write(actual, "common/x/case.json", '{"list": [1, 2.0]}')
+    found = [str(m) for m in compare_dirs(expected, actual, make_contract(SPELLING_SCHEMA))]
+    assert found and found[0].startswith("common/x/case.json#/list/1:")
+
+
+def test_number_place_keeps_every_spelling_of_its_value(dirs, make_contract):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", '{"seq": 1, "credits": 2.5}')
+    write(actual, "common/x/case.json", '{"seq": 1, "credits": 2.50e0}')
+    assert compare_dirs(expected, actual, make_contract(SPELLING_SCHEMA)) == []
+
+
+def test_integer_spelled_output_still_passes(dirs, make_contract):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", '{"seq": 1, "credits": 2}')
+    write(actual, "common/x/case.json", '{"credits": 2.0, "seq": 1}')
+    assert compare_dirs(expected, actual, make_contract(SPELLING_SCHEMA)) == []
+
+
+@pytest.mark.parametrize(
+    ("path", "old", "new"),
+    [
+        ("capture/attachment/audio_segment_row.json", '"seq": 0', '"seq": 0.0'),
+        ("item/item/course.json", '"rev": 17', '"rev": 17E0'),
+        ("item/item/course.json", '"rev": 17', '"rev": 1.7e1'),
+    ],
+    ids=["seq-0.0", "rev-17E0", "rev-1.7e1"],
+)
+def test_cli_fails_a_golden_copy_with_an_integer_written_as_a_fraction(tmp_path, path, old, new):
+    golden = Path(__file__).parent.parent / "fixtures" / "valid"
+    text = (golden / path).read_text(encoding="utf-8")
+    assert old in text
+    out = tmp_path / "out"
+    for source in golden.rglob("*.json"):
+        target = out / source.relative_to(golden)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+    (out / path).write_text(text.replace(old, new, 1), encoding="utf-8")
+    assert main(["compare", str(golden), str(out)]) == 1
+
+
+def test_cli_passes_the_golden_fixtures_against_themselves():
+    golden = Path(__file__).parent.parent / "fixtures" / "valid"
+    assert main(["compare", str(golden), str(golden)]) == 0
+
+
+CONTRACT_ROOT = Path(__file__).parent.parent
+M, I = "3f2504e0-4f89-41d3-9a0c-0305e82c3301", "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+
+
+def _patch(to, frm="2025"):
+    return (
+        f'{{"mutation_id":"{M}","op":"patch","entity":"item","id":"{I}",'
+        f'"set":{{"fields.year":{{"from":{frm},"to":{to}}}}}}}'
+    )
+
+
+TYPED_OUTSIDE_THE_SCHEMA = [
+    (_patch("2026"), _patch("2026.0")),
+    (_patch("2026"), _patch("2026", frm="2025E0")),
+    (
+        f'{{"mutation_id":"{M}","op":"patch","entity":"item","id":"{I}","set":{{"fields.schedule_slots":'
+        '{"from":null,"to":[{"weekdays":[1,3],"start":"09:00","end":"10:15","tz":"Asia/Seoul",'
+        '"from_date":"2026-03-02","until_date":"2026-06-19"}]}}}',
+        f'{{"mutation_id":"{M}","op":"patch","entity":"item","id":"{I}","set":{{"fields.schedule_slots":'
+        '{"from":null,"to":[{"weekdays":[1.0,3],"start":"09:00","end":"10:15","tz":"Asia/Seoul",'
+        '"from_date":"2026-03-02","until_date":"2026-06-19"}]}}}',
+    ),
+]
+
+
+@pytest.mark.parametrize(("golden", "output"), TYPED_OUTSIDE_THE_SCHEMA, ids=["to", "from", "weekdays"])
+def test_integer_place_the_hub_types_by_rule_is_a_mismatch(dirs, golden, output):
+    from campuslife_contracts import Contract
+
+    expected, actual = dirs
+    write(expected, "mutation/mutation/case.json", golden)
+    write(actual, "mutation/mutation/case.json", output)
+    found = [str(m) for m in compare_dirs(expected, actual, Contract.load(CONTRACT_ROOT))]
+    assert found and "violates the contract" in found[0]
+
+
+def test_mismatch_shows_the_spelling_the_output_used(dirs, make_contract):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", '{"seq": 17}')
+    write(actual, "common/x/case.json", '{"seq": 17e0}')
+    (found,) = [str(m) for m in compare_dirs(expected, actual, make_contract(SPELLING_SCHEMA))]
+    assert found.startswith("common/x/case.json#/seq:") and "written as 17e0" in found
+
+
+def test_different_values_report_only_the_difference(dirs, make_contract):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", '{"seq": 1}')
+    write(actual, "common/x/case.json", '{"seq": 2.0}')
+    (found,) = [str(m) for m in compare_dirs(expected, actual, make_contract(SPELLING_SCHEMA))]
+    assert found.startswith("common/x/case.json#/seq: expected 1, got 2.0")
+
+
+def test_a_file_whose_schema_is_not_in_the_contract_is_a_mismatch(dirs, make_contract):
+    expected, actual = dirs
+    write(expected, "common/y/case.json", "1")
+    write(actual, "common/y/case.json", "1")
+    assert [str(m) for m in compare_dirs(expected, actual, make_contract(SPELLING_SCHEMA))] == [
+        "common/y/case.json: no schema common/y"
+    ]
+
+
+def _golden_copy_with_wrong_spelling(tmp_path):
+    golden = CONTRACT_ROOT / "fixtures" / "valid"
+    out = tmp_path / "out"
+    for source in golden.rglob("*.json"):
+        target = out / source.relative_to(golden)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+    path = out / "capture/attachment/audio_segment_row.json"
+    path.write_text(path.read_text(encoding="utf-8").replace('"seq": 0', '"seq": 0.0', 1), encoding="utf-8")
+    return golden, out
+
+
+def test_cli_checks_spelling_when_expected_dir_is_a_subdirectory(tmp_path):
+    golden, out = _golden_copy_with_wrong_spelling(tmp_path)
+    assert main(["compare", str(golden / "capture"), str(out / "capture")]) == 1
+
+
+def test_cli_checks_spelling_when_expected_dir_is_dot(tmp_path, monkeypatch):
+    golden, out = _golden_copy_with_wrong_spelling(tmp_path)
+    monkeypatch.chdir(golden)
+    assert main(["compare", ".", str(out)]) == 1
+
+
+def test_cli_checks_spelling_through_a_symlink(tmp_path):
+    golden, out = _golden_copy_with_wrong_spelling(tmp_path)
+    link = tmp_path / "somewhere"
+    link.symlink_to(golden, target_is_directory=True)
+    assert main(["compare", str(link), str(out)]) == 1
+
+
+def test_cli_says_when_the_spelling_check_is_off(dirs, capsys):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", '{"a": 1}')
+    write(actual, "common/x/case.json", '{"a": 1}')
+    assert main(["compare", str(expected), str(actual)]) == 0
+    assert "integer spelling check off:" in capsys.readouterr().err
+
+
+def test_cli_says_when_a_fixtures_valid_has_no_schemas_beside_it(tmp_path, capsys):
+    valid = tmp_path / "fixtures" / "valid"
+    write(valid, "common/x/case.json", '{"a": 1}')
+    write(tmp_path / "out", "common/x/case.json", '{"a": 1.0e0}')
+    assert main(["compare", str(valid), str(tmp_path / "out")]) == 0
+    assert "integer spelling check off: no schemas/" in capsys.readouterr().err
+
+
+def test_cli_exits_two_when_a_schema_file_is_broken(tmp_path, capsys):
+    valid = tmp_path / "fixtures" / "valid"
+    write(valid, "common/x/case.json", '{"a": 1}')
+    write(tmp_path / "out", "common/x/case.json", '{"a": 1}')
+    write(tmp_path, "schemas/common/x.json", "{not json")
+    assert main(["compare", str(valid), str(tmp_path / "out")]) == 2
+    assert "broken contract" in capsys.readouterr().err
