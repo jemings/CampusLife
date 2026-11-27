@@ -87,6 +87,7 @@ uv run campuslife-contracts compare fixtures/valid <out>
   - `block_id`: 블록 `id`는 `canonical_json([blob, extractor.id, extractor.version, ordinal])`의 SHA-256입니다. 같은 Blob·추출기 버전이면 id가 같고, 버전이 바뀌면 새 Artifact에 새 id가 생깁니다(옛 Artifact는 남음).
   - `block_anchor`: 모든 ref는 kind와 상관없이 `blob`이 본문의 `blob`과 같고 `capture`가 없습니다. 모르는 kind도 예외가 아닙니다. 추출기 출력은 신뢰할 수 없는 입력이고 이 규칙은 Hub 검증기만 읽기 때문입니다. 정확한 위치를 모르는 블록은 `document`를 씁니다.
 - 본문·블록 크기(블록 수, `text` 길이 등) 상한은 계약에 두지 않습니다. #5 PR2의 상한 표(S7)가 Hub에서 강제합니다.
+- identify 본문(`artifact/identify`)은 Blob 바이트가 보여 주는 형식(`media_type`, 바이트로 더 가를 수 없으면 `text/plain` 같은 계열)과 판별기 `identifier`만 담고 `blocks`는 비어 있습니다. 파일 이름·신고 MIME으로 좁힌 값은 Attachment마다 Hub가 계산해 `detected_mime`에 씁니다. 이름과 바이트가 어긋난다는 사실은 저장하지 않습니다.
 - extraction `warnings[].code`는 읽지 못했거나 일부만 읽은 이유입니다(`no_text_layer`, `limit_reached`, `replaced_characters`). 처리 결과(`outcome_code`)는 ProcessingJob이 가지며 본문에 싣지 않습니다(D1).
 
 ## HTTP 표면 (OpenAPI)
