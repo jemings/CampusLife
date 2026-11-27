@@ -459,10 +459,14 @@ class BlobStore:
 
     def _write_staging(self, data: bytes) -> Path:
         staging = self._new_staging_path()
-        with open(staging, "xb") as writer:
-            writer.write(data)
-            writer.flush()
-            os.fsync(writer.fileno())
+        try:
+            with open(staging, "xb") as writer:
+                writer.write(data)
+                writer.flush()
+                os.fsync(writer.fileno())
+        except BaseException:
+            self._discard_quietly(staging)
+            raise
         return staging
 
     def _place_chunk(self, chunk: Path, data: bytes) -> None:
