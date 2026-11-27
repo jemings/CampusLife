@@ -13,16 +13,21 @@ from fastapi import APIRouter, HTTPException
 from opentelemetry import trace
 
 from campuslife_hub import admin as admin_app
-from campuslife_hub import admin_auth, artifacts, backup, jobs, mutations
+from campuslife_hub import admin_auth, artifacts, backup, jobs, mutations, store
 from campuslife_hub.admin import Admin, create_app
 from campuslife_hub.admin_auth import (
     HELLO_LIFETIME, LOGIN_CODE_LIFETIME, MAX_SIGNED_BODY_BYTES, SESSION_COOKIE, SESSION_LIFETIME, AdminAuth, hello_mac,
     hub_proof, signed_authorization,
 )
 from campuslife_hub.core import open_core
+from campuslife_hub.extract.extractors import TEXT
+from campuslife_hub.extract.fakes import fake
+from campuslife_hub.ingest import FileStatus
 from campuslife_hub.job_runner import JobContext, JobRegistry, JobRunner
 from campuslife_hub.jobs import Failed, JobSpec, JobState, Pipeline
 from campuslife_hub.listing import AttachmentSummary, CaptureSummary, list_captures
+from campuslife_hub.pipelines import build_registry
+from campuslife_hub.store import Entity, EntityRef
 from campuslife_hub.local_import import import_files
 from campuslife_hub.purge import PurgeHooks
 from campuslife_hub.redaction import Redactor
@@ -46,14 +51,18 @@ class Clock:
 
 
 @asynccontextmanager
-async def hub(tmp_path, *, routers=(), clock=None, raise_app_exceptions=True, stop=lambda: None, served_as=lambda app: app, **admin_options):
+async def hub(
+    tmp_path, *, routers=(), clock=None, raise_app_exceptions=True, stop=lambda: None, served_as=lambda app: app, registry=None, **admin_options,
+):
     """An admin app over a fresh Hub, and a client that talks to it as a browser on this machine would."""
     async with open_core(tmp_path / "root", create=True, sync_roots=[], purge_hooks=PurgeHooks()) as core:
         redactor = Redactor()
         auth = AdminAuth(TOKEN, redactor, **({"clock": clock} if clock else {}))
-        registry = JobRegistry()
-        registry.handle("extract.text", EXTRACT, lambda job, context: None)
-        admin = Admin(core, JobRunner(JobContext(core.db, core.blobs, registry)), auth, redactor, status=lambda: {"runner": {"restarts": 0}}, stop=stop,
+        if registry is None:
+            registry = JobRegistry()
+            registry.handle("extract.text", EXTRACT, lambda job, context: None)
+        runner = JobRunner(JobContext(core.db, core.blobs, registry, core.layout.work))
+        admin = Admin(core, runner, auth, redactor, status=lambda: {"runner": {"restarts": 0}}, stop=stop,
                       **({"clock": clock} if clock else {}), **admin_options)
         app = create_app(admin, port=PORT, routers=routers)
         transport = httpx.ASGITransport(app=served_as(app), raise_app_exceptions=raise_app_exceptions)
@@ -111,7 +120,10 @@ def staging_leftovers(admin):
 
 @pytest.mark.parametrize(
     ("method", "path"),
-    [("GET", "/"), ("GET", "/import"), ("POST", "/import"), ("GET", "/jobs"), ("POST", "/jobs/x/retry"), ("GET", "/attachments/x/original")],
+    [
+        ("GET", "/"), ("GET", "/import"), ("POST", "/import"), ("GET", "/jobs"), ("POST", "/jobs/x/retry"), ("GET", "/attachments/x/original"),
+        ("POST", "/captures/reprocess"), ("POST", "/captures/x/reprocess"),
+    ],
 )
 async def test_a_page_without_a_session_or_the_token_is_refused_though_it_comes_from_127_0_0_1(tmp_path, method, path):
     async with hub(tmp_path) as (client, _):
@@ -266,7 +278,8 @@ async def test_the_captures_page_lists_captures_last_first_with_their_files(tmp_
     assert page.index("week4 &lt;b&gt;.txt") < page.index("week3.txt")
     assert "<b>" not in page
     assert f"Imported as Capture <code>{second.capture_id}</code>" in page
-    assert first.capture_id not in page
+    assert f"<code>{first.capture_id}</code>" not in page
+    assert page.index(f"/captures/{second.capture_id}/reprocess") < page.index(f"/captures/{first.capture_id}/reprocess")
 
 
 def multipart(*files, cloud_policy=""):
@@ -704,9 +717,9 @@ async def test_what_the_captures_page_shows_is_escaped(tmp_path, monkeypatch):
     async with hub(tmp_path) as (client, _):
         await log_in(client)
 
-        page = (await client.get("/", params={"imported": planted("imported")})).text
+        page = (await client.get("/", params={"imported": planted("imported"), "reprocessed": planted("reprocessed")})).text
 
-    for name in ("attachment", "file", "policy", "taken", "origin", "imported"):
+    for name in ("attachment", "file", "policy", "taken", "origin", "imported", "reprocessed"):
         assert f'<meta name="{name}">' not in page and f'href="http://evil.example/{name}"' not in page
         assert f"&lt;meta name=&quot;{name}&quot;&gt;" in page
 
@@ -925,3 +938,179 @@ async def test_a_purge_page_for_a_blob_the_hub_does_not_hold_is_not_found(tmp_pa
 
         assert (await client.get(f"/blobs/{blob}/purge")).status_code == 404
         assert (await client.post(f"/blobs/{blob}/purge", headers=ORIGIN)).status_code == 404
+
+
+COURSE = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b"
+SESSION = "16fd2706-8baf-433b-82eb-8c7fada847da"
+EARLIER = "2b5c1d7e-3f4a-4b6c-9d8e-0f1a2b3c4d5e"
+
+
+def lecture(item_id, title, day, *, deleted=False):
+    item = {
+        "id": item_id, "kind": "lecture_session", "schema_version": 1, "title": title, "rev": 0,
+        "fields": {"course_id": COURSE, "date": {"date": day, "tz": "Asia/Seoul"}},
+    }
+    return {**item, "deleted_at": "2026-03-30T00:00:00.000Z"} if deleted else item
+
+
+async def with_sessions(admin, *sessions):
+    course = {"id": COURSE, "kind": "course", "schema_version": 1, "title": "자료구조", "fields": {}, "rev": 0}
+    await admin.core.db.write(lambda tx: [store.write(tx, EntityRef(Entity.ITEM, row["id"]), row) for row in (course, *sessions)])
+
+
+async def test_the_import_form_offers_the_lecture_sessions_latest_first_and_not_those_in_the_trash(tmp_path):
+    async with hub(tmp_path) as (client, admin):
+        gone = "3c6d2e8f-4a5b-4c7d-8e9f-1a2b3c4d5e6f"
+        await with_sessions(admin, lecture(EARLIER, "3주차", "2026-03-17"), lecture(SESSION, "4주차 <b>", "2026-03-24"), lecture(gone, "삭제", "2026-03-31", deleted=True))
+        await log_in(client)
+
+        page = (await client.get("/import")).text
+
+    assert page.index(f'<option value="{SESSION}">2026-03-24 · 자료구조 · 4주차 &lt;b&gt;</option>') < page.index(f'<option value="{EARLIER}">')
+    assert gone not in page and "<b>" not in page
+    assert '<select name="lecture_session"><option value="">none</option>' in page
+
+
+async def test_files_dropped_on_the_import_form_with_a_lecture_session_are_linked_to_it(tmp_path):
+    async with hub(tmp_path) as (client, admin):
+        await with_sessions(admin, lecture(SESSION, "4주차", "2026-03-24"))
+        await log_in(client)
+        form = multipart(("slides.pdf", b"%PDF synthetic"), ("notes.txt", b"notes"))
+        form["data"]["lecture_session"] = SESSION
+
+        _, response = await submitted(client, "/import", "/import", **form)
+
+        assert response.status_code == 303
+        [capture] = await admin.core.db.read(list_captures)
+        linked = await admin.core.db.read(lambda snap: [json.loads(data) for (data,) in snap.execute("SELECT data FROM relations ORDER BY id")])
+    assert sorted((relation["from"], relation["type"], relation["to"]) for relation in linked) == sorted(
+        (f"attachment:{attachment.id}", "about", f"item:{SESSION}") for attachment in capture.attachments
+    )
+
+
+@pytest.mark.parametrize("session", ["3c6d2e8f-4a5b-4c7d-8e9f-1a2b3c4d5e6f", COURSE, "deleted"])
+async def test_an_import_form_naming_no_lecture_session_the_hub_holds_is_refused(tmp_path, session):
+    async with hub(tmp_path) as (client, admin):
+        await with_sessions(admin, lecture(EARLIER, "3주차", "2026-03-17", deleted=True))
+        await log_in(client)
+        form = multipart(("notes.txt", b"notes"))
+        form["data"]["lecture_session"] = EARLIER if session == "deleted" else session
+
+        response = await client.post("/import", headers=ORIGIN, **form)
+
+        assert response.status_code == 400
+        assert "lecture session" in response.text
+        assert await admin.core.db.read(list_captures) == []
+        assert staging_leftovers(admin) == []
+
+
+async def test_the_captures_page_shows_where_each_file_stands_and_what_refine_found(tmp_path):
+    refusing = fake("refuse", {"text/csv": {"status": "corrupt"}})
+    async with hub(tmp_path, registry=build_registry((TEXT, refusing))) as (client, admin):
+        await import_files(admin.core, [source(tmp_path, "notes.md", b"# 1\nsynthetic"), source(tmp_path, "slides.pdf", b"plain words"),
+                                        source(tmp_path, "grades.csv", b"name,score\nkim,90\n"), source(tmp_path, "data.bin", bytes(range(256)))])
+        await admin.runner.run_due()
+        await log_in(client)
+
+        page = (await client.get("/")).text
+
+    assert "text/markdown · identify succeeded · extract.text succeeded" in page
+    assert "text/plain · identify succeeded · extract.text succeeded" in page
+    assert "its name or declared type says another kind of file than its bytes, which are text/plain" in page
+    assert "text/csv · identify succeeded · extract.fake_refuse failed (corrupt): the fake extractor refused" in page
+    assert "no extractor reads application/octet-stream" in page
+
+
+async def test_a_file_waiting_for_identify_says_so(tmp_path):
+    async with hub(tmp_path, registry=build_registry()) as (client, admin):
+        await import_files(admin.core, [source(tmp_path, "notes.md", b"# 1\nsynthetic")])
+        await admin.runner.run_one()
+        await log_in(client)
+
+        page = (await client.get("/")).text
+
+    assert "not identified yet · identify pending" in page
+
+
+async def test_the_file_status_masks_secrets_and_is_escaped(tmp_path, monkeypatch):
+    job = failed_job(planted("error") + TOKEN)
+    found = FileStatus(planted("mime"), (planted("fact"),), (job,))
+    registry = JobRegistry()
+    registry.plan("planted", lambda view, context: [], status=lambda snap, attachment_id: found)
+    async with hub(tmp_path, registry=registry) as (client, admin):
+        await import_files(admin.core, [source(tmp_path, "notes.txt")])
+        await log_in(client)
+
+        page = (await client.get("/")).text
+
+    assert TOKEN not in page
+    for name in ("mime", "fact", "error"):
+        assert f'<meta name="{name}">' not in page
+        assert f"&lt;meta name=&quot;{name}&quot;&gt;" in page
+
+
+def failed_job(error):
+    return jobs.Job(
+        "j", "k", "extract.text", "blob:x", (), {}, EXTRACT, JobState.FAILED, None, 1, None, error, "2026-03-02T00:30:00.000Z", "2026-03-02T00:30:00.000Z",
+    )
+
+
+async def test_reprocess_from_the_captures_page_queues_the_capture_again_and_wakes_the_runner(tmp_path):
+    async with hub(tmp_path, registry=build_registry()) as (client, admin):
+        woken = []
+        admin.runner.wake = lambda: woken.append(True)
+        imported = await import_files(admin.core, [source(tmp_path, "notes.md", b"# 1\nsynthetic")])
+        await log_in(client)
+
+        _, response = await submitted(client, "/", f"/captures/{imported.capture_id}/reprocess")
+
+        assert (response.status_code, response.headers["location"]) == (303, "/?reprocessed=1")
+        assert "Reprocessing 1 Captures" in (await client.get(response.headers["location"])).text
+        ingests = await admin.core.db.read(lambda snap: jobs.of_subject(snap, f"capture:{imported.capture_id}"))
+    assert [sorted(job.params) for job in ingests] == [["capture_id"], ["capture_id", "reprocess"]]
+    assert woken == [True]
+
+
+async def test_reprocess_every_capture_from_the_captures_page(tmp_path):
+    async with hub(tmp_path, registry=build_registry()) as (client, admin):
+        for name in ("a.txt", "b.txt"):
+            await import_files(admin.core, [source(tmp_path, name, name.encode())])
+        await log_in(client)
+
+        _, response = await submitted(client, "/", "/captures/reprocess")
+
+        assert response.headers["location"] == "/?reprocessed=2"
+        counted = await admin.core.db.read(lambda snap: snap.execute("SELECT count(*) FROM processing_jobs WHERE params LIKE '%reprocess%'").fetchone()[0])
+    assert counted == 2
+
+
+async def test_reprocess_of_a_capture_the_hub_does_not_hold_is_not_found(tmp_path):
+    async with hub(tmp_path) as (client, _):
+        await log_in(client)
+
+        response = await client.post("/captures/0f8fad5b-d9cb-469f-a165-70867728950e/reprocess", headers=ORIGIN)
+
+    assert response.status_code == 404
+
+
+async def test_reprocess_through_the_admin_api(tmp_path):
+    async with hub(tmp_path) as (client, admin):
+        imported = await import_files(admin.core, [source(tmp_path, "notes.txt")])
+
+        one = await client.post("/api/reprocess", auth=SIGNED, json={"capture_id": imported.capture_id})
+        every = await client.post("/api/reprocess", auth=SIGNED, json={"all": True})
+        missing = await client.post("/api/reprocess", auth=SIGNED, json={"capture_id": "0f8fad5b-d9cb-469f-a165-70867728950e"})
+
+    assert (one.status_code, one.json()["captures"]) == (200, [imported.capture_id])
+    assert (every.status_code, every.json()["captures"]) == (200, [imported.capture_id])
+    assert one.json()["nonce"] != every.json()["nonce"]
+    assert missing.status_code == 404 and "0f8fad5b-d9cb-469f-a165-70867728950e" in missing.json()["error"]
+
+
+@pytest.mark.parametrize("body", [{}, {"all": False}, {"all": "yes"}, {"capture_id": 7}, {"capture_id": "x", "all": True}, [], None])
+async def test_an_api_reprocess_that_names_neither_one_capture_nor_all_is_refused(tmp_path, body):
+    async with hub(tmp_path) as (client, admin):
+        response = await client.post("/api/reprocess", auth=SIGNED, content=json.dumps(body))
+
+        assert response.status_code == 400
+        assert await admin.core.db.read(jobs.counts) == {state: 0 for state in JobState}
