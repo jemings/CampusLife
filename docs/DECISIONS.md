@@ -633,7 +633,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **오케스트레이터 결정: Blob과 업로드** (2026-11-26, "결정"·"PR #29 1차"·"PR3 첫 할 일")
 - **E9. Blob 저장:** `staging/`(같은 볼륨)에 쓰기 → fsync → sha256 → 최종 경로가 이미 있으면 staging만 버리고, 없으면 `os.replace` → 읽기 전용 → `blobs` 행. Windows 잠금(WinError 5/32)은 상한 있는 재시도입니다. 기동 때 lock을 쥔 쪽이 `staging/`의 잔여물을 지우고, 지우지 못한 것은 기록하고 건너뜁니다.
 - **E10. 업로드 세션:** 키는 `(device_id, sha256)`, 디렉터리는 `uploads/<session uuid>/<index>`입니다. 같은 sha의 중복 제거는 finalize에서 합니다. revoke하면 그 장치의 세션을 지웁니다. 7일 동안 건드리지 않은 세션과, 어떤 참조도 없고 마지막으로 받은 지 7일이 지난 Blob은 정리합니다. 참조 테이블 목록은 `BLOB_REFERENCES` 한 곳입니다(Attachment, Artifact, Relation 끝; 뒤에 AnnotationLayer).
-  - 세션을 열 때 `2 × size`가 data root 볼륨의 남은 공간보다 크면 `invalid_request`입니다. 근거: 아무 size나 받으면 `size=2**63-1` 한 번으로 finalize가 `MemoryError`를 냅니다. finalize는 chunk를 둔 채 결합본을 써서 약 두 배가 필요합니다.
+  - 세션을 열 때 `2 × size`가 data root 볼륨의 남은 공간보다 크면 `invalid_request`입니다. *(#4로 대체됨: 요청의 잘못이 아니라 나중에 다시 열 일이므로 400 `hub_storage_full`(#4 결정 5))* 근거: 아무 size나 받으면 `size=2**63-1` 한 번으로 finalize가 `MemoryError`를 냅니다. finalize는 chunk를 둔 채 결합본을 써서 약 두 배가 필요합니다.
   - 같은 index의 chunk는 배타적으로 만듭니다. 같은 바이트면 no-op, 다르면 `chunk_mismatch`입니다. "이미 저장됨"(200)을 답할 때도 7일 시계를 다시 시작합니다.
 
 **오케스트레이터 결정: 작업 큐와 격리** (2026-11-26 "결정", 2026-11-27 "PR #31 1차"·"PR5 첫 할 일")
