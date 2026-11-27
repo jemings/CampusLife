@@ -127,10 +127,14 @@ def test_nothing_served_on_443_is_a_problem_naming_the_command_that_sets_it_up(s
     assert any("tailscale serve --bg http://127.0.0.1:8730" in problem for problem in verdict.problems)
 
 
-def test_443_forwarded_as_raw_tcp_is_a_problem():
-    verdict = judged(serving(("/", "http://127.0.0.1:8730"), tcp={"443": {"TCPForward": "127.0.0.1:8730"}}))
+@pytest.mark.parametrize(
+    "listener", [{"TCPForward": "127.0.0.1:8730"}, {"HTTP": True}, {}], ids=["raw TCP", "plain http", "neither"],
+)
+def test_443_that_serve_does_not_terminate_as_https_is_a_problem(listener):
+    verdict = judged(serving(("/", "http://127.0.0.1:8730"), tcp={"443": listener}))
 
     assert not verdict.ok
+    assert any("port 443 is not https" in problem for problem in verdict.problems)
 
 
 def test_a_serve_session_in_the_foreground_is_judged_too():
