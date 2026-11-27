@@ -189,3 +189,23 @@ def test_the_strings_a_device_reports_are_one_line_text():
     assert request["device_name"]["$ref"] == request["app_version"]["$ref"] == "#/$defs/one_line"
     assert status["app_version"]["$ref"] == "pair_request.json#/properties/app_version"
     assert status["last_error"]["$ref"] == "pair_request.json#/$defs/one_line"
+
+
+ARTIFACT_BODY_SCHEMAS = {"extraction": "artifact/extraction"}
+"""The artifact types whose content Blob is JSON in the artifact/body envelope. A rendition's content Blob is the
+rendered PDF itself (D12: annotations and pins hold that Blob), so it has no body schema."""
+
+
+def test_body_schemas_are_the_text_artifact_types():
+    artifact_types = read_strict(SCHEMAS / "artifact/artifact.json")["properties"]["artifact_type"]["examples"]
+    body_schemas = {
+        path.relative_to(SCHEMAS).with_suffix("").as_posix()
+        for path in (SCHEMAS / "artifact").glob("*.json")
+        if path.stem not in {"artifact", "body"}
+    }
+    assert body_schemas == set(ARTIFACT_BODY_SCHEMAS.values())
+    assert set(ARTIFACT_BODY_SCHEMAS) <= set(artifact_types)
+    assert "rendition" in artifact_types and "rendition" not in ARTIFACT_BODY_SCHEMAS
+    for artifact_type, schema_id in ARTIFACT_BODY_SCHEMAS.items():
+        assert read_strict(SCHEMAS / f"{schema_id}.json")["$ref"] == "body.json", artifact_type
+
