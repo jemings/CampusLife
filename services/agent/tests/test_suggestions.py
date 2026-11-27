@@ -181,14 +181,21 @@ async def test_a_suggestion_kept_with_repeated_evidence_puts_each_locator_on_the
     assert locators == [page_at(pdf), page_at(pdf, 3)]
 
 
+@pytest.mark.parametrize("action", ["create_item", "patch_item", "add_relation"])
 @pytest.mark.parametrize("anchor", ["blob", "capture"])
-async def test_a_proposal_whose_evidence_rests_on_what_the_hub_does_not_hold_is_refused(db, blob_store, tmp_path, anchor):
+async def test_a_proposal_whose_evidence_rests_on_what_the_hub_does_not_hold_is_refused(db, blob_store, tmp_path, anchor, action):
     artifact_id, pdf = await grounds(db, blob_store, tmp_path)
+    item_id = new_id()
+    proposals = {
+        "create_item": ASSIGNMENT,
+        "patch_item": due_at_patch(item_id, None, ASSIGNMENT["due_at"]),
+        "add_relation": {"id": f"item:{item_id}|evidence|blob:{pdf}", "from": f"item:{item_id}", "type": "evidence", "to": f"blob:{pdf}"},
+    }
     missing = {"blob": {"v": 1, "kind": "document", "blob": "e" * 64}, "capture": {**SPOKEN, "capture": new_id()}}[anchor]
     before = await feed(db)
 
-    with pytest.raises(suggestions.InvalidSuggestion):
-        await propose(db, artifact_id, evidence=[page_at(pdf), missing])
+    with pytest.raises(suggestions.InvalidSuggestion, match="does not hold"):
+        await propose(db, artifact_id, action, proposals[action], evidence=[page_at(pdf), missing])
 
     assert await feed(db) == before
 
@@ -198,15 +205,18 @@ async def test_proposed_text_is_kept_with_lf_line_ends_and_accepted_as_it_is(db,
     artifact_id, _ = await grounds(db, blob_store, tmp_path)
     item_id, create = created_item()
     await apply(db, device, create)
-    created = await propose(db, artifact_id, proposal={**ASSIGNMENT, "body": f"1주차{line_break}2주차"})
-    patching = await propose(db, artifact_id, "patch_item", {"entity": "item", "id": item_id, "set": {"body": {"from_hash": None, "to": f"a{line_break}b"}}},
-                             fingerprint=OTHER_FINGERPRINT)
+    title = f"제목{line_break}둘째 줄"
+    created = await propose(db, artifact_id, proposal={**ASSIGNMENT, "title": title, "body": f"1주차{line_break}2주차"})
+    patch_set = {"body": {"from_hash": None, "to": f"a{line_break}b"}, "title": {"from": create["data"]["title"], "to": title}}
+    patching = await propose(db, artifact_id, "patch_item", {"entity": "item", "id": item_id, "set": patch_set}, fingerprint=OTHER_FINGERPRINT)
 
     results = [await decide(db, device, accepting(each)) for each in (created, patching)]
 
     assert (created["proposed"]["body"], patching["proposed"]["set"]["body"]["to"]) == ("1주차\n2주차", "a\nb")
-    assert results == [{"result": "applied"}, {"result": "applied", "applied_fields": ["body"]}]
-    assert sorted(item["body"] for item in rows(await feed(db), "item").values()) == ["1주차\n2주차", "a\nb"]
+    assert (created["proposed"]["title"], patching["proposed"]["set"]["title"]["to"]) == (title, title)
+    assert results == [{"result": "applied"}, {"result": "applied", "applied_fields": ["body", "title"]}]
+    items = rows(await feed(db), "item").values()
+    assert sorted((item["body"], item["title"]) for item in items) == [("1주차\n2주차", title), ("a\nb", title)]
 
 
 @pytest.mark.parametrize(

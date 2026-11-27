@@ -2,7 +2,7 @@
 
 `write` is the only code that advances `change_seq` and touches `sync_index`.
 Every synced write goes through it: the Mutation applier, backups
-(`backed_up_at`) and jobs (Artifact, Suggestion). Each call takes its own rev,
+(`backed_up_at`), purges (tombstones, `evidence_purged_at`) and jobs (Artifact, Suggestion). Each call takes its own rev,
 so rows written in one transaction still get distinct revs and a changes page
 boundary never falls between rows of equal rev.
 """

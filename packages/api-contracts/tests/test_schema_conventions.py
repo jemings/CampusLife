@@ -82,6 +82,7 @@ OWNERS = {
     "item/item": {
         "id": "client", "kind": "client", "schema_version": "hub", "title": "user", "body": "user",
         "starts_at": "user", "due_at": "user", "all_day": "user", "fields": "user", "rev": "hub", "deleted_at": "hub",
+        "evidence_purged_at": "hub",
     },
     "relation/relation": {"id": "client", "from": "client", "type": "client", "to": "client", "locators": "hub"},
     "tag/tag": {"id": "client", "name": "user", "color": "user"},

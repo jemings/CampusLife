@@ -1,0 +1,12 @@
+{
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "kind": "note",
+  "schema_version": 1,
+  "title": "자료구조 3주차 정리",
+  "body": "스택과 큐\n",
+  "fields": {
+    "forked_from_artifact": "16fd2706-8baf-433b-82eb-8c7fada847da"
+  },
+  "rev": 18,
+  "evidence_purged_at": "2026-03-11T02:00:00.000Z"
+}
