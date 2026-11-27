@@ -1,6 +1,9 @@
 """Backup and restore (E20, D16, U1, U3).
 
-A backup drive holds:
+A backup folder on a drive holds:
+- campuslife-backup.json: the id of the Hub whose backups the folder holds, written by its first
+  backup. A backup refuses a folder that names another Hub, or that holds generations/ or blobs/
+  without it, and one that holds the data root or lies in it;
 - generations/<name>/campuslife.sqlite3: a snapshot of the database through the SQLite Online
   Backup API, keeping only the blobs rows some BLOB_REFERENCES column names;
 - generations/<name>/manifest.json: written last, so a generation without one is a backup that did
@@ -12,7 +15,8 @@ holds BlobStore.removals from the snapshot to the end, so no Blob it names leave
 copied, and two backups do not overlap. Once the manifest is written, each Attachment whose Blob it
 holds gets backed_up_at through store.write (D14): the end of the first generation that held the Blob,
 since every later generation holds it as well while anything names it. Then the generations beyond the
-newest `keep` go, with the Blobs no kept generation names.
+newest `keep` go, with the Blobs no kept generation names; only what a backup writes goes, so a file
+someone else put in the folder stays.
 
 A restore goes into an empty data root, under its hub.lock. Before the snapshot takes the database's
 place it gets a new epoch (D3), so every client syncs again from since=0 and sends again the Captures
@@ -49,14 +53,19 @@ from .store import Entity, EntityRef
 DEFAULT_KEEP = 5
 DEFAULT_WARN_AFTER = timedelta(days=7)
 FORMAT = 1
+MARKER = "campuslife-backup.json"
 GENERATIONS = "generations"
 BLOBS = "blobs"
 SNAPSHOT = "campuslife.sqlite3"
 MANIFEST = "manifest.json"
 PARTIAL = ".part"
+GENERATION_FILES = (SNAPSHOT, SNAPSHOT + PARTIAL, SNAPSHOT + PARTIAL + "-journal", MANIFEST, MANIFEST + PARTIAL)
+"""Every file a backup writes in a generation's folder."""
 GENERATION_FORMAT = "%Y%m%dT%H%M%S%fZ"
 GENERATION_NAME = re.compile(r"\d{8}T\d{12}Z")
 SHA256 = re.compile(r"[0-9a-f]{64}")
+FANOUT = re.compile(r"[0-9a-f]{2}")
+COPY_PARTIAL = re.compile(r"\.copy-.*\.part")
 WRITABLE = stat.S_IRUSR | stat.S_IWUSR
 
 
@@ -218,23 +227,32 @@ def generations(target: Path) -> list[str]:
 
 
 def _prune(target: Path, keep: int) -> tuple[str, ...]:
-    """Keep the newest `keep` finished generations and the Blobs they name; remove the rest, unfinished ones too."""
+    """Keep the newest `keep` finished generations and the Blobs they name, and remove the other generations, unfinished
+    ones too, and the Blobs no kept one names. It removes only what a backup writes: the files of GENERATION_FILES in a
+    folder named like a generation, the Blob files under their fan-out folders, and its own copies left unfinished."""
     finished = generations(target)
     kept = finished[-keep:]
     for entry in sorted((target / GENERATIONS).iterdir()):
-        if entry.name in kept:
+        if entry.name in kept or not GENERATION_NAME.fullmatch(entry.name) or not entry.is_dir():
             continue
-        if entry.is_dir():
-            _remove_tree(entry)
-        else:
-            _remove(entry)
+        for name in GENERATION_FILES:
+            _remove(entry / name)
+        with suppress(OSError):
+            entry.rmdir()
     named = {blob["sha256"] for name in kept for blob in _read_manifest(target, name)["blobs"]}
-    for path in sorted((target / BLOBS).rglob("*"), reverse=True):
-        if path.is_dir():
-            with suppress(OSError):
-                path.rmdir()
-        elif path.name not in named or path != _blob_at(target / BLOBS, path.name):
+    blobs = target / BLOBS
+    for path in sorted(blobs.glob("*/*/*")):
+        first, second, name = path.relative_to(blobs).parts
+        ours = FANOUT.fullmatch(first) and FANOUT.fullmatch(second) and SHA256.fullmatch(name) and path.is_file()
+        if ours and (name not in named or (first, second) != (name[0:2], name[2:4])):
             _remove(path)
+    for path in sorted(blobs.iterdir()):
+        if COPY_PARTIAL.fullmatch(path.name) and path.is_file():
+            _remove(path)
+    for directory in [*sorted(blobs.glob("*/*")), *sorted(blobs.glob("*"))]:
+        if all(FANOUT.fullmatch(part) for part in directory.relative_to(blobs).parts) and directory.is_dir():
+            with suppress(OSError):
+                directory.rmdir()
     return tuple(name for name in finished if name not in kept)
 
 
@@ -268,14 +286,36 @@ def _stamp_backed_up_at(tx: Tx, held: list[str], finished_at: str) -> None:
         store.write(tx, EntityRef(Entity.ATTACHMENT, attachment_id), {**json.loads(data), "backed_up_at": finished_at})
 
 
+def _claim(target: Path, hub_id: str) -> None:
+    """Make `target` this Hub's backup folder; BackupRefused when its marker names another Hub, or when it has none
+    and holds generations/ or blobs/, which a backup would then prune."""
+    marker = target / MARKER
+    if marker.is_file():
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except ValueError:
+            data = None
+        if not isinstance(data, dict) or data.get("hub_id") != hub_id:
+            raise BackupRefused(f"{marker} does not name this Hub ({hub_id}); back up to another folder")
+        return
+    if marker.exists() or (target / GENERATIONS).exists() or (target / BLOBS).exists():
+        raise BackupRefused(f"{target} holds {GENERATIONS} or {BLOBS} that no backup of this Hub wrote; back up to another folder")
+    target.mkdir(parents=True, exist_ok=True)
+    _write_json(marker, {"format": FORMAT, "hub_id": hub_id})
+
+
 async def back_up(core: Core, target: Path, *, keep: int = DEFAULT_KEEP, clock: Callable[[], datetime] = _now) -> Generation:
     """Write a new generation of the Hub to `target` and keep the newest `keep`; BackupRefused before writing anything
-    when `target` lies in the data root or keep is below one."""
+    when keep is below one, when `target` and the data root lie one in the other, or when `target` is not this Hub's
+    backup folder and cannot become one (_claim)."""
     if keep < 1:
         raise BackupRefused("keep at least one generation")
-    target = Path(target).resolve()
-    if target.is_relative_to(core.layout.root.resolve()):
-        raise BackupRefused(f"{target} is inside the data root {core.layout.root}; back up to another drive")
+    target, root = Path(target).resolve(), core.layout.root.resolve()
+    if target.is_relative_to(root):
+        raise BackupRefused(f"{target} is inside the data root {root}; back up to another drive")
+    if root.is_relative_to(target):
+        raise BackupRefused(f"{target} holds the data root {root}; back up to a folder outside it")
+    await asyncio.to_thread(_claim, target, core.identity.hub_id)
     started = clock()
     async with core.blobs.removals:
         name = _new_name(target, started)
