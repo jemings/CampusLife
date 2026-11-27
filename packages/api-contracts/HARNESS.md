@@ -100,7 +100,7 @@ ConflictRecord(`conflict_record/conflict_record`)는 patch가 제출했지만 Hu
 
 - Mutation 하나에 기록 하나이고 `id`는 그 Mutation의 `mutation_id`입니다. 결과의 `conflict_record_ids`가 이 id를 가리킵니다.
 - `entity_ref`는 patch가 가리킨 엔터티(`item:<id>` 등)입니다.
-- 열린 기록은 `set`(제출한 change를 patch의 set 모양 그대로)을, 해소된 기록은 `set` 대신 `resolved {at, mutation_id}`를 가집니다. 스키마는 둘 중 정확히 하나를 요구합니다. **클라이언트는 `set`이 있을 때만 열린 기록으로 봅니다.** 그래서 뒤의 Hub가 닫힌 상태를 다른 멤버로 더해도 옛 클라이언트가 그대로 읽습니다.
+- 열린 기록은 `set`(제출한 change를 patch의 set 모양 그대로)을, 해소된 기록은 `set` 대신 `resolved {at, mutation_id}`를 가집니다. 스키마는 둘 중 정확히 하나를 요구합니다. **클라이언트는 `set`이 있을 때만 열린 기록으로 봅니다.** 기록을 닫는 새 방식은 `resolved` 안의 멤버(예: `resolved.how`)로 더하고, 둘 다 없는 제3의 상태로는 더하지 않습니다. 그래서 옛 클라이언트도 열림과 해소를 그대로 가립니다(forward `resolved_unknown_member`).
 - `set`의 키는 같은 계약의 열 이름이라 Suggestion `patch_item`의 `set`처럼 열려 있지 않습니다(`tests/test_open_closed.py`의 `FREE_FORM_IN_FEED`). 각 change 객체와 `resolved`는 열려 있습니다.
 - 기록의 tombstone(`deleted: true`)은 기록이 대상 엔터티와 함께 지워졌다는 뜻이고, 해소할 것이 남지 않습니다.
 
