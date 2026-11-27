@@ -211,17 +211,36 @@ async def test_the_plan_shows_what_a_purge_removes_and_the_notes_it_would_mark(d
     assert await feed(db) == before
 
 
-async def test_a_derived_blob_an_attachment_elsewhere_holds_stays_with_that_attachment(db, device, blob_store, tmp_path):
+@pytest.mark.parametrize("holder", ["attachment", "artifact"])
+async def test_a_derived_blob_something_kept_also_names_stays(db, device, blob_store, tmp_path, holder):
     lecture_ = await lecture(db, device, blob_store, tmp_path)
-    same_bytes = {"id": new_id(), "created_at": "2026-03-03T00:30:00.000Z", "origin": {"type": "import"}, "links": [],
-                  "attachments": [{"id": new_id(), "blob_sha256": lecture_.transcript["content_blob"], "role": "file", "cloud_policy": "local_only"}]}
-    await apply(db, device, commit(same_bytes))
+    shared = lecture_.transcript["content_blob"]
+    if holder == "attachment":
+        same_bytes = {"id": new_id(), "created_at": "2026-03-03T00:30:00.000Z", "origin": {"type": "import"}, "links": [],
+                      "attachments": [{"id": new_id(), "blob_sha256": shared, "role": "file", "cloud_policy": "local_only"}]}
+        await apply(db, device, commit(same_bytes))
+        kept = ("attachment", same_bytes["attachments"][0]["id"])
+    else:
+        same_output = await made(db, blob_store, tmp_path, "ocr.audio", f"attachment:{lecture_.audio_attachment}", [lecture_.audio], b"slide text")
+        assert same_output["content_blob"] == shared
+        kept = ("artifact", same_output["id"])
 
     purged = await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())
 
-    assert lecture_.transcript["content_blob"] not in purged.target.blobs
-    assert await held(db, lecture_.transcript["content_blob"])
-    assert same_bytes["attachments"][0]["id"] in live(await feed(db), "attachment")
+    assert shared not in purged.target.blobs
+    assert await held(db, shared) and blob_store.path_of(shared).exists()
+    assert kept[1] in live(await feed(db), kept[0])
+    assert lecture_.transcript["id"] in purged.target.artifacts
+
+
+async def test_purging_an_artifacts_content_removes_that_artifact_and_what_was_made_from_it(db, device, blob_store, tmp_path):
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+
+    purged = await purge.purge_blob(db, blob_store, lecture_.transcript["content_blob"], hooks=PurgeHooks())
+
+    assert purged.target.artifacts == tuple(sorted([lecture_.transcript["id"], lecture_.summary["id"]]))
+    assert purged.target.attachments == ()
+    assert await held(db, lecture_.pdf)
 
 
 async def test_purging_cancels_the_jobs_still_to_run_on_what_it_removes(db, device, blob_store, tmp_path):
