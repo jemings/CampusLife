@@ -259,3 +259,23 @@ def test_the_match_and_the_scan_find_the_same_documents():
 )
 def test_two_letters_inside_a_longer_run_are_found_in_every_hangul_and_cjk_block(letters):
     assert Index({1: f"{letters} 끝", 2: "다른 글"}).search(letters[:2]) == [1]
+
+
+UNICODE61_SPECIAL_FOLDS = {"µ": "μ", "İ": "i", "ſ": "s", "ẛ": "s"}
+
+
+def test_the_original_is_folded_as_unicode61_folds_latin_letters():
+    letters = [
+        chr(code)
+        for code in (*range(0x41, 0x250), *range(0x1E00, 0x1F00))
+        if unicodedata.category(chr(code))[0] == "L" and unicodedata.normalize("NFC", chr(code)) == chr(code)
+    ]
+    con = sqlite3.connect(":memory:")
+    con.execute(f"CREATE VIRTUAL TABLE fts USING fts5(body, tokenize='{HANGUL_BIGRAM.fts5_tokenize}')")
+    con.execute("CREATE VIRTUAL TABLE vocab USING fts5vocab(fts, 'instance')")
+    con.executemany("INSERT INTO fts(rowid, body) VALUES (?, ?)", ((ord(letter), letter) for letter in letters))
+    tokens = {chr(doc): term for term, doc in con.execute("SELECT term, doc FROM vocab")}
+
+    differing = {letter: tokens[letter] for letter in letters if HANGUL_BIGRAM.fold_original(letter) != tokens[letter]}
+    assert differing == UNICODE61_SPECIAL_FOLDS
+    assert HANGUL_BIGRAM.fold_original("자료구조 ガ 漢字") == "자료구조 ガ 漢字"
