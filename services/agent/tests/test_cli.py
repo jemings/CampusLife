@@ -1030,11 +1030,13 @@ async def test_with_no_hub_serving_devices_approve_and_revoke_take_the_lock_them
     listed = capsys.readouterr().out
     assert await asyncio.to_thread(hub, root, "approve", tablet.device_id) == 0
     approved = capsys.readouterr().out
+    assert await asyncio.to_thread(hub, root, "devices") == 0
+    none_dormant = capsys.readouterr().out
 
     lines = {line.split()[0]: line for line in listed.splitlines() if line[:1].isalnum() and not line.startswith("dormant")}
     assert lines[phone.device_id].split()[1:3] == ["android", "revoked"] and lines[phone.device_id].endswith("Fold8")
     assert lines[tablet.device_id].split()[1:3] == ["android", "dormant"] and lines[tablet.device_id].endswith("iPad")
-    assert "approve only a device you have in hand" in listed
+    assert "approve only a device you have in hand" in listed and "approve only" not in none_dormant
     assert approved.startswith(f"approved {tablet.device_id}")
     assert await states_in(root, phone, tablet) == [DeviceState.REVOKED, DeviceState.ACTIVE]
 

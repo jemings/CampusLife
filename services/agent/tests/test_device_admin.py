@@ -240,7 +240,20 @@ async def test_the_local_ui_says_when_a_device_cannot_be_changed(tmp_path, actio
         unknown = "0f8fad5b-d9cb-469f-a165-70867728950e"
         answers = [
             await client.get(f"/devices/{unknown}/{action}"), await client.post(f"/devices/{unknown}/{action}", headers=ORIGIN),
-            await client.get(f"/devices/{admin.core.hub_device}/{action}"), await client.post(f"/devices/{revoked.device_id}/{action}", headers=ORIGIN),
+            await client.get(f"/devices/{admin.core.hub_device}/{action}"), await client.post(f"/devices/{admin.core.hub_device}/{action}", headers=ORIGIN),
+            await client.get(f"/devices/{revoked.device_id}/{action}"), await client.post(f"/devices/{revoked.device_id}/{action}", headers=ORIGIN),
         ]
+        assert await state_of(admin, revoked.device_id) == DeviceState.REVOKED
 
-    assert [answer.status_code for answer in answers] == [404, 404, 404, 409]
+    assert [answer.status_code for answer in answers] == [404, 404, 404, 404, 409, 409]
+
+
+async def test_the_local_ui_approves_only_a_dormant_device(tmp_path):
+    async with hub(tmp_path, **WITH_URL) as (client, admin):
+        await log_in(client)
+        phone = await paired(admin)
+        asked = await client.get(f"/devices/{phone.device_id}/approve")
+        done = await client.post(f"/devices/{phone.device_id}/approve", headers=ORIGIN)
+
+    assert (asked.status_code, done.status_code) == (409, 409)
+    assert "only a dormant device is approved" in asked.text and "nothing changed" in done.text
