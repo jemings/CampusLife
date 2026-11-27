@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import pytest
 from test_capture_commit import apply, blob_store, commit, device, feed, new_id, store_bytes
+from waiting import until
 
 from campuslife_hub import artifacts, jobs, purge
 from campuslife_hub.artifacts import InvalidArtifact
@@ -562,10 +563,13 @@ async def test_a_purge_leaves_the_files_while_a_backup_holds_blob_removals(db, d
 
     async with blob_store.removals:
         purging = asyncio.create_task(purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks()))
-        await asyncio.sleep(0.05)
+
+        async def rows_removed():
+            return not await held(db, lecture_.pdf)
+
+        await until(rows_removed)
         assert not purging.done()
         assert blob_store.path_of(lecture_.pdf).exists()
-        assert not await held(db, lecture_.pdf)
 
     assert (await purging).finished
     assert not blob_store.path_of(lecture_.pdf).exists()
