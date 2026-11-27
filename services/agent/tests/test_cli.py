@@ -624,6 +624,28 @@ def test_a_public_url_that_is_not_a_hub_url_is_refused_in_words_a_person_reads(t
     assert "https://<name>.<tailnet>.ts.net" in shown
 
 
+@pytest.mark.parametrize("command", ["serve", "tailscale-check"])
+def test_a_public_url_naming_port_443_is_refused_with_how_to_write_it(tmp_path, capsys, command):
+    """The contract lets a client read :443, but the Hub never hands it out (D23), so the one source of hub_url leaves it out."""
+    url = "https://campus-laptop.tail0a1b2c.ts.net:443"
+    assert exit_code(tmp_path / "CampusLife", command, "--public-url", url) == 2
+
+    assert f"argument --public-url: {url!r} names port 443; write it without :443" in capsys.readouterr().err
+
+
+def test_serve_takes_a_public_url_on_another_port(tmp_path, monkeypatch):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    started = []
+    monkeypatch.setattr(host, "run_hub", lambda root, config, *, sync_app: started.append(config))
+    monkeypatch.setattr(host, "run", lambda ran: None)
+
+    assert hub(root, "serve", "--public-url", "https://campus-laptop.tail0a1b2c.ts.net:8443") == 0
+
+    [config] = started
+    assert config.devices.public_url == "https://campus-laptop.tail0a1b2c.ts.net:8443"
+
+
 def test_a_serve_refused_for_want_of_a_hub_leaves_the_empty_root_empty_for_restore(tmp_path, capsys):
     source_root, restored, drive = tmp_path / "CampusLife", tmp_path / "Restored", tmp_path / "drive"
     hub(source_root, "init")
