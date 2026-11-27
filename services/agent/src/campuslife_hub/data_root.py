@@ -136,3 +136,16 @@ class Layout:
     @property
     def uploads(self) -> Path:
         return self.root / "uploads"
+
+    @property
+    def admin_token(self) -> Path:
+        return self.root / "admin.token"
+
+    @property
+    def admin_port(self) -> Path:
+        """The port the running Hub's admin listener took; there only while it serves."""
+        return self.root / "admin.port"
+
+    @property
+    def logs(self) -> Path:
+        return self.root / "logs"

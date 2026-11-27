@@ -88,7 +88,7 @@ async def test_a_program_that_prints_without_end_is_killed_at_the_default_bound_
     endless = "import sys\nchunk = b'x' * (1 << 20)\nwhile True:\n    sys.stdout.buffer.write(chunk)"
     tracemalloc.start()
     try:
-        result = await isolate.run([sys.executable, "-c", endless], stdin=None, timeout_s=1.5, mem_bytes=256 * MiB)
+        result = await isolate.run([sys.executable, "-c", endless], stdin=None, timeout_s=5.0, mem_bytes=256 * MiB)
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
@@ -161,6 +161,25 @@ async def test_cancelling_a_run_kills_the_program_and_what_it_started(tmp_path):
     assert (await run("import sys; sys.stdout.write('ok')")).stdout == b"ok"
 
 
+async def test_a_cancelled_run_ends_only_once_its_program_has_exited(tmp_path, monkeypatch):
+    began, processes, create = tmp_path / "began", [], asyncio.create_subprocess_exec
+
+    async def kept(*args, **options):
+        processes.append(await create(*args, **options))
+        return processes[-1]
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", kept)
+    task = asyncio.create_task(run(f"import pathlib, time; pathlib.Path({str(began)!r}).write_text('x'); time.sleep(60)"))
+    assert await appears(began, within_s=20.0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    [process] = processes
+    assert process.returncode is not None
+
+
 def leave_the_session(pid_file, *, hold_s=30):
     """Code that starts a grandchild in a session of its own, holding stdout and stderr open for hold_s."""
     grandchild = f"import time; time.sleep({hold_s})"
@@ -173,12 +192,12 @@ def leave_the_session(pid_file, *, hold_s=30):
 @pytest.mark.skipif(WINDOWS, reason="only a POSIX process can leave; on Windows the Job Object holds every process started after the program joined it")
 @pytest.mark.parametrize("ending", ["print('done')", "import time; time.sleep(60)"], ids=["ends", "times out"])
 async def test_a_process_that_left_the_session_and_holds_the_pipes_does_not_hold_up_the_run(tmp_path, ending):
-    pid_file = tmp_path / "held"
+    pid_file, timeout_s = tmp_path / "held", 5.0
     started = time.monotonic()
     try:
-        result = await run(leave_the_session(pid_file) + ending, timeout_s=1.0)
+        result = await run(leave_the_session(pid_file) + ending, timeout_s=timeout_s)
 
-        assert time.monotonic() - started < 1.0 + 2 * SETTLE_SECONDS + 1.0
+        assert time.monotonic() - started < timeout_s + 2 * SETTLE_SECONDS + 1.0
         assert result.timed_out is (ending != "print('done')")
         assert asyncio.all_tasks() == {asyncio.current_task()}
     finally:

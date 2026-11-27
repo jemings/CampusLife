@@ -286,6 +286,76 @@ async def test_a_handler_that_ignores_cancellation_holds_up_neither_other_jobs_n
         released.set()
 
 
+async def test_a_job_whose_handler_is_left_running_is_not_claimed_again_until_that_handler_ends(db, blob_store, registry):
+    run, started, released = stubborn()
+    handles(registry, run, timeout=timedelta(seconds=0.1))
+    runner = JobRunner(JobContext(db, blob_store, registry), retry_delays=(timedelta(0),), stop_grace=timedelta(seconds=0.1))
+    looks, run_due = [], runner.run_due
+
+    async def counted():
+        looks.append(time.monotonic())
+        return await run_due()
+
+    runner.run_due = counted
+    [held] = await enqueue(db, registry, spec())
+    stop = asyncio.Event()
+    serving = asyncio.create_task(runner.run_forever(stop, idle_s=30))
+    try:
+        async def due_again():
+            return (await job(db, held)).state is JobState.RETRY_WAIT
+
+        await until(due_again)
+        await asyncio.sleep(0.5)
+
+        assert started == [held.id]
+        assert len(looks) == 1
+
+        released.set()
+
+        async def succeeded():
+            return (await job(db, held)).state is JobState.SUCCEEDED
+
+        await until(succeeded, within_s=5)
+        assert started == [held.id, held.id]
+        assert (await job(db, held)).attempts == 2
+    finally:
+        released.set()
+        stop.set()
+        await asyncio.wait_for(serving, 5)
+
+
+async def test_at_the_end_handlers_left_running_are_cancelled_again_and_those_that_still_run_are_named(db, blob_store, registry):
+    run, started, released = stubborn()
+    second_cancel_ended = []
+
+    async def ends_on_the_second_cancel(job, context):
+        cancels = 0
+        while True:
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancels += 1
+                if cancels == 2:
+                    second_cancel_ended.append(job.id)
+                    raise
+
+    handles(registry, run, job_type="extract.stuck", timeout=timedelta(seconds=0.1))
+    handles(registry, ends_on_the_second_cancel, timeout=timedelta(seconds=0.1))
+    runner = JobRunner(JobContext(db, blob_store, registry), stop_grace=timedelta(seconds=0.2))
+    stuck, yielding = await enqueue(db, registry, spec(1, "extract.stuck"), spec(2))
+    try:
+        assert await runner.run_due() == 2
+        ending = time.monotonic()
+
+        still_running = await runner.end_left_running()
+
+        assert time.monotonic() - ending < 2
+        assert (still_running, second_cancel_ended) == ([stuck.id], [yielding.id])
+        assert await runner.end_left_running() == [stuck.id]
+    finally:
+        released.set()
+
+
 async def test_cancelling_a_handler_that_ignores_it_still_ends_its_job_cancelled_in_bounded_time(db, blob_store, registry):
     run, started, released = stubborn()
     handles(registry, run)
@@ -413,23 +483,64 @@ async def test_a_runner_that_cannot_record_a_failure_stops_with_the_error_rather
 
 
 async def looks_for_due_jobs(runner, *, act=lambda: None, over_s=0.3):
-    """How often run_forever looks for due jobs over over_s, given nothing to run, after act."""
-    calls = []
+    """How often run_forever looks for due jobs over over_s, given nothing to run, after act, which comes once the
+    first look is over."""
+    calls, first_look_over = [], asyncio.Event()
     run_due = runner.run_due
 
     async def counted():
         calls.append(time.monotonic())
-        return await run_due()
+        try:
+            return await run_due()
+        finally:
+            first_look_over.set()
 
     runner.run_due = counted
     stop = asyncio.Event()
     serving = asyncio.create_task(runner.run_forever(stop, idle_s=30))
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(first_look_over.wait(), 10)
     act()
     await asyncio.sleep(over_s)
     stop.set()
     await asyncio.wait_for(serving, 5)
     return len(calls)
+
+
+@pytest.mark.parametrize("ending", ["stopped", "cancelled"])
+async def test_a_job_an_ended_run_left_running_runs_again_when_the_runner_runs_again(db, registry, runner, ending):
+    calls, started = [], asyncio.Event()
+
+    async def run(job, context):
+        calls.append(job.id)
+        if len(calls) == 1:
+            started.set()
+            await asyncio.sleep(60)
+        return Succeeded()
+
+    handles(registry, run)
+    [queued] = await enqueue(db, registry, spec())
+    stop = asyncio.Event()
+    serving = asyncio.create_task(runner.run_forever(stop, idle_s=30))
+    await asyncio.wait_for(started.wait(), 10)
+    if ending == "stopped":
+        stop.set()
+        await asyncio.wait_for(serving, 5)
+    else:
+        serving.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(serving, 5)
+    assert (await job(db, queued)).state is JobState.RUNNING
+
+    again = asyncio.Event()
+    serving = asyncio.create_task(runner.run_forever(again, idle_s=30))
+
+    async def succeeded():
+        return (await job(db, queued)).state is JobState.SUCCEEDED
+
+    await until(succeeded)
+    again.set()
+    await asyncio.wait_for(serving, 5)
+    assert ((await job(db, queued)).attempts, calls) == (2, [queued.id, queued.id])
 
 
 async def test_a_job_no_handler_here_runs_does_not_keep_the_runner_looking(db, registry, runner):
@@ -442,6 +553,26 @@ async def test_a_job_no_handler_here_runs_does_not_keep_the_runner_looking(db, r
 
 async def test_one_wake_makes_the_runner_look_once_more(db, runner):
     assert await looks_for_due_jobs(runner, act=runner.wake) == 2
+
+
+async def test_a_wake_that_comes_while_the_runner_looks_makes_it_look_again(db, runner):
+    looks, run_due = [], runner.run_due
+
+    async def woken_while_looking():
+        looks.append(time.monotonic())
+        ran = await run_due()
+        if len(looks) == 1:
+            runner.wake()
+        return ran
+
+    runner.run_due = woken_while_looking
+    stop = asyncio.Event()
+    serving = asyncio.create_task(runner.run_forever(stop, idle_s=30))
+    await asyncio.sleep(0.3)
+    stop.set()
+    await asyncio.wait_for(serving, 5)
+
+    assert len(looks) == 2
 
 
 async def test_a_failed_job_retried_by_the_user_runs_again(db, registry, runner):

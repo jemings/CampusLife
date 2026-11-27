@@ -54,17 +54,18 @@ def course_default_policy(snap: Snapshot, links: Iterable[str]) -> str | None:
     return effective_cloud_policy(defaults) if defaults else None
 
 
-def _refuse_unimportable(path: Path) -> None:
+def _refuse_unimportable(path: Path, name: str) -> None:
     try:
-        path.name.encode("utf-8")
+        name.encode("utf-8")
     except UnicodeEncodeError:
-        raise UnimportableFile(f"{path!r}: the file name is not valid Unicode; rename the file and import it again") from None
+        raise UnimportableFile(f"{name!r}: the file name is not valid Unicode; rename the file and import it again") from None
+    if not name:
+        raise UnimportableFile(f"{path}: the file has no name")
     if not path.is_file():
         raise UnimportableFile(f"{path}: not a regular file")
 
 
-def _file_name_members(path: Path) -> dict:
-    received = path.name
+def _file_name_members(received: str) -> dict:
     normalized = unicodedata.normalize("NFC", received)
     members = {"original_filename": normalized}
     if received != normalized:
@@ -76,17 +77,21 @@ async def import_files(
     core: Core,
     paths: Sequence[Path],
     *,
+    names: Sequence[str] | None = None,
     links: Sequence[str] = (),
     cloud_policy: str | None = None,
     global_default: str = GLOBAL_DEFAULT_CLOUD_POLICY,
 ) -> ImportResult:
-    """Store the files as Blobs and commit them as one Capture.
+    """Store the files as Blobs and commit them as one Capture, each under its name in names, by default its file name.
 
     Every file is checked before the first Blob is stored, so a refused import leaves no Blob behind.
     """
     paths = [Path(path) for path in paths]
-    for path in paths:
-        _refuse_unimportable(path)
+    names = [path.name for path in paths] if names is None else list(names)
+    if len(names) != len(paths):
+        raise UnimportableFile(f"{len(names)} names for {len(paths)} files")
+    for path, name in zip(paths, names, strict=True):
+        _refuse_unimportable(path, name)
     stored = [await core.blobs.put_file(path) for path in paths]
     course_default = await core.db.read(lambda snap: course_default_policy(snap, links))
     policy = resolve_cloud_policy(cloud_policy, course_default, global_default)
@@ -97,8 +102,8 @@ async def import_files(
         "origin": {"type": "import"},
         "links": [{"type": "about", "to": link} for link in links],
         "attachments": [
-            {"id": str(uuid.uuid4()), "blob_sha256": blob.sha256, "role": "file", **_file_name_members(path), "cloud_policy": policy}
-            for path, blob in zip(paths, stored, strict=True)
+            {"id": str(uuid.uuid4()), "blob_sha256": blob.sha256, "role": "file", **_file_name_members(name), "cloud_policy": policy}
+            for name, blob in zip(names, stored, strict=True)
         ],
     }
     mutation = {"mutation_id": str(uuid.uuid4()), "op": "capture.commit", "capture": capture}

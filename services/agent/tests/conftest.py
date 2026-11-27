@@ -1,10 +1,13 @@
 import asyncio
 import inspect
 import json
+import secrets
 
+import httpx
 import pytest
 
 from campuslife_contracts import contract_root
+from campuslife_hub.admin_auth import HELLO_PATH, hello_mac, hub_proof, signed_authorization
 from campuslife_hub.data_root import Layout
 from campuslife_hub.db import Database
 from campuslife_hub.identity import ensure_identity
@@ -19,6 +22,28 @@ def pytest_pyfunc_call(pyfuncitem):
     arguments = {name: pyfuncitem.funcargs[name] for name in pyfuncitem._fixtureinfo.argnames}
     asyncio.run(pyfuncitem.obj(**arguments))
     return True
+
+
+class SignedAs(httpx.Auth):
+    """Signs each admin API request with the admin token as the CLI does, once the Hub has proved it holds it."""
+
+    requires_response_body = True
+
+    def __init__(self, token):
+        self.token = token
+
+    def auth_flow(self, request):
+        address, client_nonce = f"{request.url.host}:{request.url.port}", secrets.token_hex(32)
+        same_origin = {name: value for name, value in request.headers.items() if name in ("host", "origin")}
+        hello = {"nonce": client_nonce, "mac": hello_mac(self.token, address, client_nonce)}
+        answer = yield httpx.Request("POST", request.url.join(HELLO_PATH), headers=same_origin, json=hello)
+        if answer.status_code == 200:
+            hub_nonce = answer.json()["nonce"]
+            assert answer.json()["proof"] == hub_proof(self.token, address, client_nonce, hub_nonce)
+            request.headers["authorization"] = signed_authorization(
+                self.token, address, hub_nonce, request.method, request.url.path, request.url.query.decode(), request.content
+            )
+        yield request
 
 
 def contract_fixture(kind: str, schema_id: str, case: str):

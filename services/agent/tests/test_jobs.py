@@ -1,5 +1,6 @@
 import re
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -94,8 +95,18 @@ async def test_the_subject_and_the_order_and_repeats_of_inputs_are_not_part_of_t
         extraction(subject_ref=""),
         extraction(inputs=("slides.pdf",)),
         extraction(inputs=(7,)),
+        extraction(inputs=("a" * 63,)),
+        extraction(inputs=("A" * 64,)),
+        extraction(subject_ref="attachment:x\ud800"),
+        extraction(params={"n": 10**5000}),
+        extraction(params={"scale": Decimal("1.5")}),
+        extraction(job_type=7),
     ],
-    ids=["date param", "nan param", "tuple param", "no subject", "empty subject", "input not a sha256", "input not a str"],
+    ids=[
+        "date param", "nan param", "tuple param", "no subject", "empty subject", "input not a sha256", "input not a str",
+        "input of 63 digits", "input in capitals", "subject not UTF-8", "param past what JSON text holds", "Decimal param",
+        "job type not a str",
+    ],
 )
 async def test_a_spec_that_cannot_be_stored_is_refused_and_nothing_is_queued(db, spec):
     with pytest.raises((TypeError, ValueError)):
@@ -128,6 +139,17 @@ async def test_only_due_jobs_of_the_given_types_are_claimed_oldest_first(db):
     assert await claim(db, now=NOW - timedelta(seconds=1)) is None
     assert [(await claim(db, now=NOW + timedelta(seconds=1))).id for _ in range(2)] == [earlier.id, later.id]
     assert await claim(db, now=NOW + timedelta(days=1)) is None
+
+
+async def test_the_ids_skipped_are_neither_claimed_nor_due(db):
+    held = await enqueue(db, now=NOW - timedelta(minutes=1))
+    other = await enqueue(db, extraction(params={"page": 2}))
+
+    assert await db.read(lambda snap: jobs.next_due(snap, ["extract.text"], skipping=[held.id])) == instant(NOW)
+    assert (await db.write(lambda tx: jobs.claim(tx, ["extract.text"], now=NOW, skipping=[held.id]))).id == other.id
+    assert await db.write(lambda tx: jobs.claim(tx, ["extract.text"], now=NOW, skipping=[held.id])) is None
+    assert await db.read(lambda snap: jobs.next_due(snap, ["extract.text"], skipping=[held.id])) is None
+    assert (await claim(db)).id == held.id
 
 
 @pytest.mark.parametrize(

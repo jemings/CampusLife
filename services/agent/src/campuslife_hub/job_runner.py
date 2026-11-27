@@ -5,6 +5,11 @@ time it may take. It returns how the job finished. An exception, a result that c
 recorded, or running past its time means "try again later", up to MAX_ATTEMPTS.
 Planners are registered by name; the capture.ingest handler, registered in every
 JobRegistry, asks them what to run for each committed Capture.
+
+A handler runs on the event loop and is stopped by cancelling it, so its blocking work (a parser,
+a converter, a model) goes to isolate.run, which ends its program when cancelled. A thread it
+starts with asyncio.to_thread cannot be stopped: it runs on after the handler is cancelled, and a
+stopping Hub exits without waiting for it.
 """
 
 from __future__ import annotations
@@ -30,7 +35,8 @@ HANDLER_TIMEOUT = timedelta(minutes=30)
 """How long a handler may run when its job type sets no time of its own."""
 
 STOP_GRACE = timedelta(seconds=5)
-"""How long a cancelled handler is given to end; one that does not is left running in the background."""
+"""How long a cancelled handler is given to end; one that does not is left running in the background, and its job
+is not claimed again until it ends."""
 
 ERROR_MAX_CHARS = 2000
 
@@ -141,7 +147,7 @@ class JobRunner:
         self._retry_delays = retry_delays
         self._stop_grace = stop_grace
         self._running: dict[str, _Running] = {}
-        self._left_running: set[asyncio.Task] = set()
+        self._left_running: dict[str, asyncio.Task] = {}
         self._wake = asyncio.Event()
 
     async def _end(self, job: Job, task: asyncio.Task) -> None:
@@ -152,8 +158,22 @@ class JobRunner:
         finally:
             if not task.done():
                 log.warning("the %s handler of job %s did not stop and is left running", job.job_type, job.id)
-                self._left_running.add(task)
-                task.add_done_callback(self._left_running.discard)
+                self._left_running[job.id] = task
+                task.add_done_callback(lambda _: self._left_ended(job.id))
+
+    def _left_ended(self, job_id: str) -> None:
+        del self._left_running[job_id]
+        self.wake()
+
+    async def end_left_running(self) -> list[str]:
+        """Cancel the handlers left running once more and give them stop_grace; the ids of the jobs whose handlers
+        still run, which the Hub, about to exit, leaves behind."""
+        left = dict(self._left_running)
+        for task in left.values():
+            task.cancel()
+        if left:
+            await asyncio.wait(left.values(), timeout=self._stop_grace.total_seconds())
+        return sorted(job_id for job_id, task in left.items() if not task.done())
 
     async def _try_again_later(self, job: Job, error: Exception) -> None:
         db, now = self.context.db, self._clock()
@@ -189,8 +209,8 @@ class JobRunner:
 
     async def run_one(self) -> Job | None:
         """Claim the job due longest and run it to its end; None when nothing is due."""
-        registry, db = self.context.registry, self.context.db
-        job = await db.write(lambda tx: jobs.claim(tx, registry.job_types, now=self._clock()))
+        registry, db, held = self.context.registry, self.context.db, frozenset(self._left_running)
+        job = await db.write(lambda tx: jobs.claim(tx, registry.job_types, now=self._clock(), skipping=held))
         if job is None:
             return None
         task = asyncio.create_task(_called(registry.handler(job.job_type), job, self.context))
@@ -225,7 +245,11 @@ class JobRunner:
 
     async def run_forever(self, stop: asyncio.Event, *, idle_s: float = 5.0) -> None:
         """Run jobs as they come and fall due until stop is set. A job running then is stopped, within stop_grace,
-        and left running for the recovery when the Hub opens again (E12)."""
+        and left running; the next run_forever, or the Hub opening again, recovers it (E12)."""
+        now = self._clock()
+        recovered = await self.context.db.write(lambda tx: jobs.recover_after_restart(tx, now=now))
+        if recovered:
+            log.warning("%d jobs were running when the runner last stopped; they wait again or failed", recovered)
         serving = asyncio.create_task(self._serve(idle_s))
         stopping = asyncio.create_task(stop.wait())
         try:
@@ -240,9 +264,10 @@ class JobRunner:
     async def _serve(self, idle_s: float) -> None:
         registry, db = self.context.registry, self.context.db
         while True:
-            await self.run_due()
             self._wake.clear()
-            due = await db.read(lambda snap: jobs.next_due(snap, registry.job_types))
+            await self.run_due()
+            held = frozenset(self._left_running)
+            due = await db.read(lambda snap: jobs.next_due(snap, registry.job_types, skipping=held))
             wait = idle_s if due is None else (datetime.fromisoformat(due) - self._clock()).total_seconds()
             try:
                 async with asyncio.timeout(min(max(wait, 0.0), idle_s)):

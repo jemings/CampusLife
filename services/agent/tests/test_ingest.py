@@ -209,8 +209,10 @@ async def test_a_planner_that_proposes_a_job_type_without_a_handler_counts_as_fa
         {"params": {"recorded_on": date(2026, 3, 2)}},
         {"subject_ref": None},
         {"inputs": ("slides.pdf",)},
+        {"subject_ref": "capture:x\ud800"},
+        {"params": {"n": 10**5000}},
     ],
-    ids=["param not JSON", "no subject", "input not a sha256"],
+    ids=["param not JSON", "no subject", "input not a sha256", "subject not UTF-8", "param past what JSON text holds"],
 )
 async def test_a_planner_that_proposes_a_job_that_cannot_be_stored_keeps_out_only_its_own_jobs(db, device, blob_store, tmp_path, unstorable):
     registry = handled("extract.text", "transcribe")
