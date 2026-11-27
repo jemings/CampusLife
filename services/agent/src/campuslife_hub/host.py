@@ -3,7 +3,8 @@
 `serve` runs over an open Core:
 - the admin listener, the local UI and admin API, on 127.0.0.1:admin_port; it is never put
   behind tailscale serve, and its port is left in admin.port for the CLI;
-- the sync listener, the FastAPI app #4 makes through sync_app, on 127.0.0.1:sync_port;
+- the sync listener, the app sync_app makes (campuslife_hub.sync), on 127.0.0.1:sync_port, the port
+  tailscale serve puts on the tailnet; it keeps an idle connection for sync_keep_alive;
 - the job runner, started again after runner_restart_delay when it ends with an error, each end
   logged and counted in the status;
 - maintenance every maintenance_every: upload session expiry, Blob collection, forgetting
@@ -31,7 +32,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import uvicorn
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter
 from starlette.types import ASGIApp
 
 from . import admin_token, purge
@@ -67,18 +68,21 @@ class HostConfig:
     runner_idle_s: float = 5.0
     stop_grace: timedelta = STOP_GRACE
     """How long a cancelled handler, and then the open requests of a listener, are given to end."""
+    sync_keep_alive: timedelta = timedelta(seconds=120)
+    """How long the sync listener keeps an idle connection open. tailscale serve reuses its connections to the Hub, and
+    one the Hub closed under it fails the request serve sends on it with a 502 (#4 decision 6)."""
 
 
 @dataclass(frozen=True)
 class Hosted:
-    """What a listener plugged into the host works with: the sync app #4 makes from it."""
+    """What a listener plugged into the host works with: the sync app is made from it."""
 
     core: Core
     runner: JobRunner
     redactor: Redactor
 
 
-type SyncAppFactory = Callable[[Hosted], FastAPI]
+type SyncAppFactory = Callable[[Hosted], ASGIApp]
 
 
 @dataclass(frozen=True)
@@ -126,10 +130,12 @@ def _bind(port: int) -> socket.socket:
     return listening
 
 
-def _listener(app: ASGIApp, config: HostConfig) -> _Listener:
+def _listener(app: ASGIApp, config: HostConfig, *, keep_alive: timedelta | None = None) -> _Listener:
+    """A uvicorn server for app; keep_alive None keeps uvicorn's own idle timeout."""
     return _Listener(
         uvicorn.Config(
             app,
+            **({} if keep_alive is None else {"timeout_keep_alive": keep_alive.total_seconds()}),
             http="h11",
             ws="none",
             lifespan="off",
@@ -215,11 +221,10 @@ async def serve(
     listeners: list[_Listener] = []
     try:
         admin_port = sockets[0].getsockname()[1]
-        apps = [create_app(admin, port=admin_port, routers=admin_routers)]
+        listeners = [_listener(create_app(admin, port=admin_port, routers=admin_routers), config)]
         if sync_app is not None:
             sockets.append(_bind(config.sync_port))
-            apps.append(sync_app(Hosted(core, runner, redactor)))
-        listeners = [_listener(app, config) for app in apps]
+            listeners.append(_listener(sync_app(Hosted(core, runner, redactor)), config, keep_alive=config.sync_keep_alive))
         tasks = [asyncio.create_task(listener.serve(sockets=[bound])) for listener, bound in zip(listeners, sockets, strict=True)]
         tasks += [
             asyncio.create_task(_keep_running(runner, stopping, record, config)),
@@ -231,6 +236,8 @@ async def serve(
         _leave_port(core.layout.admin_port, admin_port)
         listening(Serving(sockets[0].getsockname()[:2], sockets[1].getsockname()[:2] if sync_app is not None else None))
         log.info("serving the admin listener on http://%s:%d", LOOPBACK, admin_port)
+        if sync_app is not None:
+            log.info("serving the sync listener on http://%s:%d", LOOPBACK, sockets[1].getsockname()[1])
         stopped = asyncio.create_task(stop.wait())
         try:
             await asyncio.wait({stopped, *tasks}, return_when=asyncio.FIRST_COMPLETED)

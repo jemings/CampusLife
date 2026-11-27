@@ -1,7 +1,8 @@
 """campuslife-hub: operate the Hub on one data root.
 
   init     create the data root, database and Hub identity (safe to repeat)
-  serve    run the Hub: the admin listener and local UI on 127.0.0.1, the job runner, maintenance
+  serve    run the Hub: the sync listener tailscale serve exposes and the admin listener with the local UI,
+           both on 127.0.0.1, the job runner, maintenance
   open     open the local UI in the browser through a one-time login link
   import   store files as Blobs and commit them as one Capture
   backup   write a backup generation to a folder on a backup drive and keep the newest ones
@@ -31,7 +32,9 @@ import webbrowser
 from datetime import timedelta
 from pathlib import Path
 
-from . import admin_client, autostart, backup, fsck, host
+from starlette.types import ASGIApp
+
+from . import admin_client, autostart, backup, fsck, host, sync
 from .admin_client import AdminRefused, HubDidNotAnswer, HubNotServing, NotTheHub
 from .admin_token import AdminTokenUnusable
 from .autostart import AutostartFailed, LogonTask
@@ -39,7 +42,7 @@ from .backup import DEFAULT_KEEP, DEFAULT_WARN_AFTER, BackupRefused, BackupSetti
 from .core import UnsafeDataRoot, open_core, open_core_readonly, safe_data_root
 from .data_root import Layout, default_data_root
 from .db import NotInitialized, SchemaMismatch, StartupRefused
-from .host import DEFAULT_ADMIN_PORT, HostConfig, PortTaken
+from .host import DEFAULT_ADMIN_PORT, DEFAULT_SYNC_PORT, HostConfig, Hosted, PortTaken
 from .listing import list_captures
 from .local_import import UnimportableFile, import_files
 from .lock import AlreadyRunning
@@ -114,6 +117,10 @@ def _serve_options(parser: argparse.ArgumentParser, *, defaults: bool) -> argpar
     parser.add_argument(
         "--admin-port", type=_port, default=DEFAULT_ADMIN_PORT if defaults else None,
         help=f"port of the admin listener on 127.0.0.1 (default {DEFAULT_ADMIN_PORT})",
+    )
+    parser.add_argument(
+        "--sync-port", type=_port, default=DEFAULT_SYNC_PORT if defaults else None,
+        help=f"port of the sync listener on 127.0.0.1, the one tailscale serve exposes (default {DEFAULT_SYNC_PORT})",
     )
     parser.add_argument(
         "--backup-keep", type=_at_least_one, default=DEFAULT_KEEP if defaults else None,
@@ -246,13 +253,19 @@ async def _ls(root: Path) -> None:
             print(f"    {attachment.blob_sha256[:12]}  {attachment.cloud_policy:<13}  {attachment.original_filename or '-'}")
 
 
+def _sync_app(hosted: Hosted) -> ASGIApp:
+    """The sync app serve runs: until Devices can pair (#19), no bearer token names one."""
+    return sync.create_sync_app(hosted, sync.refuse_every_bearer)
+
+
 def _logon_task(root: Path, arguments: argparse.Namespace) -> LogonTask:
     """The task that serves root with the serve options given; root must hold a Hub."""
     layout = _layout(root)
     if not layout.database.is_file():
         raise NotInitialized(f"no Hub at {layout.root}; run `campuslife-hub init` first")
     options = [(flag, value) for flag, value in (
-        ("--admin-port", arguments.admin_port), ("--backup-keep", arguments.backup_keep), ("--backup-warn-days", arguments.backup_warn_days),
+        ("--admin-port", arguments.admin_port), ("--sync-port", arguments.sync_port),
+        ("--backup-keep", arguments.backup_keep), ("--backup-warn-days", arguments.backup_warn_days),
     ) if value is not None]
     serve = ["--root", str(layout.root), "serve", *[part for flag, value in options for part in (flag, str(value))]]
     return LogonTask(str(autostart.launcher()), tuple(serve), str(layout.root), autostart.this_user())
@@ -280,7 +293,8 @@ def _run(arguments: argparse.Namespace, root: Path) -> None:
             asyncio.run(_init(root))
         case "serve":
             settings = BackupSettings(keep=arguments.backup_keep, warn_after=timedelta(days=arguments.backup_warn_days))
-            host.run(host.run_hub(root, HostConfig(admin_port=arguments.admin_port, backup=settings)))
+            config = HostConfig(admin_port=arguments.admin_port, sync_port=arguments.sync_port, backup=settings)
+            host.run(host.run_hub(root, config, sync_app=_sync_app))
         case "open":
             _open(root, not arguments.no_browser)
         case "import":

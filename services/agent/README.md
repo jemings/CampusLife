@@ -35,7 +35,7 @@ uv run campuslife-hub open
    - 작업은 `.venv\Scripts\campuslife-hubw.exe --root <data root> serve`를 실행합니다. 콘솔 창이 없으므로 Hub의 로그와, 기동을 거부한 이유(Store Python, 더 새 DB, 맞지 않는 SQLite, 이미 도는 Hub, 쓰고 있는 포트, 동기화 폴더 등)는 `<data root>\logs\hub.log`에 남습니다. 이유가 남는 것은 data root에 Hub(`database\campuslife.sqlite3`)가 있을 때뿐입니다. Hub가 없는 root에는 파일을 만들지 않습니다. 이 파일은 5 MiB가 차면 `hub.log.1`…`hub.log.5`로 밀려나 최대 6개(30 MiB)를 둡니다.
    - 작업이 곧바로 끝났는데 `hub.log`에 이유가 없으면(data root에 Hub가 없는 경우, 로그 폴더를 쓸 수 없는 경우 등) 콘솔에서 같은 명령 `uv run campuslife-hub --root <data root> serve`를 실행해 이유를 봅니다.
    - 시간 제한 없음, 배터리 사용 중에도 시작·유지, 이미 돌고 있으면 새 시작은 무시합니다.
-   - 등록 시점의 data root와, register에 준 serve 옵션(`--admin-port`, `--backup-keep`, `--backup-warn-days`)만 작업 인자에 들어갑니다. 바꾸려면 같은 명령을 다시 실행합니다(같은 이름의 작업을 교체). 이름은 `--name`으로 바꿀 수 있습니다.
+   - 등록 시점의 data root와, register에 준 serve 옵션(`--admin-port`, `--sync-port`, `--backup-keep`, `--backup-warn-days`)만 작업 인자에 들어갑니다. 바꾸려면 같은 명령을 다시 실행합니다(같은 이름의 작업을 교체). 이름은 `--name`으로 바꿀 수 있습니다.
    - `uv run campuslife-hub autostart xml`은 등록할 작업 XML을 출력만 합니다(인코딩 선언 없음). `--out task.xml`을 주면 register가 schtasks에 넘기는 것과 같은 UTF-16 파일을 씁니다.
 5. `schtasks /Run`은 다음 로그온을 기다리지 않고 지금 시작합니다. 로그아웃 후 다시 로그인해도 됩니다. 기동에 몇 초가 걸리므로 `status`가 서빙하는 Hub가 없다고 하면 잠시 뒤 다시 실행합니다.
 6. `open`은 브라우저로 로컬 UI(127.0.0.1의 admin 포트, 기본 8731)를 1회용 로그인 링크로 엽니다. 이 포트는 `tailscale serve`에 노출하지 않습니다(D5). sync 포트(기본 8730)와 `tailscale serve` 설정은 #4, 장치 pairing은 #19가 맡습니다.
@@ -77,7 +77,7 @@ uv run campuslife-hub autostart unregister
 | 명령 | 하는 일 |
 |---|---|
 | `init` | data root, DB, Hub 신원을 만듦 |
-| `serve` | Hub 실행(로컬 UI·admin API, job runner, 1시간마다 정리). 보통은 작업이 실행함 |
+| `serve` | Hub 실행(sync 리스너 `127.0.0.1:8730`, 로컬 UI·admin API `127.0.0.1:8731`, job runner, 1시간마다 정리). 보통은 작업이 실행함 |
 | `open` | 로컬 UI를 1회용 로그인 링크로 엶 |
 | `import <파일…>` | 파일들을 Capture 하나로 가져옴(`--policy`, `--link item:<id>`) |
 | `backup --to <폴더>` | 백업 세대 하나를 씀(`--keep N`) |

@@ -11,6 +11,11 @@ from .policy import effective_cloud_policy, resolve_cloud_policy
 from .text_hash import text_hash
 from .violations import Rule, RuleViolation, SchemaViolation, Violation
 
+CONTRACT_VERSION = 1
+"""The contract version this package describes: the Hub's contract_version in GET /v1/hub (E18)."""
+MIN_CONTRACT_VERSION = 1
+"""The oldest client contract version the Hub accepts; a request below it gets 400 contract_too_old (E18)."""
+
 
 def contract_root() -> Path:
     """Directory holding `schemas/` and `fixtures/` for this installation.
@@ -34,6 +39,8 @@ def validate(schema_id: str, instance: object) -> list[Violation]:
 
 
 __all__ = [
+    "CONTRACT_VERSION",
+    "MIN_CONTRACT_VERSION",
     "Contract",
     "ContractError",
     "Rule",

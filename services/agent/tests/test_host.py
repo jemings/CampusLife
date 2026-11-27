@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import logging
 import secrets
 import socket
@@ -8,22 +9,26 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 from conftest import SignedAs
+from sync_contract import checked
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 
 from campuslife_hub import backup, host, jobs, mutations, purge
 from campuslife_hub.core import open_core
 from campuslife_hub.db import Database
+from campuslife_hub.devices import Refusal, RefusalCode
 from campuslife_hub.host import HostConfig, PortTaken
 from campuslife_hub.job_runner import JobRegistry, JobRunner
 from campuslife_hub.jobs import JobSpec, JobState, Pipeline, Succeeded
 from campuslife_hub.redaction import Redactor, file_handler
+from campuslife_hub.sync import create_sync_app, refuse_every_bearer
 
 TOKEN = secrets.token_urlsafe(32)
 SIGNED = SignedAs(TOKEN)
@@ -376,3 +381,111 @@ async def test_stopping_names_the_threads_a_handler_left_blocking(tmp_path, capl
         assert "1 threads a handler started still run" in caplog.text
     finally:
         released.set()
+
+
+SYNC_TOKEN = "phone-token-" + "y" * 40
+SYNC_HEADERS = {"CampusLife-Contract": "1", "Authorization": f"Bearer {SYNC_TOKEN}"}
+
+
+def sync_admitting_the_hub_device(hosted):
+    """The real sync app, with an authenticator for tests: SYNC_TOKEN names the Hub's own Device row."""
+
+    async def authenticate(bearer):
+        return hosted.core.hub_device if bearer == SYNC_TOKEN else Refusal(RefusalCode.UNAUTHORIZED)
+
+    return create_sync_app(hosted, authenticate)
+
+
+def tag_batch():
+    return {"mutations": [{"mutation_id": str(uuid.uuid4()), "op": "create", "entity": "tag", "id": str(uuid.uuid4()), "data": {"name": "시험", "color": "#ff8800"}}]}
+
+
+@asynccontextmanager
+async def sync_client(listening):
+    async with httpx.AsyncClient(
+        base_url=f"http://127.0.0.1:{listening.sync[1]}", headers=SYNC_HEADERS, trust_env=False, event_hooks={"response": [checked]}
+    ) as client:
+        yield client
+
+
+async def tags(sync):
+    feed = (await sync.get("/v1/changes", params={"since": "0"})).json()["changes"]
+    return [change["id"] for change in feed if change["entity"] == "tag"]
+
+
+async def read_response(reader):
+    """One HTTP/1.1 response off a raw connection: its status line and body."""
+    head = await reader.readuntil(b"\r\n\r\n")
+    length = next(int(line.split(b":")[1]) for line in head.split(b"\r\n") if line.lower().startswith(b"content-length:"))
+    return head.split(b"\r\n")[0], await reader.readexactly(length)
+
+
+async def test_the_sync_listener_refuses_every_token_until_devices_pair_and_answers_with_the_hub_headers(tmp_path):
+    async with serving(tmp_path, sync_app=lambda hosted: create_sync_app(hosted, refuse_every_bearer)) as (core, client, listening, stop, served):
+        async with sync_client(listening) as sync:
+            answers = [await sync.get("/v1/hub"), await sync.post("/v1/mutations", json=tag_batch()), await sync.get("/api/status")]
+        assert (await client.get("/api/status", auth=SIGNED)).status_code == 200
+
+    assert [answer.status_code for answer in answers] == [401, 401, 401]
+    assert {answer.headers["campuslife-hub-id"] for answer in answers} == {core.identity.hub_id}
+
+
+async def test_a_chunked_body_reaches_the_sync_app_whole(tmp_path):
+    body = json.dumps(tag_batch()).encode()
+
+    async def pieces():
+        for start in range(0, len(body), 7):
+            yield body[start:start + 7]
+
+    async with serving(tmp_path, sync_app=sync_admitting_the_hub_device) as (core, client, listening, stop, served):
+        async with sync_client(listening) as sync:
+            answer = await sync.post("/v1/mutations", content=pieces(), headers={"Content-Type": "application/json"})
+            stored = await tags(sync)
+
+    assert answer.request.headers["transfer-encoding"] == "chunked"
+    assert answer.json()["results"][0]["result"] == "applied"
+    assert stored == [json.loads(body)["mutations"][0]["id"]]
+
+
+@pytest.mark.parametrize("framing", ["content-length", "chunked"])
+async def test_a_body_cut_off_midway_applies_nothing_logs_no_failure_and_the_listener_goes_on(tmp_path, caplog, framing):
+    body = json.dumps(tag_batch()).encode()
+    async with serving(tmp_path, sync_app=sync_admitting_the_hub_device) as (core, client, listening, stop, served):
+        reader, writer = await asyncio.open_connection("127.0.0.1", listening.sync[1])
+        framed = f"Content-Length: {len(body)}" if framing == "content-length" else "Transfer-Encoding: chunked"
+        half = body[: len(body) // 2]
+        sent = half if framing == "content-length" else f"{len(half):x}\r\n".encode() + half + b"\r\n"
+        writer.write(
+            f"POST /v1/mutations HTTP/1.1\r\nHost: 127.0.0.1\r\nCampusLife-Contract: 1\r\nAuthorization: Bearer {SYNC_TOKEN}\r\n"
+            f"Content-Type: application/json\r\n{framed}\r\n\r\n".encode() + sent
+        )
+        await writer.drain()
+        await asyncio.sleep(0.2)
+        writer.close()
+        await asyncio.sleep(0.3)
+        async with sync_client(listening) as sync:
+            assert await tags(sync) == []
+            assert (await sync.post("/v1/mutations", json=tag_batch())).json()["results"][0]["result"] == "applied"
+
+    assert [record.getMessage() for record in caplog.records if record.exc_info or record.levelno >= logging.ERROR] == []
+
+
+async def test_only_the_sync_listener_keeps_an_idle_connection_for_the_time_the_host_config_gives(tmp_path):
+    request = b"GET /v1/hub HTTP/1.1\r\nHost: 127.0.0.1\r\nCampusLife-Contract: 1\r\n\r\n"
+    async with serving(tmp_path, sync_app=sync_admitting_the_hub_device, config={"sync_keep_alive": timedelta(seconds=1)}) as (core, client, listening, *_):
+        connections = {}
+        for name, port in (("sync", listening.sync[1]), ("admin", listening.admin[1])):
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(request.replace(b"Host: 127.0.0.1", f"Host: 127.0.0.1:{port}".encode()))
+            await writer.drain()
+            await read_response(reader)
+            connections[name] = (reader, writer)
+        await asyncio.sleep(2)
+        closed = {name: await asyncio.wait_for(reader.read(1), 1) == b"" for name, (reader, writer) in connections.items() if name == "sync"}
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(connections["admin"][0].read(1), 0.5)
+        for reader, writer in connections.values():
+            writer.close()
+
+    assert closed == {"sync": True}
+    assert host.HostConfig().sync_keep_alive == timedelta(seconds=120)

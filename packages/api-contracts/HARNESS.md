@@ -80,6 +80,10 @@ uv run campuslife-contracts compare fixtures/valid <out>
 
 - `tests/test_openapi.py`는 operation마다 상태 코드별 본문 스키마와 헤더(어느 헤더 컴포넌트인지까지), 파라미터(`in`·`required`·스키마), 요청 본문을 표로 정확히 비교합니다. 엔드포인트를 더하거나 고치면 그 표도 함께 고칩니다.
 - 모든 operation이 400(`invalid_request`·`not_canonical`·`contract_too_old`)을 가집니다. `GET /v1/hub`만 `contract_too_old`를 내지 않습니다. 너무 오래된 클라이언트도 여기서 `min_contract_version`을 읽고 스스로 멈춥니다.
+- 어느 operation이든 Hub 헤더를 단 500(`internal_error`)이 올 수 있습니다. 상태 표에는 적지 않습니다. `CampusLife-Hub-Id`가 없는 응답(Hub가 꺼졌을 때 `tailscale serve`가 내는 502 등)은 Hub에 닿지 못한 것으로 보고 backoff한 뒤 다시 보냅니다.
+- 업로드를 열 때 Hub에 Blob을 받을 공간이 없으면 400 `hub_storage_full`입니다. 형식 오류(`invalid_request`)와 달리 영구 실패가 아니므로 나중에 다시 엽니다.
+- `POST /v1/mutations`의 배치는 Mutation 1–200개입니다. Outbox가 더 길면 여러 배치로 나눠 차례로 보냅니다.
+- 결과 행에 실을 `mutation_id`를 읽을 수 없는 항목(없음, UUIDv4가 아님)이나 이 Hub가 아직 적용하지 않는 op의 항목이 하나라도 있으면 배치 전체가 400 `invalid_request`이고 아무것도 적용되지 않습니다. 클라이언트는 그 항목을 고치거나 빼고 나머지를 다시 보냅니다. 스키마만 어긴 Mutation은 200 안의 `rejected{schema}`입니다.
 - pairing(`device/pair_request`)의 `platform`은 `android`·`ipados`만 받습니다. `windows_hub`는 Hub 자신의 Device 행입니다. `device_name`·`last_error` 같은 표시 문자열은 제어문자, 줄·문단 구분자(U+2028, U+2029), 양방향 서식 문자(U+202A–U+202E, U+2066–U+2069)를 받지 않습니다.
 - 토큰 재발급 `POST /v1/devices/me/token`은 지금 토큰으로 인증하고 본문 없이 보내며, 응답은 `device/pair_response` 모양입니다. 이전 토큰은 새 토큰이 처음 인증에 성공할 때 폐기되고, 그전까지는 둘 다 유효합니다. 다시 요청하면 아직 쓰이지 않은 같은 새 토큰을 돌려줍니다.
 - 업로드 세션의 키는 (이 Device, sha256)입니다(E19). 같은 sha256으로 열린 세션에 다른 `size`를 보내면 400 `invalid_request`이고, revoke하면 그 Device의 열린 세션이 폐기됩니다(D6). 이미 저장된 Blob의 finalize는 세션이 없어도 200입니다(D7).

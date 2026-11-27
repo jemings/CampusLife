@@ -23,6 +23,11 @@ info:
     version, so that client can read min_contract_version and stop by itself.
     Error bodies are `common/error`, whose code is open: a client treats a code
     it does not know as a plain failure.
+
+    Any operation can answer 500 internal_error, with the Hub headers. A
+    response without CampusLife-Hub-Id, such as the 502 tailscale serve sends
+    while the Hub is down, means the Hub was not reached: back off and try
+    again.
 servers:
   - url: https://{hub}
     variables:
@@ -85,7 +90,8 @@ paths:
         Keyed by (this Device, sha256) (E19), so asking again resumes the same
         session and returns the chunks already received (D7). Asking again with
         another size while the session is open gets 400 invalid_request.
-        Revoking the Device discards its open sessions (D6).
+        A Hub without the space to take the Blob answers 400 hub_storage_full;
+        ask again later. Revoking the Device discards its open sessions (D6).
       parameters:
         - $ref: "#/components/parameters/Contract"
       requestBody:
@@ -293,8 +299,11 @@ paths:
       description: >-
         The batch is handled in order and stops at the first retry; every
         Mutation gets a result (E12). A Mutation that breaks its schema is
-        rejected{schema} inside a 200. 400 is only for a body that is not a
-        batch at all.
+        rejected{schema} inside a 200. 400 invalid_request is for a body that
+        is not a batch, and for a batch with an entry no result can describe:
+        one without a UUIDv4 mutation_id, or one whose op this Hub does not
+        apply yet. Nothing in such a batch is applied: the client fixes or
+        drops that entry and sends the rest again.
       parameters:
         - $ref: "#/components/parameters/Contract"
       requestBody:
