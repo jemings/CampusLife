@@ -1,6 +1,8 @@
+import asyncio
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -8,9 +10,11 @@ from extract_harness import hub_with
 from test_capture_commit import blob_store, device
 
 import malicious_files as make
+from campuslife_hub.extract import child
 from campuslife_hub.extract.fakes import fake
 from campuslife_hub.extract.framework import IDENTIFY
 from campuslife_hub.extract.limits import Limits
+from campuslife_hub.extract.running import Answer, run_child
 from campuslife_hub.jobs import JobState, OutcomeCode
 
 __all__ = ["blob_store", "device"]
@@ -18,9 +22,13 @@ __all__ = ["blob_store", "device"]
 WINDOWS = sys.platform == "win32"
 NOTES = b"lecture notes\n\nsecond paragraph"
 FAKES = tuple(
-    fake(name, {}) for name in ("echo", "crash", "hang", "hog", "flood", "garbage", "exit_silently", "refuse", "modules", "zip_walk")
+    fake(name, {}) for name in ("echo", "crash", "hang", "hog", "flood", "garbage", "exit_silently", "refuse", "modules", "plant", "zip_walk")
 )
 DOCUMENT = [{"kind": "document"}]
+
+
+class OneAttempt:
+    attempts = 1
 
 
 def same_path(seen, expected):
@@ -164,6 +172,14 @@ async def test_a_result_at_the_size_limits_is_recorded(db, device, blob_store, t
     assert job.state is JobState.SUCCEEDED
 
 
+async def test_a_blob_of_exactly_the_input_limit_is_read(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path, *FAKES, limits=Limits(timeout_s=30.0, input_max_bytes=len(NOTES)))
+
+    job = await ran(hub, "echo", {"blocks": []})
+
+    assert job.state is JobState.SUCCEEDED
+
+
 async def test_a_blob_past_the_input_limit_is_not_handed_to_a_child(db, device, blob_store, tmp_path):
     hub = hub_with(db, blob_store, device, tmp_path, *FAKES, limits=Limits(input_max_bytes=len(NOTES) - 1))
 
@@ -176,11 +192,12 @@ async def test_strings_are_stored_nfc(db, device, blob_store, tmp_path):
     hub = hub_with(db, blob_store, device, tmp_path, *FAKES)
     decomposed = "가"
 
-    await ran(hub, "echo", {"blocks": [block(decomposed, refs=[{"kind": "doc_path", "heading_path": [decomposed], "block_index": 0}])]})
+    await ran(hub, "echo", {"blocks": [block(decomposed, refs=[{"kind": "doc_path", "heading_path": [decomposed], "block_index": 0}], payload={decomposed: decomposed})]})
 
     [artifact] = await hub.artifacts("extraction")
     body, _ = await hub.body(artifact)
     assert (body["blocks"][0]["text"], body["blocks"][0]["refs"][0]["heading_path"]) == ("가", ["가"])
+    assert body["blocks"][0]["payload"] == {"가": "가"}
 
 
 async def test_one_failing_extractor_stops_neither_the_hub_nor_the_other_files(db, device, blob_store, tmp_path):
@@ -221,7 +238,78 @@ async def test_the_child_runs_in_its_work_directory_with_only_the_env_it_is_give
     assert same_path(where[0], tmp_path / "work" / job.id)
     allowed = {"SYSTEMROOT", "WINDIR", "TEMP", "TMP"} if WINDOWS else {"TMPDIR"}
     assert set(where[1:]) - {"__PYVENV_LAUNCHER__", "PYTHONHASHSEED", "LC_CTYPE"} <= allowed
+    assert ({"TEMP", "TMP"} if WINDOWS else {"TMPDIR"}) <= set(where[1:])
     assert not (tmp_path / "work" / job.id).exists()
+
+
+async def test_the_child_starts_in_an_empty_work_directory_whatever_a_former_run_left(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path, *FAKES)
+    job = await hub.enqueue("extract.fake_modules", await hub.store(NOTES))
+    left = tmp_path / "work" / job.id
+    left.mkdir(parents=True)
+    (left / "left.txt").write_bytes(b"from a run the Hub did not finish")
+
+    await hub.settle()
+
+    [artifact] = await hub.artifacts("extraction")
+    body, _ = await hub.body(artifact)
+    assert body["blocks"][2]["text"] == "held:"
+
+
+async def test_the_hub_stages_the_body_outside_the_childs_work_directory(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path, *FAKES)
+
+    job = await ran(hub, "plant")
+
+    assert job.state is JobState.SUCCEEDED
+    [artifact] = await hub.artifacts("extraction")
+    body, _ = await hub.body(artifact)
+    assert [block["text"] for block in body["blocks"]] == ["planted"]
+
+
+async def test_the_child_ignores_modules_planted_in_its_work_directory(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "json.py").write_text("raise SystemExit(3)\n", encoding="utf-8")
+    source = tmp_path / "notes.txt"
+    source.write_bytes(NOTES)
+
+    judged = await run_child(OneAttempt(), {"op": "identify", "path": str(source)}, Limits(timeout_s=30.0), work)
+
+    assert isinstance(judged, Answer) and judged.result["media_type"] == "text/plain"
+
+
+def test_the_child_runs_no_entry_point_outside_the_extractor_package(tmp_path):
+    request = {"op": "extract", "path": str(tmp_path / "notes.txt"), "entry": "os:getcwd", "params": {}, "limits": Limits().to_json()}
+
+    with pytest.raises(ValueError, match="an entry point lives in campuslife_hub.extract."):
+        child.respond(request)
+
+
+async def test_the_event_loop_keeps_running_while_the_hub_builds_a_body_of_the_most_blocks_the_defaults_allow(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path, limits=Limits())
+    gaps = []
+
+    async def tick():
+        last = time.perf_counter()
+        while True:
+            await asyncio.sleep(0.05)
+            now = time.perf_counter()
+            gaps.append(now - last)
+            last = now
+
+    ticking = asyncio.create_task(tick())
+    try:
+        await hub.capture(("many.txt", b"a\n\n" * (Limits().max_blocks + 1)))
+        await hub.settle()
+    finally:
+        ticking.cancel()
+
+    [job] = await hub.jobs("extract.text")
+    assert (job.state, job.outcome_code) == (JobState.SUCCEEDED, OutcomeCode.PARTIAL)
+    [artifact] = await hub.artifacts("extraction")
+    assert len((await hub.body(artifact))[0]["blocks"]) == Limits().max_blocks
+    assert max(gaps) < 1.0
 
 
 @pytest.mark.parametrize(

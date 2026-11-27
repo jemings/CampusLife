@@ -60,10 +60,18 @@ def refuse(path: Path, params: Mapping, limits: Limits) -> Extracted:
 
 
 def modules(path: Path, params: Mapping, limits: Limits) -> Extracted:
-    """One block listing the modules the child has loaded, and one with its working directory and env."""
+    """A block listing the modules the child has loaded, one with its working directory and env, and one with what
+    that directory holds."""
     loaded = "\n".join(sorted(sys.modules))
     where = f"{os.getcwd()}\n" + "\n".join(sorted(os.environ))
-    return Extracted([{"block_type": "paragraph", "text": text, "refs": [{"kind": "document"}]} for text in (loaded, where)])
+    held = "\n".join(["held:", *sorted(os.listdir())])
+    return Extracted([{"block_type": "paragraph", "text": text, "refs": [{"kind": "document"}]} for text in (loaded, where, held)])
+
+
+def plant(path: Path, params: Mapping, limits: Limits) -> Extracted:
+    """One block, after leaving in its working directory a directory named as the Hub once named the body it wrote."""
+    os.mkdir("body.json")
+    return Extracted([{"block_type": "paragraph", "text": "planted", "refs": [{"kind": "document"}]}])
 
 
 def _members(archive: SafeZip, prefix: str) -> list[str]:
