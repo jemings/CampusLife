@@ -23,6 +23,7 @@ import pytest
 from campuslife_hub import admin_client, admin_token, backup, devices, host, mutations, tailscale_check
 from campuslife_hub.admin_auth import hub_proof
 from campuslife_hub.cli import main
+from campuslife_hub.clock import instant
 from campuslife_hub.core import open_core
 from campuslife_hub.data_root import Layout
 from campuslife_hub.devices import ClientPlatform, DeviceSettings, DeviceState, PairingLimiter, PairRequest
@@ -1021,8 +1022,11 @@ async def test_with_no_hub_serving_devices_approve_and_revoke_take_the_lock_them
     root = tmp_path / "CampusLife"
     await asyncio.to_thread(hub, root, "init")
     phone, tablet = await paired_in(root, "Fold8", "iPad")
+    seen = datetime.now(UTC) + timedelta(hours=2)
+    refused = seen + timedelta(days=91)
     async with open_core(root, create=False, sync_roots=[]) as core:
-        await devices.mark_dormant(core, now=datetime.now(UTC) + timedelta(days=91))
+        assert await devices.authenticate(core, tablet.token, now=seen, redactor=Redactor()) == tablet.device_id
+        assert (await devices.authenticate(core, tablet.token, now=refused, redactor=Redactor())).code == "device_dormant"
     await devices_revoked_first(root, phone)
     capsys.readouterr()
 
@@ -1037,8 +1041,25 @@ async def test_with_no_hub_serving_devices_approve_and_revoke_take_the_lock_them
     assert lines[phone.device_id].split()[1:3] == ["android", "revoked"] and lines[phone.device_id].endswith("Fold8")
     assert lines[tablet.device_id].split()[1:3] == ["android", "dormant"] and lines[tablet.device_id].endswith("iPad")
     assert "approve only a device you have in hand" in listed and "approve only" not in none_dormant
-    assert approved.startswith(f"approved {tablet.device_id}")
+    assert approved == (
+        f"approved {tablet.device_id} (android iPad, last seen {instant(seen)}, last refused {instant(refused)}): "
+        "it syncs again with the token it holds\n"
+    )
     assert await states_in(root, phone, tablet) == [DeviceState.REVOKED, DeviceState.ACTIVE]
+
+
+def test_the_cli_says_when_a_revoke_or_an_approve_changed_nothing(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    assert hub(root, "init") == 0
+    [phone] = asyncio.run(paired_in(root, "Fold8"))
+    capsys.readouterr()
+
+    assert hub(root, "approve", phone.device_id) == 0
+    assert capsys.readouterr().out == f"{phone.device_id} is active already\n"
+    assert hub(root, "revoke", phone.device_id) == 0
+    capsys.readouterr()
+    assert hub(root, "revoke", phone.device_id) == 0
+    assert capsys.readouterr().out == f"{phone.device_id} was revoked already\n"
 
 
 async def devices_revoked_first(root, device):
@@ -1087,6 +1108,7 @@ def test_after_a_restore_the_hub_serving_approves_the_device_in_hand_and_revokes
         assert hub(restored, "devices") == 0
         listed = capsys.readouterr().out
         assert hub(restored, "approve", phone.device_id) == 0
+        approved = capsys.readouterr().out
         assert hub(restored, "revoke", lost.device_id) == 0
         capsys.readouterr()
         sync_port = int(until_logged(restored.parent / "serve.out", r"serving the sync listener on http://127\.0\.0\.1:(\d+)"))
@@ -1099,6 +1121,7 @@ def test_after_a_restore_the_hub_serving_approves_the_device_in_hand_and_revokes
         process.wait()
 
     assert listed.count(" dormant ") == 2
+    assert approved.startswith(f"approved {phone.device_id} (android Fold8, last seen never, last refused never): ")
     assert synced[0] == 200 and tag["id"] in {change["id"] for change in synced[1]["changes"]}
     assert (refused[0], refused[1]["code"]) == (401, "device_revoked")
 
