@@ -563,16 +563,18 @@ async def test_hellos_from_a_program_without_the_token_do_not_push_out_the_nonce
 async def test_a_request_before_login_carries_at_most_a_kibibyte(tmp_path, method, path):
     pulled = []
 
-    async def endless():
-        for _ in range(1000):
-            pulled.append(True)
-            yield b"x" * 65536
+    async def endless(chunk=512):
+        for _ in range(4096):
+            pulled.append(chunk)
+            yield b"x" * chunk
 
     async with hub(tmp_path) as (client, _):
+        kibibyte = await client.request(method, path, content=b"x" * 1024)
         response = await client.request(method, path, content=endless())
 
+    assert kibibyte.status_code != 413
     assert response.status_code == 413
-    assert len(pulled) <= 2
+    assert sum(pulled) <= 1024 + 512
 
 
 async def test_a_page_request_that_carries_an_authorization_header_is_not_read_by_the_guard(tmp_path):
