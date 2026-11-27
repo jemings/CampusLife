@@ -47,6 +47,7 @@ class CaptureOutbox(
         userNote: String? = null,
         url: String? = null,
     ): String {
+        for (link in links) require(ITEM_REF.matches(link.to)) { "a link names an item, not ${link.to}" }
         val draft = CaptureCommit(
             id = UUID.randomUUID().toString(),
             createdAt = clock.instant(),
@@ -128,5 +129,6 @@ class CaptureOutbox(
         const val OPEN = "open"
         const val SEALED = "sealed"
         val COMMITTED = setOf(TransferState.ACKED, TransferState.PULLING, TransferState.SETTLED)
+        val ITEM_REF = Regex("item:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
     }
 }
