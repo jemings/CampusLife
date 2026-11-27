@@ -596,7 +596,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 
 **오케스트레이터 결정: 배치와 기동** (2026-11-26, "결정")
 - **E1. 배치:** `services/agent/`(패키지 `campuslife_hub`), `.python-version` 3.12, `uv.lock` 커밋. 계약 패키지는 editable path 의존입니다(non-editable이면 패키지 밖 `schemas/`를 찾지 못함). 루트 uv workspace는 쓰지 않습니다(#20의 패키지별 lock·CI와 충돌).
-- **E2. SQLite 기동 검사:** 하한 3.35(RETURNING)와 기능 probe(fts5, trigram, json_extract, generated column). 실패하면 이유를 출력하고 기동을 거부합니다. 빌드의 버전 번호만으로는 어떤 모듈을 넣고 빌드했는지 알 수 없어서 실제로 시도해 봅니다. WAL, `synchronous=FULL`은 항상입니다. `secure_delete`를 켜지 못하는 빌드도 기동을 거부합니다.
+- **E2. SQLite 기동 검사:** 하한 3.35(RETURNING)와 기능 probe(fts5, trigram, json_extract, generated column, FTS5 `secure-delete` 옵션(3.44, D27)). 실패하면 이유를 출력하고 기동을 거부합니다. 빌드의 버전 번호만으로는 어떤 모듈을 넣고 빌드했는지 알 수 없어서 실제로 시도해 봅니다. WAL, `synchronous=FULL`은 항상입니다. `secure_delete`를 켜지 못하는 빌드도 기동을 거부합니다.
 - **E3. 마이그레이션:** 번호 붙인 SQL 파일과 `PRAGMA user_version`. DB가 코드보다 새로우면 기동을 거부합니다. alembic·ORM은 쓰지 않습니다.
 - **E11. 단일 인스턴스:** `<root>/hub.lock`(`msvcrt.locking`/`fcntl.flock`). 두 번째 실행은 메시지와 함께 0이 아닌 코드로 끝납니다. 쓰기 CLI는 서빙 중인 Hub의 admin API를 거치고, Hub가 없으면 lock을 직접 잡습니다. restore는 채울 빈 root의 lock을 잡습니다.
   - 읽기 명령(`ls`, `fsck`)은 DB에 쓰지 않습니다(2026-11-26, "PR #28 1차"). migrate·신원 발급을 하지 않고, 스키마가 코드와 다르면 거부합니다. 근거: lock을 쥔 옛 Hub가 있는데 새 checkout의 읽기 명령이 DB를 새 버전으로 올리면 옛 Hub가 깨집니다.
@@ -1007,7 +1007,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **근거:**
   - 2음절·조사 결합·합성어 내부·영한 혼합 모두에서 재현율 1.00, 오탐 0입니다(합성 코퍼스 기준, 위 측정).
   - C와 달리 2글자 질의도 색인으로 찾고 bm25로 순위를 매깁니다. 스캔은 1음절 질의만 합니다.
-  - 크기는 contentless로 두면 C보다 작습니다.
+  - 크기는 C보다 큽니다. contentless로 두면 C보다 작지만, purge 비용 때문에 분석문을 저장하는 표를 골랐습니다(아래 "색인 파일" 절).
 - **버린 안:**
   - A·B는 조사와 합성어 내부를 놓칩니다.
   - C는 2글자 질의를 순위 없는 전체 스캔으로 처리합니다.
@@ -1019,11 +1019,55 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 1음절 질의는 자료 크기에 비례해 스캔합니다.
   - unicode61의 Unicode 표가 Python의 표와 조금 달라서(SQLite 쪽이 오래됨), 드문 글자만으로 된 항은 0건이 될 수 있습니다.
 - 인덱스는 `analyzer_id@version`(`hangul-bigram@1`)을 meta에 기록합니다. 분석기를 바꾸면 cache 파일을 지우고 다시 만듭니다.
-- FTS 테이블 모양(분석문 저장 또는 contentless), 색인 파일, follower, 필터는 #11 PR2–PR3이 정합니다.
+- FTS 테이블 모양, 색인 파일, follower는 아래 "색인 파일" 절(#11 PR2)이 정합니다. 필터는 #11 PR3이 정합니다.
 
 **결과:**
 - 코드는 `services/agent/src/campuslife_hub/search/analyzer.py`, 측정은 `services/agent/tools/search_bench.py`입니다(`uv run python tools/search_bench.py`, 출력 첫 줄이 출처).
 - 미결 O2를 닫습니다.
+
+### 색인 파일과 FTS 표 모양 (#11 PR2, 2026-11-28)
+
+**문제:** purge 뒤에는 지운 텍스트의 바이트가 파일에 남으면 안 됩니다(U2). 그런데 `PRAGMA secure_delete`만으로는 FTS5 토큰 바이트가 지워지지 않습니다(PR #69 리뷰, 로컬 합성).
+- 분석문을 저장하는 표는 FTS5의 `secure-delete` 옵션(`INSERT INTO fts(fts, rank) VALUES('secure-delete', 1)`)을 켜야 지운 문서의 토큰 바이트가 0이 됩니다.
+- contentless 표(`content=''`, `contentless_delete=1`)는 그 옵션을 켜도 토큰이 남습니다. 삭제 뒤 `'optimize'`로 색인 전체를 다시 써야 0이 됩니다.
+
+**측정:** `services/agent/tools/search_purge_bench.py`가 **로컬 합성** 코퍼스(`search_bench.py`와 같은 100,000블록, 15.9M자)로 쟀습니다.
+- 두 모양 모두 WAL, `secure_delete=ON`, FTS5 `secure-delete` 옵션을 켜고, `fold_original`을 거친 원문 표를 곁에 둡니다.
+- purge는 표식 문서 하나를 지우고(contentless는 `'optimize'`까지) WAL을 `TRUNCATE`로 비우는 데까지입니다. 표식 토큰은 DB와 WAL 파일 바이트에서 셉니다.
+
+| 모양 | 크기 | purge (SQLite 3.45.1 / 3.50.4) | 표식 토큰 전 → 뒤 |
+|---|---|---|---|
+| 분석문 저장 | 135.4 MB | 0.016 s / 0.010 s | 11 → 0 |
+| contentless + `'optimize'` | 67.8 MB | 0.253 s / 0.228 s | 8 → 0 |
+
+- 실행 환경: WSL2 Linux x86_64. 3.45.1은 Python 3.12.3, 3.50.4는 uv CPython 3.13.13입니다. 크기와 토큰 수는 두 빌드가 같습니다.
+- 실 DB 사본 기준 확인은 [사내] #67입니다.
+
+**결정:** FTS5 표가 분석문을 저장하고 `secure-delete` 옵션을 켭니다(#11 PR2).
+- **근거:** 분석문 저장 표의 purge는 지운 문서만큼만 씁니다. contentless는 purge마다 `'optimize'`로 색인 전체를 다시 쓰므로, 비용이 색인 크기에 비례해 늘어납니다.
+- **버린 안:** contentless. 크기는 절반이지만 위 purge 비용이 들고, SQLite 3.43 이상(`contentless_delete`)이 필요합니다.
+- **받아들이는 단점:** 색인 파일이 약 두 배입니다(100,000블록에서 135 MB 대 68 MB).
+- FTS5 `secure-delete` 옵션은 SQLite 3.44 이상에 있습니다. 그래서 기동 probe가 이 옵션을 시도합니다(E2).
+
+**색인 파일 `<root>/cache/search.sqlite3`:**
+- 백업하지 않는 cache입니다(D9). 파일이 없거나 meta의 `hub_id`, `epoch`, `index_version`(스키마 번호, 분석기 id, 색인하는 Artifact type 목록) 가운데 하나가 다르면 파일을 지우고 since=0부터 다시 만듭니다. 그래서 다시 만들려면 Hub를 멈추고 파일을 지우면 됩니다. 추출기 버전이 바뀌는 것은 다시 만들 이유가 아닙니다.
+- 메인 DB와 같은 규칙을 따릅니다(#65).
+  - 연결에 `PRAGMA secure_delete=ON`을 켜고, 켜지지 않는 빌드에서는 색인을 쓰지 않습니다(`IndexUnusable`).
+  - purge 훅은 문서를 지운 뒤 WAL을 `TRUNCATE`로 비웁니다. 비우지 못하면 훅이 실패하고, purge는 미완료로 남아 훅을 다시 실행합니다.
+- 문서는 출처(`item:`, `attachment:`, `blob:`)마다 둡니다.
+  - Item의 title과 body. soft-delete된 Item은 빼고, restore되면 다시 넣습니다.
+  - Attachment의 `original_filename`.
+  - Blob의 현재 extraction 블록과 그 refs. "현재"는 `artifacts.current`가 고릅니다(살아 있는 것 가운데 rev가 가장 큰 Artifact).
+  - Suggestion, Capture, Relation, Tag, 그리고 모르는 entity(`conflict_record` 등)의 행은 건너뜁니다.
+- 원문은 `analyze`·`fold_original`과 같은 치환(제어문자, 짝 없는 surrogate → 공백, NFC)을 거쳐 저장합니다.
+
+**follower:**
+- `SearchIndex.catch_up`이 메인 `sync_index`를 cursor 뒤로 256행씩 읽고, 바뀐 출처의 현재 상태로 문서를 바꿉니다.
+- cursor는 문서와 같은 cache 트랜잭션에 씁니다. 출처의 버전(Artifact id, 또는 텍스트의 해시)이 같으면 건너뛰므로, touch는 아무것도 쓰지 않습니다.
+- 배치와 purge 훅은 lock 하나를 씁니다. 배치는 lock을 잡은 뒤에 메인 DB를 읽습니다. 그래서 훅이 지운 것을 배치가 다시 쓰지 않습니다.
+- 본문 읽기, 분석, 쓰기는 worker thread에서 합니다. 최대 본문(20,000블록, 8M자)을 색인하는 동안 이벤트 루프의 최대 지연은 0.009 s였습니다(로컬 합성, 시험 `test_indexing_the_largest_body_keeps_the_event_loop_answering_within_a_second`).
+- `open_core`는 Core마다 purge 훅에 색인의 `forget`을 등록하고, 멈춘 Hub가 남긴 purge를 마치기 전에 등록합니다. 그래서 CLI가 연 Core도 색인을 지웁니다.
+- Hub는 `HostConfig.search_every`(기본 2초)마다 `catch_up`을 부릅니다. 실패하면 로그를 남기고 다음 차례에 다시 합니다.
 
 ---
 
