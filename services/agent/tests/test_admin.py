@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import json
@@ -830,6 +831,36 @@ async def test_purging_from_the_local_ui_removes_the_blob_and_the_notes_chosen(t
     assert (note is None) is chosen
     if not chosen:
         assert "evidence_purged_at" in json.loads(note[0])
+
+
+async def test_purging_from_the_local_ui_stops_a_job_running_on_what_goes(tmp_path):
+    started, stopped = asyncio.Event(), []
+
+    async def slow(job, context):
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            stopped.append(job.id)
+            raise
+
+    async with hub(tmp_path) as (client, admin):
+        await log_in(client)
+        await import_files(admin.core, [source(tmp_path, "week3.pdf", b"%PDF synthetic week 3")])
+        [(attachment_id, sha)] = await admin.core.db.read(lambda snap: snap.execute("SELECT id, blob_sha256 FROM attachments").fetchall())
+        registry = admin.runner.context.registry
+        registry.handle("ocr", Pipeline("ocr-1"), slow)
+        job = await admin.core.db.write(lambda tx: registry.enqueue(tx, JobSpec("ocr", f"attachment:{attachment_id}", (sha,), {})))
+        running = asyncio.create_task(admin.runner.run_due())
+        await asyncio.wait_for(started.wait(), 10)
+
+        response = await client.post(f"/blobs/{sha}/purge", headers=ORIGIN)
+
+        assert stopped == [job.id]
+        await asyncio.wait_for(running, 10)
+        state = await admin.core.db.read(lambda snap: jobs.get(snap, job.id).state)
+    assert response.status_code == 200
+    assert state is JobState.CANCELLED
 
 
 @pytest.mark.parametrize("blob", ["e" * 64, "not-a-sha256"])
