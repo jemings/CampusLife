@@ -8,7 +8,8 @@
 - the job runner, started again after runner_restart_delay when it ends with an error, each end
   logged and counted in the status;
 - maintenance every maintenance_every: upload session expiry, Blob collection, forgetting
-  old Mutation results and finishing unfinished purges, which opening the Core also does once.
+  old Mutation results, making Devices unseen for longer than devices.dormant_after dormant and
+  finishing unfinished purges, which opening the Core also does once.
 Stopping closes the listeners, stops the runner, ends the handlers left running and leaves behind
 those that will not end. `run` then lets the process exit without waiting on them, nor on a
 thread a cancelled handler started with asyncio.to_thread, which runs on to its end: the loop's
@@ -35,7 +36,7 @@ import uvicorn
 from fastapi import APIRouter
 from starlette.types import ASGIApp
 
-from . import admin_token, purge
+from . import admin_token, devices, purge
 from .admin import Admin, create_app
 from .admin_auth import AdminAuth
 from .backup import BackupSettings
@@ -170,12 +171,13 @@ async def _keep_running(runner: JobRunner, stopping: asyncio.Event, record: Runn
             await _stopped_within(stopping, config.runner_restart_delay)
 
 
-async def _maintain(core: Core, stopping: asyncio.Event, every: timedelta, clock: Callable[[], datetime]) -> None:
+async def _maintain(core: Core, stopping: asyncio.Event, every: timedelta, clock: Callable[[], datetime], dormant_after: timedelta) -> None:
     while not await _stopped_within(stopping, every):
         now = clock()
         try:
             kept = await core.blobs.expire_sessions(now) + await core.blobs.collect_garbage(now)
             await forget_old_results(core.db, now)
+            await devices.mark_dormant(core, now=now, dormant_after=dormant_after)
             for finish in await purge.finish_unfinished(core.db, core.blobs, core.purge_hooks):
                 kept += finish.kept
         except Exception:
@@ -231,7 +233,7 @@ async def serve(
         tasks = [asyncio.create_task(listener.serve(sockets=[bound])) for listener, bound in zip(listeners, sockets, strict=True)]
         tasks += [
             asyncio.create_task(_keep_running(runner, stopping, record, config)),
-            asyncio.create_task(_maintain(core, stopping, config.maintenance_every, clock)),
+            asyncio.create_task(_maintain(core, stopping, config.maintenance_every, clock, config.devices.dormant_after)),
         ]
         while not all(listener.started for listener in listeners):
             _raise_if_any_ended(tasks)
