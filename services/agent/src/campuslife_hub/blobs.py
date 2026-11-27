@@ -226,7 +226,7 @@ def has_blob(runner: Tx | Snapshot, sha256: str) -> bool:
     return runner.execute("SELECT 1 FROM blobs WHERE sha256 = ?", (sha256,)).fetchone() is not None
 
 
-def _fsync_directory(path: Path) -> None:
+def fsync_directory(path: Path) -> None:
     if sys.platform == "win32":
         return
     fd = os.open(path, os.O_RDONLY)
@@ -236,7 +236,7 @@ def _fsync_directory(path: Path) -> None:
         os.close(fd)
 
 
-def _copy_hashing(sources: Sequence[Path], staging: Path) -> StoredBlob:
+def copy_hashing(sources: Sequence[Path], staging: Path) -> StoredBlob:
     digest = hashlib.sha256()
     size = 0
     with open(staging, "xb") as writer:
@@ -328,7 +328,7 @@ class BlobStore:
         else:
             final.parent.mkdir(parents=True, exist_ok=True)
             self._files.replace(staging, final)
-            _fsync_directory(final.parent)
+            fsync_directory(final.parent)
         try:
             os.chmod(final, READ_ONLY)
         except FileNotFoundError:
@@ -337,7 +337,7 @@ class BlobStore:
     def _store_from(self, sources: Sequence[Path], expect: StoredBlob | None) -> StoredBlob:
         staging = self._new_staging_path()
         try:
-            stored = _copy_hashing(sources, staging)
+            stored = copy_hashing(sources, staging)
             if expect is not None and stored != expect:
                 raise HashMismatch(f"the bytes are {stored.sha256} and {stored.size} bytes long, not {expect.sha256} and {expect.size}")
             final = self.path_of(stored.sha256)
@@ -456,7 +456,7 @@ class BlobStore:
             try:
                 chunk.parent.mkdir(parents=True, exist_ok=True)
                 self._retry_while_locked(lambda: self._files.place_new(staging, chunk))
-                _fsync_directory(chunk.parent)
+                fsync_directory(chunk.parent)
                 return
             except FileExistsError:
                 pass

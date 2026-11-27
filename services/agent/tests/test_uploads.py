@@ -384,14 +384,14 @@ def finalize_first(monkeypatch, step):
     import campuslife_hub.blobs as blobs_module
 
     loop = asyncio.get_running_loop()
-    real = blobs_module._copy_hashing
+    real = blobs_module.copy_hashing
 
     def step_then_combine(sources, staging):
-        monkeypatch.setattr(blobs_module, "_copy_hashing", real)
+        monkeypatch.setattr(blobs_module, "copy_hashing", real)
         asyncio.run_coroutine_threadsafe(step(), loop).result(timeout=5)
         return real(sources, staging)
 
-    monkeypatch.setattr(blobs_module, "_copy_hashing", step_then_combine)
+    monkeypatch.setattr(blobs_module, "copy_hashing", step_then_combine)
 
 
 async def test_a_finalize_whose_chunks_another_finalize_removed_answers_stored(tmp_path, store, phone, monkeypatch):
