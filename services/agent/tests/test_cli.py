@@ -318,6 +318,27 @@ def test_without_a_console_a_refused_restore_leaves_the_root_empty(tmp_path):
     assert not root.exists(), sorted(str(p.relative_to(root)) for p in root.rglob("*"))
 
 
+def test_without_a_console_a_refused_restore_leaves_an_empty_root_it_was_given_empty(tmp_path):
+    root = tmp_path / "Restored"
+    root.mkdir()
+
+    finished = no_console("", ["--root", str(root), "restore", "--from", str(tmp_path / "no-drive")])
+
+    assert finished.returncode == 1
+    assert list(root.iterdir()) == []
+
+
+def test_without_a_console_a_failure_on_a_root_without_a_hub_writes_no_log_there(tmp_path):
+    root = tmp_path / "Folder"
+    root.mkdir()
+    (root / "notes.txt").write_text("not a Hub", encoding="utf-8")
+
+    finished = no_console("", ["--root", str(root), "ls"])
+
+    assert finished.returncode == 1
+    assert sorted(path.name for path in root.iterdir()) == ["notes.txt"]
+
+
 @pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="chmod 000 keeps out only a POSIX user other than root")
 def test_without_a_console_a_root_the_cli_may_not_look_into_still_ends_with_1(tmp_path, monkeypatch):
     shut = tmp_path / "shut"
