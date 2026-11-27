@@ -108,3 +108,34 @@ async def test_open_values_the_hub_may_carry_pass_through_the_feed(db):
     await db.write(lambda tx: store.write(tx, EntityRef(Entity.RELATION, relation["id"]), relation))
     body = await page(db, 0, 10)
     assert body["changes"][0]["data"] == relation
+
+
+async def feed_rows(db):
+    return [(row["entity"], row["id"], row["rev"], row.get("data")) for row in (await page(db, 0, 500))["changes"]]
+
+
+async def test_touching_a_row_sends_it_out_again_unchanged_at_a_new_rev(db):
+    capture, item = EntityRef(Entity.CAPTURE, CAPTURE_ID), EntityRef(Entity.ITEM, ITEM_ID)
+    await db.write(lambda tx: store.write(tx, capture, capture_row()))
+    await db.write(lambda tx: store.write(tx, item, item_row()))
+
+    capture_rev = await db.write(lambda tx: store.touch(tx, capture))
+    item_rev = await db.write(lambda tx: store.touch(tx, item))
+
+    assert capture_rev < item_rev
+    assert await feed_rows(db) == [
+        ("capture", CAPTURE_ID, capture_rev, capture_row()),
+        ("item", ITEM_ID, item_rev, {**item_row(), "rev": item_rev}),
+    ]
+
+
+async def test_touching_what_is_not_stored_writes_nothing(db):
+    gone = EntityRef(Entity.CAPTURE, CAPTURE_ID)
+    await db.write(lambda tx: store.write(tx, gone, capture_row()))
+    await db.write(lambda tx: store.write(tx, gone, None))
+    before = await feed_rows(db)
+
+    touched = [await db.write(lambda tx: store.touch(tx, ref)) for ref in (gone, EntityRef(Entity.ITEM, ITEM_ID))]
+
+    assert touched == [None, None]
+    assert await feed_rows(db) == before
