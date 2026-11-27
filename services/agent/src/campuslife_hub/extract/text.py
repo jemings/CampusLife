@@ -24,7 +24,9 @@ VERSION = "1"
 MAX_BYTES_PER_CHAR = 4
 """Reading max_text_chars times this many bytes reads at least max_text_chars characters in any of the encodings."""
 
-HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$")
+HEADING = re.compile(r" {0,3}(#{1,6})[ \t]+(.*)")
+"""The heading's text is cut by _heading, not here: a lazy text before an optional closing # sequence backtracks
+over every blank of a long line, quadratic in its length."""
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 BOMS = ((codecs.BOM_UTF8, "utf-8-sig"), (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16"))
 
@@ -50,6 +52,19 @@ def decode(data: bytes, *, final: bool = True) -> tuple[str, bool]:
     return _decoded(data, "utf-8", final, "replace"), True
 
 
+def _heading(line: str) -> tuple[int, str] | None:
+    """The level and text of a Markdown heading line, without a closing sequence of # after a blank; None for any
+    other line or a heading with no text."""
+    found = HEADING.match(line)
+    if found is None:
+        return None
+    text = found.group(2).strip()
+    closed = text.rstrip("#")
+    if closed != text and closed[-1:] in (" ", "\t"):
+        text = closed.strip()
+    return (len(found.group(1)), text) if text else None
+
+
 def _units(lines: list[str], markdown: bool) -> Iterator[tuple[int | None, str]]:
     """(heading level, text) for a heading, (None, text) for a paragraph or a fenced block, in order."""
     paragraph: list[str] = []
@@ -62,16 +77,16 @@ def _units(lines: list[str], markdown: bool) -> Iterator[tuple[int | None, str]]
                 paragraph, fence = [], None
             continue
         opening = FENCE.match(line) if markdown else None
-        heading = HEADING.match(line) if markdown else None
-        if opening or (heading and heading.group(2).strip()) or not line.strip():
+        heading = _heading(line) if markdown else None
+        if opening or heading or not line.strip():
             if paragraph:
                 yield None, "\n".join(paragraph)
                 paragraph = []
         if opening:
             fence = opening.group(1)[0] * 3
             paragraph = [line]
-        elif heading and heading.group(2).strip():
-            yield len(heading.group(1)), heading.group(2).strip()
+        elif heading:
+            yield heading
         elif line.strip():
             paragraph.append(line)
     if paragraph:
