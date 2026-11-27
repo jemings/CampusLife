@@ -276,7 +276,7 @@ REQUIRED = {
     "device/pair_request#": {"secret", "platform", "device_name", "app_version"},
     "device/pair_response#": {"device_id", "token"},
     "device/pairing_offer#": {"hub_url", "hub_id", "secret"},
-    "device/status#": {"app_version", "pending_upload_count", "pending_mutation_count", "open_conflict_count"},
+    "device/status#": {"app_version", "pending_upload_count", "pending_mutation_count", "rejected_mutation_count"},
     "blob/upload_request#": {"sha256", "size"},
     "blob/upload_session#": {"sha256", "size", "chunk_size", "received"},
     "blob/stored#": {"sha256", "size"},
