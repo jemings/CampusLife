@@ -36,11 +36,13 @@ class SyncStore(
     /** Marks the start of a pull: Mutations applied before it leave the overlay when it finishes (decision 5). */
     fun beginPull(): Unit = db.inTransaction { moveAll(TransferState.ACKED, OutboxEvent.PULL_BEGUN) }
 
-    /** Writes one changes page over entity_cache and moves the cursor; the last page finishes the pull. */
+    /**
+     * Writes one changes page over entity_cache and moves the cursor; the last page finishes the pull.
+     * Rows of every entity are kept, so a later version reads the ones this version does not without a since=0.
+     */
     fun applyPage(page: ChangesPage): Unit = db.inTransaction {
         check(db.syncMeta().setCursor(page.nextSince) == 1) { "a changes page arrived before the Hub is known" }
         for (change in page.changes) {
-            if (change.entity !in CACHED) continue
             val data = change.data
             if (change.deleted || data == null) {
                 db.cache().remove(change.entity.value, change.id)
@@ -124,15 +126,5 @@ class SyncStore(
 
     companion object {
         const val MAX_BATCH = 200
-
-        private val CACHED = setOf(
-            EntityName.CAPTURE,
-            EntityName.ATTACHMENT,
-            EntityName.ITEM,
-            EntityName.RELATION,
-            EntityName.TAG,
-            EntityName.ARTIFACT,
-            EntityName.SUGGESTION,
-        )
     }
 }
