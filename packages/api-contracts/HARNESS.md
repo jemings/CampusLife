@@ -81,10 +81,12 @@ uv run campuslife-contracts compare fixtures/valid <out>
 `rendition`은 envelope을 쓰지 않습니다. `content_blob`이 렌디션 PDF Blob 그 자체이고, 필기 레이어가 고정되는 Blob도 이것입니다(D12). 무엇의 렌디션인지는 `artifact_type`, `subject_ref`(`blob:<원본>`), `pipeline_version`이 말합니다. 어느 type이 JSON 본문 스키마를 갖는지는 `tests/test_schema_conventions.py`의 `ARTIFACT_BODY_SCHEMAS`가 고정합니다.
 
 - `blocks`의 순서가 ordinal(0부터)입니다. `refs`는 블록의 근거 위치이고, 비어 있으면 근거 없는 블록으로 표시합니다. 모르는 `block_type`은 `text`만으로 표시하고 `payload`는 해석하지 않습니다.
-- block `id`는 Hub가 만드는 소문자 hex SHA-256이고, LLM은 이 id로만 인용합니다(D13). 클라이언트는 id를 다시 계산하지 않고 그대로 보존합니다.
+- 본문 Blob의 바이트는 `canonical_json(body)`입니다(비교기와 같은 함수). 그래서 같은 본문은 같은 Blob이고, 그 Blob을 입력으로 받는 job(#8)의 job_key가 흔들리지 않습니다. Hub가 쓸 때 지킵니다(#5 PR2).
+- block `id`는 Hub가 만드는 소문자 hex SHA-256이고 본문 안에서 하나뿐입니다. LLM은 이 id로만 인용합니다(D13). 클라이언트는 id를 다시 계산하지 않고 그대로 보존합니다.
 - extraction 본문은 추출기 하나의 한 버전이 Blob 하나(`blob`, Artifact의 `subject_ref`는 `blob:<blob>`)에서 읽은 블록입니다. 규칙 두 개는 Hub 검증기만 봅니다.
   - `block_id`: 블록 `id`는 `canonical_json([blob, extractor.id, extractor.version, ordinal])`의 SHA-256입니다. 같은 Blob·추출기 버전이면 id가 같고, 버전이 바뀌면 새 Artifact에 새 id가 생깁니다(옛 Artifact는 남음).
-  - `block_anchor`: 모든 ref는 그 `blob` 안의 위치입니다(`capture` 앵커 없음). 정확한 위치를 모르는 블록은 `document`를 씁니다.
+  - `block_anchor`: 모든 ref는 kind와 상관없이 `blob`이 본문의 `blob`과 같고 `capture`가 없습니다. 모르는 kind도 예외가 아닙니다. 추출기 출력은 신뢰할 수 없는 입력이고 이 규칙은 Hub 검증기만 읽기 때문입니다. 정확한 위치를 모르는 블록은 `document`를 씁니다.
+- 본문·블록 크기(블록 수, `text` 길이 등) 상한은 계약에 두지 않습니다. #5 PR2의 상한 표(S7)가 Hub에서 강제합니다.
 - extraction `warnings[].code`는 읽지 못했거나 일부만 읽은 이유입니다(`no_text_layer`, `limit_reached`, `replaced_characters`). 처리 결과(`outcome_code`)는 ProcessingJob이 가지며 본문에 싣지 않습니다(D1).
 
 ## HTTP 표면 (OpenAPI)
