@@ -267,12 +267,21 @@ def stop_on_signals(stop: asyncio.Event) -> Iterator[None]:
             signal.signal(number, handler)
 
 
+def holds_hub(layout: Layout) -> bool:
+    """Whether the data root holds a Hub, the one thing that lets its logs directory be made: a log would make a root
+    init must create, or restore must find empty, hold something. A root that cannot be looked into holds none."""
+    try:
+        return layout.database.is_file()
+    except OSError:
+        return False
+
+
 async def run_hub(root: Path, config: HostConfig = HostConfig(), *, registry: JobRegistry | None = None, sync_app: SyncAppFactory | None = None) -> None:
-    """The Hub at root, serving until a signal stops it, with its log file in root/logs, where an error that ends it,
+    """The Hub at root, serving until a signal stops it, with, if root holds a Hub, its log file in root/logs, where an error that ends it,
     starting or serving, is logged too: run from the logon task through pythonw, the Hub has no stderr."""
     layout = Layout(safe_data_root(root))
     redactor = Redactor()
-    handlers = [file_handler(layout.logs / LOG_FILE, redactor)]
+    handlers = [file_handler(layout.logs / LOG_FILE, redactor)] if holds_hub(layout) else []
     if sys.stderr is not None:
         handlers.append(logging.StreamHandler())
         handlers[-1].setFormatter(RedactingFormatter(redactor, "%(levelname)s %(name)s: %(message)s"))
