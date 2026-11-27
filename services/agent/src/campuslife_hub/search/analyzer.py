@@ -3,8 +3,14 @@
 FTS5's `unicode61` tokenizer splits on spaces and punctuation, so "자료구조를" is one token and a
 search for "자료구조" misses it. `hangul-bigram@1` rewrites every run of Hangul or CJK letters
 into its overlapping two-letter pieces before FTS5 sees it ("자료구조를" → "자료 료구 구조 조를"),
-and the same rewrite turns a query term into a phrase of those pieces, so a query matches any
-document that holds it as a substring. Other text is left to `unicode61`.
+and the same rewrite turns a query term into a phrase of those pieces. Other text is left to
+`unicode61`, which matches Latin letters and digits as whole tokens.
+
+A query term finds the documents whose folded original holds it: Hangul and CJK letters as a
+substring, Latin letters and digits as whole tokens, punctuation as written. Where the phrase alone would find more (unicode61 drops a term's punctuation,
+so "C++" is the token "c"), the plan checks the term against the folded original as well, and
+where no phrase can hold the term (a lone Hangul letter, nothing but punctuation) the plan only
+scans. `fold_original` is the one fold for the stored original and for the scanned term.
 """
 
 from __future__ import annotations
@@ -29,11 +35,23 @@ class TextAnalyzer(Protocol):
     def analyze(self, text: str) -> str:
         """The text to store in the FTS5 column, NFC-normalized first."""
 
-    def phrase(self, term: str) -> str | None:
-        """The analyzed form of one NFC query term, or None when the index cannot find it.
+    def fold_original(self, text: str) -> str:
+        """The original as scans see it, folded as the tokenizer folds what it indexes."""
 
-        The caller then looks for the term as a substring of the original text instead.
-        """
+    def term(self, term: str) -> IndexedTerm | None:
+        """How the index finds one NFC query term, or None when only a scan can find it."""
+
+
+@dataclass(frozen=True)
+class IndexedTerm:
+    """The phrase that finds a term; `exact` is False when it also finds text without the term."""
+
+    phrase: str
+    exact: bool
+
+
+_UNBINDABLE = re.compile(r"[\x00-\x1f\x7f-\x9f\ud800-\udfff]")
+"""Control characters (a NUL ends an FTS5 string early) and lone surrogates (SQLite cannot bind them)."""
 
 
 _CJK_LETTERS = (
@@ -49,14 +67,29 @@ _CJK_LETTERS = (
 _CJK_RUN = re.compile(f"[{_CJK_LETTERS}]+")
 
 
-def _has_unicode61_token(term: str) -> bool:
+def _is_unicode61_token_char(char: str) -> bool:
     # unicode61's default token characters are categories L*, N* and Co; the rest separate tokens.
-    return any(unicodedata.category(char)[0] in "LN" or unicodedata.category(char) == "Co" for char in term)
+    category = unicodedata.category(char)
+    return category[0] in "LN" or category == "Co"
 
 
 def _has_lone_letter(term: str) -> bool:
     """A run of one letter is indexed only where it stands alone; inside a longer run it is half of a pair."""
     return any(len(run.group()) == 1 for run in _CJK_RUN.finditer(term))
+
+
+def _latin_without_diacritic() -> dict[int, str]:
+    # unicode61 (remove_diacritics 1) strips one combining mark from an ASCII letter, nothing else.
+    latin = (*range(0x00C0, 0x0250), *range(0x1E00, 0x1F00))
+    table = {}
+    for code in latin:
+        base, *marks = unicodedata.normalize("NFD", chr(code))
+        if len(marks) == 1 and unicodedata.category(marks[0]) == "Mn" and base.isascii():
+            table[code] = base
+    return table
+
+
+_LATIN_WITHOUT_DIACRITIC = _latin_without_diacritic()
 
 
 def _bigrams(run: str) -> str:
@@ -71,13 +104,18 @@ class HangulBigram:
     fts5_tokenize: str = "unicode61"
 
     def analyze(self, text: str) -> str:
-        nfc = unicodedata.normalize("NFC", text)
+        nfc = unicodedata.normalize("NFC", _UNBINDABLE.sub(" ", text))
         return _CJK_RUN.sub(lambda run: f" {_bigrams(run.group())} ", nfc)
 
-    def phrase(self, term: str) -> str | None:
-        if not _has_unicode61_token(term) or _has_lone_letter(term):
+    def fold_original(self, text: str) -> str:
+        nfc = unicodedata.normalize("NFC", _UNBINDABLE.sub(" ", text))
+        return nfc.lower().translate(_LATIN_WITHOUT_DIACRITIC)
+
+    def term(self, term: str) -> IndexedTerm | None:
+        token_chars = [_is_unicode61_token_char(char) for char in term]
+        if not any(token_chars) or _has_lone_letter(term):
             return None
-        return self.analyze(term).strip()
+        return IndexedTerm(self.analyze(term).strip(), exact=all(token_chars))
 
 
 HANGUL_BIGRAM = HangulBigram()
@@ -96,7 +134,8 @@ class SearchPlan:
     """A query made safe: an FTS5 MATCH expression, and LIKE patterns for the original text.
 
     A document matches when it matches `match` (if any) and every pattern in `like`, each
-    used as `text LIKE ? ESCAPE LIKE_ESCAPE` against the document's NFC original.
+    used as `text LIKE ? ESCAPE LIKE_ESCAPE` against the document's original passed through
+    the analyzer's `fold_original`.
     """
 
     match: str | None
@@ -112,10 +151,6 @@ def _substring_pattern(term: str) -> str:
     return f"%{escaped}%"
 
 
-_UNBINDABLE = re.compile(r"[\x00-\x1f\x7f-\x9f\ud800-\udfff]")
-"""Control characters (a NUL ends an FTS5 string early) and lone surrogates (SQLite cannot bind them)."""
-
-
 def plan_query(query: str, analyzer: TextAnalyzer) -> SearchPlan | None:
     """The plan for a query typed by a user, or None when it holds nothing to search for."""
     text = unicodedata.normalize("NFC", _UNBINDABLE.sub(" ", query))
@@ -128,9 +163,9 @@ def plan_query(query: str, analyzer: TextAnalyzer) -> SearchPlan | None:
         return None
     matched, scanned = [], []
     for term in terms:
-        phrase = analyzer.phrase(term)
-        if phrase is None:
-            scanned.append(_substring_pattern(term))
-        else:
-            matched.append(_quoted(phrase))
+        indexed = analyzer.term(term)
+        if indexed is not None:
+            matched.append(_quoted(indexed.phrase))
+        if indexed is None or not indexed.exact:
+            scanned.append(_substring_pattern(analyzer.fold_original(term)))
     return SearchPlan(" AND ".join(matched) or None, tuple(scanned))
