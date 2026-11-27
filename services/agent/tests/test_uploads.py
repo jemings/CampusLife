@@ -1,6 +1,7 @@
 import asyncio
 import errno
 import hashlib
+import os
 import shutil
 import stat
 import threading
@@ -380,6 +381,21 @@ async def test_a_chunk_that_fails_to_move_keeps_its_error_and_leaves_no_staging_
 
     with pytest.raises(PermissionError, match="place refused"):
         await store.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])
+
+    assert staging_files(tmp_path) == []
+    assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == ()
+
+
+async def test_a_chunk_that_fails_to_be_written_keeps_its_error_and_leaves_no_staging_file(tmp_path, store, phone, monkeypatch):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+
+    def full(fd):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(os, "fsync", full)
+        with pytest.raises(OSError, match="No space left"):
+            await store.put_chunk(phone, sha(DATA), 0, chunks(DATA)[0])
 
     assert staging_files(tmp_path) == []
     assert (await store.open_upload(phone, sha(DATA), len(DATA))).received == ()
