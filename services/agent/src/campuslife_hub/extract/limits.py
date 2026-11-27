@@ -7,12 +7,15 @@ other bounds. Every breach ends the job with outcome unsafe_input (FILE-INGESTIO
 Where the defaults come from: local measurements of the real child on synthetic inputs (Linux, CPython 3.12, 2026-11-28;
 generated Korean and English Markdown, generated ZIPs), not on users' files:
 - the Hub builds and validates a body off the event loop, at about 0.78 ms a block whatever the file's size (NFC, block
-  ids, the contract validator, canonical JSON; Markdown read by the text extractor): 1.6 s for 2,000 blocks, 2.0 s for
-  2,500, 3.8 s for 5,000, 7.7 s for 10,000, 38 s for 50,000. Nearly all of it is jsonschema checking each block and
-  its Locator. max_blocks keeps one body near 2 s, and an extractor stops there, partial;
+  ids, the contract validator, canonical JSON; Markdown read by the text extractor): 1.6 s for 2,000 blocks, 3.8 s
+  for 5,000, 7.7 s for 10,000, 15.8 s for 20,000, 38 s for 50,000. Nearly all of it is jsonschema checking each block
+  and its Locator. It runs in a worker thread, so it stalls the event loop at no block count; it holds the one job
+  runner, inside the handler timeout (timeout_s and HANDLER_SLACK). max_blocks at 20,000, about 16 s, leaves a 300-page
+  textbook of some 3,000 blocks whole with room; 50,000, about 38 s, would leave the timeout little room. An extractor
+  stops at max_blocks, partial;
 - the text extractor with no bounds took 0.82 s and 318 MiB of memory for 64 MiB of text and printed 84 MiB, a 106 MiB
   body of 168,252 blocks; 128 MiB took 1.7 s and 617 MiB. Under these defaults any such file stops at max_blocks,
-  partial: 0.1 s, at most 132 MiB, 1.2 MiB printed, a 1.6 MiB body. A file of few, long blocks stops at
+  partial: 0.2 s, at most 141 MiB, 10 MiB printed, a 12.6 MiB body. A file of few, long blocks stops at
   max_text_chars instead: all-Korean text, 3 bytes a character, prints at most about 24 MiB, so stdout_max_bytes and
   body_max_bytes hold with room;
 - identify read a 10,000-member ZIP in 0.05 s and 26 MiB;
@@ -41,8 +44,8 @@ class Limits:
     """What the child may print; past it the child is killed."""
     input_max_bytes: int = 256 * MiB
     """The Blob a job reads; a larger one is not handed to a child."""
-    max_blocks: int = 2_500
-    """Blocks of one body: what the Hub builds and validates in about 2 s."""
+    max_blocks: int = 20_000
+    """Blocks of one body: the Hub builds and validates them off the event loop in about 16 s."""
     max_block_text_chars: int = 200_000
     max_text_chars: int = 8_000_000
     """The text of all blocks together; an extractor stops there, partial."""
