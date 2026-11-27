@@ -113,6 +113,7 @@ class LastBackup:
 
 @dataclass(frozen=True)
 class KnownDevice:
+    id: str
     name: str
     platform: str
     paired_at: str
@@ -423,7 +424,7 @@ def _after_restore(tx: Tx, manifest: dict, source: Path, made_dormant: list[str]
     )
     _stamp_backed_up_at(tx, held, manifest["finished_at"])
     devices = tx.execute(
-        "SELECT device_name, platform, created_at FROM devices WHERE platform != 'windows_hub' AND state != 'revoked' ORDER BY created_at, id"
+        "SELECT id, device_name, platform, created_at FROM devices WHERE platform != 'windows_hub' AND state != 'revoked' ORDER BY created_at, id"
     ).fetchall()
     return tuple(KnownDevice(*device) for device in devices)
 

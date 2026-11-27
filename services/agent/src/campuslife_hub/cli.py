@@ -14,9 +14,12 @@
   autostart  start the Hub at logon through Windows Task Scheduler: xml prints the task, register adds or
              replaces it, unregister removes it
   tailscale-check  check that tailscale serve sends https on 443 to the sync listener only, and print the hub_url
+  devices  list the paired devices
+  revoke   revoke a lost device for good
+  approve  let a dormant device sync again
 
-While a Hub serves the data root it holds the data root's hub.lock, and init, import and backup go
-through its admin API (E11); otherwise they take the lock themselves. restore takes the lock of the
+While a Hub serves the data root it holds the data root's hub.lock, and init, import, backup, devices,
+revoke and approve go through its admin API (E11); otherwise they take the lock themselves. restore takes the lock of the
 empty root it fills. open, status and stop need a serving Hub. ls and fsck take no lock and write no data.
 tailscale-check only reads what the tailscale command reports and needs no data root.
 Every command refuses to run on a Microsoft Store Python (E21).
@@ -30,8 +33,10 @@ import logging
 import os
 import sqlite3
 import sys
+import uuid
 import webbrowser
-from datetime import timedelta
+from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import admin_client, autostart, backup, devices, fsck, host, sync_devices, tailscale_check
@@ -42,7 +47,7 @@ from .backup import DEFAULT_KEEP, DEFAULT_WARN_AFTER, BackupRefused, BackupSetti
 from .core import UnsafeDataRoot, open_core, open_core_readonly, safe_data_root
 from .data_root import Layout, default_data_root
 from .db import NotInitialized, SchemaMismatch, StartupRefused
-from .devices import DEFAULT_DORMANT_AFTER, MAX_DORMANT_AFTER, DeviceSettings
+from .devices import DEFAULT_DORMANT_AFTER, MAX_DORMANT_AFTER, DeviceSettings, HubDeviceRefused, RevokedDevice, UnknownDevice
 from .host import DEFAULT_ADMIN_PORT, DEFAULT_SYNC_PORT, HostConfig, PortTaken
 from .listing import list_captures
 from .local_import import UnimportableFile, import_files
@@ -55,7 +60,7 @@ ROOT_ENV = "CAMPUSLIFE_ROOT"
 EXPECTED_FAILURES = (
     AlreadyRunning, NotInitialized, SchemaMismatch, UnsafeDataRoot, StartupRefused, DatabaseTooNew, UnimportableFile,
     HubNotServing, NotTheHub, AdminRefused, HubDidNotAnswer, AdminTokenUnusable, PortTaken, BackupRefused, RestoreRefused,
-    AutostartFailed, TailscaleUnavailable,
+    AutostartFailed, TailscaleUnavailable, UnknownDevice, HubDeviceRefused, RevokedDevice,
     OSError, UnicodeError, sqlite3.Error,
 )
 
@@ -96,6 +101,16 @@ def _hub_url(text: str) -> str:
     return text
 
 
+def _device_id(text: str) -> str:
+    try:
+        canonical = str(uuid.UUID(text))
+    except ValueError:
+        canonical = None
+    if canonical != text:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a device id: give the whole id `campuslife-hub devices` lists")
+    return text
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="campuslife-hub", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", type=Path, help=f"data root (default: ${ROOT_ENV}, else the platform default)")
@@ -124,6 +139,11 @@ def _parser() -> argparse.ArgumentParser:
     showing.add_argument("--out", type=Path, metavar="FILE", help="write it to FILE in the UTF-16 Task Scheduler reads, instead of printing it")
     _serve_options(_task_name(actions.add_parser("register", help="add the task for this user, or replace it")), defaults=False)
     _task_name(actions.add_parser("unregister", help="remove the task"))
+    commands.add_parser("devices", help="list the paired devices")
+    revoking = commands.add_parser("revoke", help="revoke a device for good: its next request is refused and its uploads end")
+    revoking.add_argument("device", type=_device_id, metavar="ID", help="the device's id, as `devices` lists it")
+    approving = commands.add_parser("approve", help="let a dormant device sync again with the token it holds; never a lost one")
+    approving.add_argument("device", type=_device_id, metavar="ID", help="the device's id, as `devices` lists it")
     checking = commands.add_parser("tailscale-check", help="check what tailscale serve exposes and print the hub_url")
     checking.add_argument("--sync-port", type=_port, default=DEFAULT_SYNC_PORT, help=f"the sync listener's port (default {DEFAULT_SYNC_PORT})")
     checking.add_argument("--admin-port", type=_port, default=DEFAULT_ADMIN_PORT, help=f"the admin listener's port (default {DEFAULT_ADMIN_PORT})")
@@ -232,10 +252,58 @@ async def _restore(root: Path, source: Path, generation: str | None) -> None:
     restored = await backup.restore(source, root, generation=generation)
     print(f"restored generation {restored.generation}, taken {restored.taken_at}, into {restored.root}")
     print(f"epoch {restored.epoch}")
-    print("Every device must be approved again; do not approve a device that was lost or revoked.")
+    print("Every device must be approved again with `campuslife-hub approve <id>` before it syncs.")
+    print("Do not approve a device that was lost; revoke it with `campuslife-hub revoke <id>`.")
     print(f"Purges made after {restored.taken_at} are undone: purge those files again.")
     for device in restored.devices:
-        print(f"device {device.platform} {device.name} paired {device.paired_at} dormant")
+        print(f"device {device.id} {device.platform} {device.name} paired {device.paired_at} dormant")
+
+
+DORMANT_HINT = (
+    "dormant devices sync again once approved with `campuslife-hub approve <id>`: approve only a device you have in hand, "
+    "and revoke a lost one with `campuslife-hub revoke <id>`"
+)
+
+
+async def _devices(root: Path) -> None:
+    try:
+        async with open_core(root, create=False) as core:
+            listed = [asdict(device) for device in await core.db.read(devices.client_devices)]
+    except AlreadyRunning as held:
+        listed = _through_the_holder(root, held, "GET", "/api/devices")["devices"]
+    if not listed:
+        print("no devices yet")
+    for device in listed:
+        print(
+            f"{device['id']}  {device['platform']:<7}  {device['state']:<8}  paired {device['created_at']}  "
+            f"seen {device['last_seen_at'] or '-'}  {device['device_name']}"
+        )
+    if any(device["state"] == "dormant" for device in listed):
+        print(DORMANT_HINT)
+
+
+async def _change_device(root: Path, action: str, device: str) -> bool:
+    """Whether revoke or approve changed device, done by the serving Hub or, with none, here under the lock."""
+    change = {"revoke": devices.revoke, "approve": devices.approve}[action]
+    try:
+        async with open_core(root, create=False) as core:
+            return await change(core, device, now=datetime.now(UTC))
+    except AlreadyRunning as held:
+        return _through_the_holder(root, held, "POST", f"/api/devices/{device}/{action}")["changed"]
+
+
+async def _revoke(root: Path, device: str) -> None:
+    if await _change_device(root, "revoke", device):
+        print(f"revoked {device}: its next request is refused and its unfinished uploads end")
+    else:
+        print(f"{device} was revoked already")
+
+
+async def _approve(root: Path, device: str) -> None:
+    if await _change_device(root, "approve", device):
+        print(f"approved {device}: it syncs again with the token it holds")
+    else:
+        print(f"{device} is active already")
 
 
 async def _fsck(root: Path) -> None:
@@ -355,6 +423,12 @@ def _run(arguments: argparse.Namespace, root: Path) -> None:
             _autostart(root, arguments)
         case "tailscale-check":
             _tailscale_check(arguments)
+        case "devices":
+            asyncio.run(_devices(root))
+        case "revoke":
+            asyncio.run(_revoke(root, arguments.device))
+        case "approve":
+            asyncio.run(_approve(root, arguments.device))
 
 
 def _leave_in_the_log(root: Path, said: str) -> None:
