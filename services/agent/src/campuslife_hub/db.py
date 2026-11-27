@@ -23,6 +23,7 @@ from .data_root import Layout
 from .lock import HubLock, require_held
 from .migrations import MIGRATIONS, migrate
 from .sqlite_probe import probe as probe_sqlite
+from .sqlite_probe import secure_delete_problems
 
 BUSY_TIMEOUT_MS = 5000
 START_THE_HUB = "run `campuslife-hub init` or start the Hub"
@@ -87,6 +88,8 @@ def _open_writer(path: Path, create: bool) -> sqlite3.Connection:
         conn.execute("PRAGMA synchronous = FULL")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+        if problems := secure_delete_problems(conn):
+            raise StartupRefused(problems)
         migrate(conn)
     except BaseException:
         conn.close()
@@ -187,6 +190,13 @@ class Database(ReadOnlyDatabase):
     async def write[T](self, fn: Callable[[Tx], T]) -> T:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._writer, _run_write, self._write_conn, fn)
+
+    async def truncate_wal(self) -> bool:
+        """Checkpoint the WAL into the database file and empty it, so bytes of deleted rows leave it; False when a
+        reader kept it from emptying."""
+        conn = self._write_conn
+        (busy, _, _) = await asyncio.get_running_loop().run_in_executor(self._writer, lambda: conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone())
+        return not busy
 
     async def close(self) -> None:
         await super().close()

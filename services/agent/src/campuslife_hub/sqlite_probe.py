@@ -27,9 +27,18 @@ def _version(text: str) -> tuple[int, ...]:
     return tuple(int(part) for part in text.split("."))
 
 
+def secure_delete_problems(conn: Executes) -> list[str]:
+    """Turn secure_delete on for conn and say so when it did not take: a deleted row's bytes would stay in the file (U2)."""
+    conn.execute("PRAGMA secure_delete = ON")
+    (setting,) = conn.execute("PRAGMA secure_delete").fetchone()
+    if setting != 1:
+        return [f"SQLite did not turn secure_delete on (it reads {setting}); a purge would leave deleted text in the database file"]
+    return []
+
+
 def probe(conn: Executes) -> list[str]:
     """Why this SQLite cannot run the Hub; empty when it can."""
-    problems = []
+    problems = secure_delete_problems(conn)
     (version,) = conn.execute("SELECT sqlite_version()").fetchone()
     if _version(version) < MIN_VERSION:
         floor = ".".join(map(str, MIN_VERSION))
