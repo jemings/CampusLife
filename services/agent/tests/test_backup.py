@@ -245,15 +245,16 @@ import asyncio, os, sys
 from pathlib import Path
 from campuslife_hub import backup
 
-def crash(*args, **kwargs):
-    os._exit({CRASH})
+def crash_once_the_database_is_in_place(directory):
+    if directory.name == "database":
+        os._exit({CRASH})
 
-backup._after_restore = crash
+backup.fsync_directory = crash_once_the_database_is_in_place
 asyncio.run(backup.restore(Path(sys.argv[1]), Path(sys.argv[2]), sync_roots=[]))
 """
 
 
-async def test_a_restore_that_crashed_after_placing_the_database_never_serves_the_backups_epoch_or_devices(tmp_path):
+async def test_a_restore_that_crashed_as_it_placed_the_database_never_serves_the_backups_epoch_or_devices(tmp_path):
     target, restored = tmp_path / "drive", tmp_path / "restored"
     async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
         await imported(core, tmp_path, b"%PDF week 1")
@@ -383,20 +384,21 @@ async def test_a_backup_refuses_a_folder_that_holds_the_data_root_and_leaves_the
     assert not (drive / "campuslife-backup.json").exists()
 
 
-async def test_a_backup_refuses_a_folder_holding_generations_or_blobs_it_did_not_write(tmp_path):
+@pytest.mark.parametrize("theirs", [("generations",), ("blobs",), ("generations", "blobs")], ids=["generations", "blobs", "both"])
+async def test_a_backup_refuses_a_folder_holding_generations_or_blobs_it_did_not_write(tmp_path, theirs):
     drive = tmp_path / "drive"
-    (drive / "generations").mkdir(parents=True)
-    (drive / "blobs").mkdir()
-    readme = drive / "generations" / "README.txt"
-    readme.write_text("user file")
-    photo = drive / "blobs" / "holiday.jpg"
-    photo.write_bytes(b"synthetic jpeg")
+    files = {"generations": drive / "generations" / "README.txt", "blobs": drive / "blobs" / "holiday.jpg"}
+    for name in theirs:
+        files[name].parent.mkdir(parents=True)
+        files[name].write_bytes(b"not the backup's")
     async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
         with pytest.raises(BackupRefused, match="no backup of this Hub wrote"):
             await backup.back_up(core, drive, clock=Clock())
 
-    assert readme.read_text() == "user file" and photo.read_bytes() == b"synthetic jpeg"
-    assert sorted(path.name for path in drive.rglob("*")) == ["README.txt", "blobs", "generations", "holiday.jpg"]
+    assert sorted(path.relative_to(drive).as_posix() for path in drive.rglob("*")) == sorted(
+        [name for name in theirs] + [files[name].relative_to(drive).as_posix() for name in theirs]
+    )
+    assert all(files[name].read_bytes() == b"not the backup's" for name in theirs)
 
 
 @pytest.mark.parametrize("marker", ['{"format": 1, "hub_id": "6ba7b814-9dad-41d1-80b4-00c04fd430c8"}', "not json", "[]"],
@@ -441,6 +443,22 @@ async def test_a_backup_into_a_folder_with_other_files_claims_it_and_pruning_lea
     assert (drive / "photos.zip").read_bytes() == b"synthetic archive"
     assert sorted(path.name for path in (drive / "generations" / first.name).iterdir()) == ["notes.txt"]
     assert backup.generations(drive) == [second.name]
+
+
+async def test_pruning_removes_a_generation_a_backup_left_unfinished_with_its_journal_files(tmp_path):
+    target, clock = tmp_path / "drive", Clock()
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        await imported(core, tmp_path, b"%PDF week 1")
+        await backup.back_up(core, target, keep=1, clock=clock)
+        unfinished = target / "generations" / "20260302T010000000001Z"
+        unfinished.mkdir()
+        for name in ("campuslife.sqlite3.part", "campuslife.sqlite3.part-wal", "campuslife.sqlite3.part-shm"):
+            (unfinished / name).write_bytes(b"half a snapshot")
+
+        second = await backup.back_up(core, target, keep=1, clock=clock)
+
+    assert not unfinished.exists()
+    assert sorted(path.name for path in (target / "generations").iterdir()) == [second.name]
 
 
 async def test_a_drive_copy_of_the_wrong_size_is_copied_again(tmp_path):
