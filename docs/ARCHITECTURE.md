@@ -163,7 +163,7 @@ Windows 파일시스템이 바이트의 원천이고, SQLite에는 메타데이�
 ## 7. 검색
 
 MVP 검색:
-- SQLite FTS5 전문 검색, 모든 텍스트 NFC 정규화 (한국어 분석기는 측정 후 결정 — DECISIONS O2)
+- SQLite FTS5 전문 검색, 모든 텍스트 NFC 정규화 (한국어 분석기는 겹침 2-gram 선토큰화 — DECISIONS D27)
 - 날짜/도메인/과목/태그 필터
 - 상세 보기에서 원본 파일과 AI 근거 연결
 
