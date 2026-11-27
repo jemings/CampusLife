@@ -267,6 +267,22 @@ async def test_an_artifact_made_from_bytes_a_kept_artifact_also_holds_stays(db, 
     assert await held(db, lecture_.summary["content_blob"])
 
 
+async def test_a_content_blob_rejected_early_goes_once_its_naming_artifact_turns_out_to_go(db, device, blob_store, tmp_path):
+    pdf = await store_bytes(blob_store, tmp_path, b"%PDF root")
+    capture = {"id": new_id(), "created_at": "2026-03-02T00:30:00.000Z", "origin": {"type": "import"}, "links": [],
+               "attachments": [{"id": new_id(), "blob_sha256": pdf, "role": "file", "cloud_policy": "local_only"}]}
+    await apply(db, device, commit(capture))
+    a1 = await made(db, blob_store, tmp_path, "ocr", f"capture:{capture['id']}", [pdf], b"shared bytes")
+    a3 = await made(db, blob_store, tmp_path, "thumb", f"capture:{capture['id']}", [pdf], b"thumb bytes")
+    a2 = await made(db, blob_store, tmp_path, "ocr.alt", f"artifact:{a3['id']}", [a3["content_blob"]], b"shared bytes")
+    a4 = await made(db, blob_store, tmp_path, "summarize", f"artifact:{a1['id']}", [a1["content_blob"]], b"summary bytes")
+
+    purged = await purge.purge_blob(db, blob_store, pdf, hooks=PurgeHooks())
+
+    assert set(purged.target.artifacts) == {a1["id"], a2["id"], a3["id"], a4["id"]}
+    assert set(purged.target.blobs) == {pdf, a1["content_blob"], a3["content_blob"], a4["content_blob"]}
+
+
 async def test_purging_an_artifacts_content_removes_that_artifact_and_what_was_made_from_it(db, device, blob_store, tmp_path):
     lecture_ = await lecture(db, device, blob_store, tmp_path)
 
@@ -327,7 +343,7 @@ async def test_purging_one_file_of_a_capture_leaves_its_ingest_to_plan_the_file_
     assert await db.read(lambda snap: jobs.get(snap, ingest.id).state) is JobState.SUCCEEDED
 
 
-async def test_purging_the_last_file_of_a_capture_cancels_its_ingest(db, device, blob_store, tmp_path):
+async def test_an_ingest_run_after_the_last_file_of_a_capture_was_purged_queues_nothing(db, device, blob_store, tmp_path):
     pdf = await store_bytes(blob_store, tmp_path, b"%PDF to purge")
     capture = two_files(pdf, pdf)
     await apply(db, device, commit(capture))
@@ -335,9 +351,61 @@ async def test_purging_the_last_file_of_a_capture_cancels_its_ingest(db, device,
 
     purged = await purge.purge_blob(db, blob_store, pdf, hooks=PurgeHooks())
 
-    assert ingest.job_type == INGEST
-    assert await db.read(lambda snap: jobs.get(snap, ingest.id).state) is JobState.CANCELLED
-    assert purged.cancelled == (ingest.id,)
+    assert await db.read(lambda snap: jobs.get(snap, ingest.id).state) is JobState.PENDING
+    assert ingest.id not in purged.cancelled
+    registry = JobRegistry()
+    registry.handle("ocr", Pipeline("ocr-1"), lambda job, context: None)
+
+    async def planner(view, context):
+        return [JobSpec("ocr", f"attachment:{attachment['id']}", (attachment["blob_sha256"],), {}) for attachment in view.attachments]
+
+    registry.plan("files", planner)
+    await JobRunner(JobContext(db, blob_store, registry)).run_one()
+    assert await db.read(lambda snap: jobs.get(snap, ingest.id).state) is JobState.SUCCEEDED
+    assert await db.read(lambda snap: snap.execute("SELECT count(*) FROM processing_jobs WHERE job_type != ?", (INGEST,)).fetchone()) == (0,)
+
+
+def link_and_file(pdf):
+    return {"id": new_id(), "created_at": "2026-03-02T00:30:00.000Z", "origin": {"type": "share"}, "links": [],
+            "url": "https://example.com/syllabus", "user_note": "강의계획서",
+            "attachments": [{"id": new_id(), "blob_sha256": pdf, "role": "file", "cloud_policy": "local_only"}]}
+
+
+async def test_purging_the_file_of_a_link_capture_keeps_its_ingest_like_a_link_only_capture(db, device, blob_store, tmp_path):
+    pdf = await store_bytes(blob_store, tmp_path, b"%PDF to purge")
+    capture = link_and_file(pdf)
+    link_only = {**link_and_file(pdf), "id": new_id(), "attachments": []}
+    await apply(db, device, commit(capture), commit(link_only))
+    [ingest] = await db.read(lambda snap: jobs.of_subject(snap, f"capture:{capture['id']}"))
+    [link_ingest] = await db.read(lambda snap: jobs.of_subject(snap, f"capture:{link_only['id']}"))
+
+    await purge.purge_blob(db, blob_store, pdf, hooks=PurgeHooks())
+
+    assert await db.read(lambda snap: jobs.get(snap, link_ingest.id).state) is JobState.PENDING
+    assert await db.read(lambda snap: jobs.get(snap, ingest.id).state) is JobState.PENDING
+
+
+async def test_an_ingest_running_across_a_purge_queues_no_job_on_the_purged_file(db, device, blob_store, tmp_path):
+    pdf = await store_bytes(blob_store, tmp_path, b"%PDF to purge")
+    audio = await store_bytes(blob_store, tmp_path, b"recording that stays")
+    capture = two_files(pdf, audio)
+    await apply(db, device, commit(capture))
+    registry = JobRegistry()
+
+    async def never(job, context):
+        raise AssertionError
+
+    registry.handle("ocr", Pipeline("ocr-1"), never)
+
+    async def planner(view, context):
+        await purge.purge_blob(db, blob_store, pdf, hooks=PurgeHooks())
+        return [JobSpec("ocr", f"attachment:{attachment['id']}", (attachment["blob_sha256"],), {}) for attachment in view.attachments]
+
+    registry.plan("files", planner)
+    await JobRunner(JobContext(db, blob_store, registry)).run_one()
+
+    waiting = await db.read(lambda snap: snap.execute("SELECT subject_ref, inputs FROM processing_jobs WHERE job_type = 'ocr' AND state = 'pending'").fetchall())
+    assert [json.loads(inputs) for _, inputs in waiting] == [[audio]]
 
 
 async def test_a_job_cancelled_by_a_purge_records_no_artifact(db, device, blob_store, tmp_path):
