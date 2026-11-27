@@ -91,6 +91,44 @@
           "block_index": 0
         }
       ]
+    },
+    {
+      "id": "e57167cd1d343ef2a4a8af664cf99f5cb9db0ab732aca0c8e561b27cdb9592a6",
+      "block_type": "heading",
+      "text": "가) 늦은 제출",
+      "payload": {
+        "level": 9
+      },
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "doc_path",
+          "heading_path": [
+            "1. 과제 안내",
+            "1.1 마감"
+          ],
+          "block_index": 1
+        }
+      ]
+    },
+    {
+      "id": "40d4b92e6605260055c23b183950e218d1a20a0a48f6a45f410afbebe47fea7f",
+      "block_type": "paragraph",
+      "text": "하루에 10%씩 감점합니다.",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "doc_path",
+          "heading_path": [
+            "1. 과제 안내",
+            "1.1 마감",
+            "가) 늦은 제출"
+          ],
+          "block_index": 0
+        }
+      ]
     }
   ],
   "warnings": [
