@@ -1,0 +1,10 @@
+{
+  "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  "entity_ref": "attachment:0f8fad5b-d9cb-469f-a165-70867728950e",
+  "set": {
+    "cloud_policy": {
+      "from": "cloud_allowed",
+      "to": "blocked"
+    }
+  }
+}

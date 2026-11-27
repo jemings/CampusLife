@@ -50,6 +50,11 @@ async def add_phone(core) -> DeviceId:
     return DeviceId(device)
 
 
+def epoch_of(core):
+    """The base epoch header of a client whose cache and cursor belong to this Hub's epoch (D24)."""
+    return {"CampusLife-Epoch": core.identity.epoch}
+
+
 def client_of(app, headers=None):
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -68,7 +73,8 @@ def request_with(client, method, path, replaced):
 
 @asynccontextmanager
 async def syncing(tmp_path, *, authenticate=None, routers=(), phone=None, chunk_size=None, free_space=None, **options):
-    """The sync app over the Hub at tmp_path/root, a client that sends the phone's token, and the runner it wakes.
+    """The sync app over the Hub at tmp_path/root, a client that sends the phone's token and the Hub's epoch, and the
+    runner it wakes.
 
     The Hub and the phone are made on first use; pass the phone again to reopen the same Hub as the same phone.
     chunk_size and free_space replace the Blob store's own, so a test can upload in small chunks or run out of room.
@@ -83,5 +89,5 @@ async def syncing(tmp_path, *, authenticate=None, routers=(), phone=None, chunk_
             core = dataclasses.replace(core, blobs=blobs)
         runner = Waking()
         app = create_sync_app(Hosted(core, runner, Redactor()), authenticate or admitting(phone), routers, **options)
-        async with client_of(app) as client:
+        async with client_of(app, epoch_of(core)) as client:
             yield core, client, phone, runner
