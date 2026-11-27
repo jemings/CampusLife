@@ -525,11 +525,18 @@ async def test_an_upload_cut_off_mid_chunk_is_finished_over_another_connection(t
     assert core.blobs.path_of(UPLOADED_SHA).read_bytes() == UPLOADED
 
 
-@pytest.mark.parametrize("refusal", ["unknown token", "wrong length"])
-async def test_a_chunk_refused_before_its_body_is_answered_at_once_and_the_connection_goes_on(tmp_path, refusal):
+@pytest.mark.parametrize(
+    ("token", "length", "status"),
+    [
+        ("someone-else", len(UPLOADED), b"401"),
+        (SYNC_TOKEN, len(UPLOADED) + 1, b"400"),
+        (SYNC_TOKEN, len(UPLOADED) - 1, b"400"),
+    ],
+    ids=["unknown token", "longer length", "shorter length"],
+)
+async def test_a_chunk_refused_before_its_body_is_answered_at_once_and_the_connection_goes_on(tmp_path, token, length, status):
     """The refusal comes before the client sends the body; the server then reads and drops that body, so the same
     connection takes the next request (#4 decision 5)."""
-    token, length = (("someone-else", len(UPLOADED)) if refusal == "unknown token" else (SYNC_TOKEN, len(UPLOADED) + 1))
     async with serving(tmp_path, sync_app=sync_admitting_the_hub_device) as (core, client, listening, stop, served):
         async with sync_client(listening) as sync:
             await sync.post("/v1/blobs/uploads", json={"sha256": UPLOADED_SHA, "size": len(UPLOADED)})
@@ -544,6 +551,6 @@ async def test_a_chunk_refused_before_its_body_is_answered_at_once_and_the_conne
                                         f"Authorization: Bearer {SYNC_TOKEN}\r\n\r\n")
         writer.close()
 
-    assert refused.split()[1] == (b"401" if refusal == "unknown token" else b"400")
+    assert refused.split()[1] == status
     assert after.split()[1] == b"200"
     assert json.loads(body)["hub_id"] == core.identity.hub_id
