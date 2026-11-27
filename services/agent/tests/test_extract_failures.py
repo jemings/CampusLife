@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -331,7 +332,6 @@ async def test_the_event_loop_keeps_running_while_the_hub_builds_a_body_whatever
         (make.traversal, OutcomeCode.UNSAFE_INPUT),
         (make.absolute, OutcomeCode.UNSAFE_INPUT),
         (make.symlink, OutcomeCode.UNSAFE_INPUT),
-        (make.bomb, OutcomeCode.UNSAFE_INPUT),
         (make.encrypted_member, OutcomeCode.PASSWORD_REQUIRED),
         (make.encrypted_ooxml, OutcomeCode.PASSWORD_REQUIRED),
     ],
@@ -408,3 +408,53 @@ async def test_a_blob_larger_than_the_input_limit_is_identified_and_only_its_ext
     [extracted] = await hub.jobs("extract.fake_echo")
     assert (extracted.state, extracted.outcome_code) == (JobState.FAILED, OutcomeCode.UNSAFE_INPUT)
     assert str(limits.input_max_bytes) in extracted.error
+
+
+
+def stored_zip(path, member_bytes):
+    """A ZIP holding one stored member of member_bytes zeros, as a lecture video in an archive would be."""
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("lecture.mp4", bytes(member_bytes))
+    return path
+
+
+@pytest.mark.parametrize(
+    ("limits", "make_file"),
+    [
+        ({"zip_max_member_bytes": 1 << 20}, lambda path: stored_zip(path, (1 << 20) + 1)),
+        ({"zip_max_total_bytes": 1 << 20}, lambda path: stored_zip(path, (1 << 20) + 1)),
+        ({}, make.bomb),
+    ],
+    ids=["member over the member limit", "members over the total limit", "a zip bomb"],
+)
+async def test_an_archive_over_a_byte_limit_is_identified_and_only_reading_its_members_is_unsafe(db, device, blob_store, tmp_path, limits, make_file):
+    limited = Limits(**{**TEST_LIMITS.to_json(), **limits})
+    hub = hub_with(db, blob_store, device, tmp_path, fake("zip_walk", {"application/zip": {}}), base=(), limits=limited)
+    capture = await hub.capture(("lecture.zip", make_file(tmp_path / "input.zip")))
+
+    await hub.settle()
+
+    sha256 = capture["attachments"][0]["blob_sha256"]
+    [identified] = await hub.jobs(IDENTIFY)
+    assert (identified.state, identified.outcome_code) == (JobState.SUCCEEDED, None)
+    assert (await hub.media(sha256)).media_type == "application/zip"
+    [walked] = await hub.jobs("extract.fake_zip_walk")
+    assert (walked.state, walked.outcome_code) == (JobState.FAILED, OutcomeCode.UNSAFE_INPUT)
+
+
+async def test_an_ole_file_larger_than_the_childs_memory_is_identified(db, device, blob_store, tmp_path):
+    limits = Limits(**{**TEST_LIMITS.to_json(), "mem_bytes": 256 << 20, "input_max_bytes": 64 << 20})
+    hub = hub_with(db, blob_store, device, tmp_path, fake("echo", {"application/x-cfb": {}}), base=(), limits=limits)
+    large = tmp_path / "lecture.ole"
+    with large.open("wb") as handle:
+        handle.write(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
+        handle.truncate(300 << 20)
+
+    capture = await hub.capture(("lecture.ole", large))
+    await hub.settle()
+
+    [identified] = await hub.jobs(IDENTIFY)
+    assert (identified.state, identified.outcome_code) == (JobState.SUCCEEDED, None)
+    assert (await hub.media(capture["attachments"][0]["blob_sha256"])).media_type == "application/x-cfb"
+    [extracted] = await hub.jobs("extract.fake_echo")
+    assert (extracted.state, extracted.outcome_code) == (JobState.FAILED, OutcomeCode.UNSAFE_INPUT)
