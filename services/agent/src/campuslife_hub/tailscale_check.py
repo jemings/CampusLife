@@ -142,7 +142,7 @@ def judge(serve: Mapping, status: Mapping, *, sync_port: int, admin_port: int, p
     if url is None:
         problems.append("this machine has no MagicDNS name; turn on MagicDNS and HTTPS certificates for the tailnet")
     warnings = []
-    if public_url is not None and url is not None and public_url.rstrip("/") != url:
+    if public_url is not None and url is not None and public_url != url:
         warnings.append(f"--public-url is {public_url}, but the tailnet names this machine {url}; pairing would hand out the former")
     return Verdict(tuple(problems), tuple(warnings), url)
 
