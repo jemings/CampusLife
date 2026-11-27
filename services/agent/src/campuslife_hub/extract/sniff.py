@@ -3,7 +3,8 @@
 Magic bytes first; a ZIP is opened through safe_zip to tell OOXML and HWPX from a plain archive, so a dangerous
 archive ends identify with unsafe_input; an OLE container holding an EncryptedPackage stream is an encrypted
 OOXML file and ends it with password_required. Bytes with no signature are text when a sample of them decodes,
-and application/octet-stream otherwise. The version goes into the identify pipeline: a change to what this
+and application/octet-stream otherwise. UTF-16 is known only by its BOM: without one it is not guessed and reads as
+application/octet-stream. The version goes into the identify pipeline: a change to what this
 reports is a new version.
 """
 
