@@ -72,6 +72,7 @@ value class EntityName(val value: String) {
         val TAG = EntityName("tag")
         val ARTIFACT = EntityName("artifact")
         val SUGGESTION = EntityName("suggestion")
+        val CONFLICT_RECORD = EntityName("conflict_record")
     }
 }
 
@@ -93,5 +94,6 @@ value class ErrorCode(val value: String) {
         val CONTRACT_TOO_OLD = ErrorCode("contract_too_old")
         val HUB_STORAGE_FULL = ErrorCode("hub_storage_full")
         val INTERNAL_ERROR = ErrorCode("internal_error")
+        val EPOCH_CHANGED = ErrorCode("epoch_changed")
     }
 }
