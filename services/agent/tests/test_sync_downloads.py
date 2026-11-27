@@ -3,6 +3,7 @@ Every response a test gets has passed sync_contract.check against openapi/sync.y
 
 import asyncio
 import hashlib
+import threading
 
 import pytest
 from sync_client import CONTRACT, TOKEN, Waking, admitting, request_with, syncing
@@ -260,3 +261,49 @@ async def test_a_blob_file_shorter_than_its_size_ends_the_answer_unfinished_and_
     assert [message.get("more_body", False) for message in sent if message["type"] == "http.response.body"] == [True]
     assert "5 bytes short of its recorded size" in caplog.text
     assert [handle.closed for handle in opened] == [True]
+
+
+class GatedReads:
+    """A Blob file whose first read waits until the test lets it go, at most `patience` seconds, noting each size
+    asked for and whether the first read was let go rather than tired of waiting."""
+
+    def __init__(self, handle, patience=5):
+        self._handle, self._patience = handle, patience
+        self.gate, self.sizes, self.let_go = threading.Event(), [], []
+
+    def read(self, size):
+        self.sizes.append(size)
+        if not self.let_go:
+            self.let_go.append(self.gate.wait(self._patience))
+        return self._handle.read(size)
+
+    def __getattr__(self, name):
+        return getattr(self._handle, name)
+
+
+async def test_a_download_reads_in_bounded_pieces_while_the_hub_answers_other_requests(tmp_path, monkeypatch):
+    big = bytes(range(256)) * 12288
+    async with syncing(tmp_path) as (core, client, phone, runner):
+        big_sha = await stored(core, tmp_path, big)
+        gated = []
+        real_open_blob = core.blobs.open_blob
+
+        async def open_blob(sha256):
+            found, handle = await real_open_blob(sha256)
+            gated.append(GatedReads(handle))
+            return found, gated[-1]
+
+        monkeypatch.setattr(core.blobs, "open_blob", open_blob)
+        download = asyncio.create_task(client.get(f"/v1/blobs/{big_sha}"))
+        for _ in range(500):
+            if gated and gated[0].sizes:
+                break
+            await asyncio.sleep(0.01)
+        hub = await client.get("/v1/hub")
+        gated[0].gate.set()
+        whole = await download
+
+    assert hub.status_code == 200
+    assert whole.content == big
+    assert gated[0].let_go == [True]
+    assert max(gated[0].sizes) <= 1024 * 1024
