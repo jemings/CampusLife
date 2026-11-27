@@ -7,13 +7,13 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Upsert
 
-/** Where this device stands against its Hub (D3): the changes-feed cursor, the Hub's id and its epoch. One row. */
+/** Where this device stands against its Hub (D3): the Hub's id, the base epoch and the changes-feed cursor. One row. */
 @Entity(tableName = "meta")
 data class SyncMeta(
-    val cursor: Long,
+    @PrimaryKey val id: Int = 0,
     @ColumnInfo(name = "hub_id") val hubId: String,
     val epoch: String,
-    @PrimaryKey val id: Int = 0,
+    val cursor: Long,
 )
 
 @Dao
