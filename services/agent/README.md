@@ -108,7 +108,7 @@ uv run campuslife-hub tailscale-check
 3. `tailscale serve --bg …`는 설정을 tailscale에 저장하므로 한 번만 하면 되고, 재부팅 뒤에도 남습니다. `--sync-port`를 바꿨으면 그 포트를 씁니다.
 4. `tailscale-check`는 `tailscale serve status --json`과 `tailscale status --json`을 읽기만 하고 아무것도 바꾸지 않습니다. 다음을 확인합니다.
    - 443의 HTTPS가 경로 `/`로 `http://127.0.0.1:<sync 포트>`에만 갑니다.
-   - 어느 포트·경로·TCP forward도 admin 포트로 가지 않습니다.
+   - 어느 포트·경로·TCP forward도 admin 포트로 가지 않습니다. 이 노트북이 내놓는 Tailscale Service의 설정도 봅니다.
    - Funnel이 꺼져 있습니다. Funnel은 Hub를 인터넷에 엽니다.
    - tailscale이 로그인되어 있고 MagicDNS 이름이 있습니다.
 5. 모두 맞으면 `hub_url https://<이름>.<tailnet>.ts.net`과 `ok`를 출력합니다. 하나라도 틀리면 `problem:` 줄을 출력하고 0이 아닌 코드로 끝납니다. 포트를 바꿨으면 `--sync-port`, `--admin-port`를 같은 값으로 줍니다.
