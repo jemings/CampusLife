@@ -11,7 +11,7 @@
     "pending_mutation_count": { "description": "Mutations waiting in the Outbox.", "$ref": "../common/int64.json#/$defs/non_negative" },
     "open_conflict_count": { "description": "Mutations in the client's needs-attention list.", "$ref": "../common/int64.json#/$defs/non_negative" },
     "last_successful_sync_at": { "$ref": "../common/instant.json" },
-    "last_error": { "description": "The last sync error as the client shows it, on one line: no control characters, line or paragraph separators (U+2028, U+2029), or bidirectional formatting characters (U+202A-U+202E, U+2066-U+2069).", "type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028-\\u202e\\u2066-\\u2069]*$" },
+    "last_error": { "description": "The last sync error as the client shows it, on one line.", "$ref": "pair_request.json#/$defs/one_line", "minLength": 1, "maxLength": 1000 },
     "retry_after": { "description": "When the client will try again.", "$ref": "../common/instant.json" },
     "cache_bytes": { "description": "Local cache size.", "$ref": "../common/int64.json#/$defs/non_negative" },
     "outbox_bytes": { "description": "Bytes of originals kept for the Outbox (D14).", "$ref": "../common/int64.json#/$defs/non_negative" }

@@ -180,9 +180,10 @@ def test_the_pairing_offer_carries_what_pairing_and_get_hub_use():
     assert offer["hub_id"]["$ref"] == "../sync/hub.json#/properties/hub_id"
 
 
-def test_the_names_a_device_reports_are_one_line_text():
-    """#19 decision 1: app_version takes the rule device_name has, so neither can break the device list's lines."""
+def test_the_strings_a_device_reports_are_one_line_text():
+    """#19 decision 1: device_name, app_version and last_error share one rule, so none can break the Hub's lines."""
     request = read_strict(SCHEMAS / "device/pair_request.json")["properties"]
     status = read_strict(SCHEMAS / "device/status.json")["properties"]
     assert request["device_name"]["$ref"] == request["app_version"]["$ref"] == "#/$defs/one_line"
     assert status["app_version"]["$ref"] == "pair_request.json#/properties/app_version"
+    assert status["last_error"]["$ref"] == "pair_request.json#/$defs/one_line"
