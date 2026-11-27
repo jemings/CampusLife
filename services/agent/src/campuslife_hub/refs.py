@@ -5,7 +5,7 @@ from __future__ import annotations
 from . import store
 from .blobs import has_blob
 from .db import Snapshot, Tx
-from .store import Entity, EntityRef
+from .store import EntityRef
 
 
 def exists(runner: Tx | Snapshot, entity_ref: str) -> bool:
@@ -13,8 +13,5 @@ def exists(runner: Tx | Snapshot, entity_ref: str) -> bool:
     entity, _, identifier = entity_ref.partition(":")
     if entity == "blob":
         return has_blob(runner, identifier)
-    try:
-        stored = Entity(entity)
-    except ValueError:
-        return False
-    return store.get(runner, EntityRef(stored, identifier)) is not None
+    ref = EntityRef.parse(entity_ref)
+    return ref is not None and store.get(runner, ref) is not None
