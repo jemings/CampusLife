@@ -584,7 +584,7 @@ class BlobStore:
         return await asyncio.to_thread(self._unlink_once, trash) if moved else []
 
     async def collect_garbage(self, now: datetime) -> list[KeptLeftover]:
-        """Remove the Blobs no Attachment refers to whose bytes last arrived UNCOMMITTED_LIFETIME before `now` (D2).
+        """Remove the Blobs no BLOB_REFERENCES column names whose bytes last arrived UNCOMMITTED_LIFETIME before `now` (D2).
 
         The file leaves blobs/ in the same transaction as its row, so a store that found it in place
         sees it gone and stores the bytes again. Each Blob is tried once; one in use stays for the next
