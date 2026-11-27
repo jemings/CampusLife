@@ -7,9 +7,11 @@ CampusLife-Epoch (E18) and judges each request in this order (#4 decision 3):
 1. CampusLife-Contract missing, repeated or malformed: 400 invalid_request;
 2. on every path but the public operations, known or not, a bearer token authenticate refuses: 401 with its code;
 3. on every operation but GET /v1/hub, a contract version below the minimum: 400 contract_too_old;
-4. the body, which a route reads through read_json and judge: 400 not_canonical when NFC is all it breaks, else
+4. on GET /v1/changes and POST /v1/mutations, CampusLife-Epoch missing, repeated or malformed: 400 invalid_request,
+   and an epoch other than the Hub's: 409 epoch_changed with the Hub's as details.epoch (D24);
+5. the body, which a route reads through read_json and judge: 400 not_canonical when NFC is all it breaks, else
    invalid_request;
-5. an exception nothing handled: 500 internal_error, with nothing about it in the body.
+6. an exception nothing handled: 500 internal_error, with nothing about it in the body.
 
 Every refusal is a common/error body. Routes learn the Device only through device_of(request), never the token.
 """
@@ -44,6 +46,9 @@ PUBLIC_OPERATIONS = frozenset({("POST", "/v1/pair")})
 answers its path (fail-closed)."""
 ANY_CONTRACT_OPERATIONS = frozenset({("GET", "/v1/hub")})
 """The operations that answer a client of any contract version, so a client too old can read min_contract_version."""
+EPOCH_OPERATIONS = frozenset({("GET", "/v1/changes"), ("POST", "/v1/mutations")})
+"""The operations sync.yaml gives CampusLife-Epoch: a cursor and a kept Mutation mean something only in the epoch they
+were made in, so a request of another epoch is refused before its body is read (D24)."""
 MAX_JSON_BODY = 8 * 1024 * 1024
 DEVICE_SCOPE_KEY = "campuslife.device"
 JSON_MEDIA_TYPE = "application/json"
@@ -61,6 +66,7 @@ class ErrorCode(enum.StrEnum):
     INCOMPLETE = "incomplete"
     HASH_MISMATCH = "hash_mismatch"
     HUB_STORAGE_FULL = "hub_storage_full"
+    EPOCH_CHANGED = "epoch_changed"
 
 
 @dataclass(frozen=True)
@@ -188,6 +194,7 @@ class SyncEnvelope:
     def __init__(self, app: ASGIApp, *, identity: HubIdentity, authenticate: Authenticate, versions: ContractVersions) -> None:
         self.app = app
         self.stamp = {"CampusLife-Hub-Id": identity.hub_id, "CampusLife-Epoch": identity.epoch}
+        self.epoch = identity.epoch
         self.authenticate = authenticate
         self.versions = versions
 
@@ -229,5 +236,21 @@ class SyncEnvelope:
             return SyncError(
                 400, ErrorCode.CONTRACT_TOO_OLD,
                 f"this Hub accepts contract versions {self.versions.minimum} to {self.versions.current}; update the app",
+            )
+        if operation in EPOCH_OPERATIONS:
+            return self._judge_epoch(contract[0], headers)
+        return None
+
+    def _judge_epoch(self, contract: str, headers: Headers) -> SyncError | None:
+        epoch = headers.getlist("campuslife-epoch")
+        if len(epoch) != 1 or validate("sync/request_headers", {"CampusLife-Contract": contract, "CampusLife-Epoch": epoch[0]}):
+            return SyncError(
+                400, ErrorCode.INVALID_REQUEST, "send CampusLife-Epoch once: the Hub epoch this client's cache, cursor and kept Mutations belong to"
+            )
+        if epoch[0] != self.epoch:
+            return SyncError(
+                409, ErrorCode.EPOCH_CHANGED,
+                f"this Hub's epoch is {self.epoch}: empty the cache, pull from since=0 and send the kept Mutations again",
+                details={"epoch": self.epoch},
             )
         return None

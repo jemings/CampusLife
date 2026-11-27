@@ -1,0 +1,7 @@
+{
+  "code": "epoch_changed",
+  "message": "this Hub's epoch is not the one the request was made in; resync from since=0",
+  "details": {
+    "epoch": "0f8fad5b-d9cb-469f-a165-70867728950e"
+  }
+}

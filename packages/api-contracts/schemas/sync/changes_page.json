@@ -22,7 +22,7 @@
           "description": "Known entities are the examples; a client skips rows of entities it does not know.",
           "type": "string",
           "pattern": "^[a-z][a-z_]*$",
-          "examples": ["capture", "attachment", "item", "relation", "tag", "artifact", "suggestion"],
+          "examples": ["capture", "attachment", "item", "relation", "tag", "artifact", "suggestion", "conflict_record"],
           "x-open": true
         },
         "id": { "type": "string", "minLength": 1 },
@@ -42,7 +42,8 @@
         { "if": { "$ref": "#/$defs/entity_is/relation" }, "then": { "properties": { "data": { "$ref": "../relation/relation.json" } } } },
         { "if": { "$ref": "#/$defs/entity_is/tag" }, "then": { "properties": { "data": { "$ref": "../tag/tag.json" } } } },
         { "if": { "$ref": "#/$defs/entity_is/artifact" }, "then": { "properties": { "data": { "$ref": "../artifact/artifact.json" } } } },
-        { "if": { "$ref": "#/$defs/entity_is/suggestion" }, "then": { "properties": { "data": { "$ref": "../suggestion/suggestion.json" } } } }
+        { "if": { "$ref": "#/$defs/entity_is/suggestion" }, "then": { "properties": { "data": { "$ref": "../suggestion/suggestion.json" } } } },
+        { "if": { "$ref": "#/$defs/entity_is/conflict_record" }, "then": { "properties": { "data": { "$ref": "../conflict_record/conflict_record.json" } } } }
       ]
     },
     "entity_is": {
@@ -52,7 +53,8 @@
       "relation": { "properties": { "entity": { "const": "relation" } }, "required": ["entity"] },
       "tag": { "properties": { "entity": { "const": "tag" } }, "required": ["entity"] },
       "artifact": { "properties": { "entity": { "const": "artifact" } }, "required": ["entity"] },
-      "suggestion": { "properties": { "entity": { "const": "suggestion" } }, "required": ["entity"] }
+      "suggestion": { "properties": { "entity": { "const": "suggestion" } }, "required": ["entity"] },
+      "conflict_record": { "properties": { "entity": { "const": "conflict_record" } }, "required": ["entity"] }
     }
   }
 }

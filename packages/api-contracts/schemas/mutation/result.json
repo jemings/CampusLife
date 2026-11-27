@@ -8,7 +8,7 @@
   "properties": {
     "mutation_id": { "$ref": "../common/uuid.json" },
     "result": {
-      "description": "applied: written (ACK). duplicate: this mutation_id was handled before; original repeats that result (D4). conflict: some fields lost compare-and-set (D18). rejected: refused, see reason; the client moves it to its needs-attention list and goes on. retry: not handled yet, send again (missing_blobs says why). not_attempted: skipped because an earlier Mutation of the batch got retry.",
+      "description": "applied: written (ACK). duplicate: this mutation_id was handled before; original repeats that result (D4). conflict: some fields lost compare-and-set (D18). rejected: refused, see reason; the client moves it to its rejected list and goes on. retry: not handled yet, send again (missing_blobs says why). not_attempted: skipped because an earlier Mutation of the batch got retry.",
       "enum": ["applied", "duplicate", "conflict", "rejected", "retry", "not_attempted"]
     },
     "reason": {

@@ -63,6 +63,11 @@ ANY_CONTRACT = frozenset(
     (op.method, op.path) for op in OPERATIONS if op.spec["responses"]["400"] == {"$ref": "#/components/responses/BadRequestAnyContract"}
 )
 
+EPOCH_BOUND = frozenset(
+    (op.method, op.path) for op in OPERATIONS
+    if any(_deref(parameter).get("name") == "CampusLife-Epoch" for parameter in op.spec.get("parameters", []))
+)
+
 
 def operation_of(method: str, path: str) -> Operation | None:
     return next((op for op in OPERATIONS if op.method == method and op.pattern.match(path)), None)

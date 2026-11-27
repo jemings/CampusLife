@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/sync/request_headers.json",
   "title": "Request headers",
-  "description": "Headers a client sends on every request (E18). Open: other headers pass; Authorization is described with the OpenAPI document.",
+  "description": "Headers a client sends (E18): CampusLife-Contract on every request, CampusLife-Epoch on the operations the OpenAPI document gives it (D24). Open: other headers pass; Authorization is described with the OpenAPI document.",
   "type": "object",
   "required": ["CampusLife-Contract"],
   "properties": {
@@ -10,6 +10,10 @@
       "description": "The client's contract version as a decimal integer, the same number space as Hub contract_version.",
       "type": "string",
       "pattern": "^[1-9][0-9]{0,17}$"
+    },
+    "CampusLife-Epoch": {
+      "description": "The Hub epoch the client's cache, cursor and kept Mutations belong to: the epoch of its first GET /v1/hub, changed only when it handles a 409 epoch_changed (D24). A Hub whose epoch differs answers 409 epoch_changed before it reads the body.",
+      "$ref": "hub.json#/properties/epoch"
     }
   }
 }

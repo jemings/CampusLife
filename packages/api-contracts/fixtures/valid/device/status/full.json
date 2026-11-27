@@ -2,7 +2,7 @@
   "app_version": "0.1.0",
   "pending_upload_count": 2,
   "pending_mutation_count": 5,
-  "open_conflict_count": 0,
+  "rejected_mutation_count": 0,
   "last_successful_sync_at": "2026-03-02T00:30:00.000Z",
   "last_error": "Hub에 연결할 수 없음",
   "retry_after": "2026-03-02T00:40:00.000Z",

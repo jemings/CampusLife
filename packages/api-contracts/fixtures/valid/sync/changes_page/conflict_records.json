@@ -1,0 +1,48 @@
+{
+  "hub_id": "c56a4180-65aa-42ec-a945-5fd21dec0538",
+  "epoch": "e4eaaaf2-d142-41ff-9e1f-2b3c4d5e6f70",
+  "changes": [
+    {
+      "entity": "conflict_record",
+      "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      "rev": 31,
+      "deleted": false,
+      "data": {
+        "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        "entity_ref": "item:7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "set": {
+          "title": {
+            "from": "자료구조 3주차",
+            "to": "자료구조 3주차 정리"
+          },
+          "body": {
+            "from_hash": "d70330d437b931f141e08105b73eb000b4e3b143e606270cf9254593830437de",
+            "to": "트리 순회\n- 전위\n- 중위"
+          }
+        }
+      }
+    },
+    {
+      "entity": "conflict_record",
+      "id": "9b2e8f4a-1c3d-4e5f-8a6b-7c8d9e0f1a2b",
+      "rev": 32,
+      "deleted": false,
+      "data": {
+        "id": "9b2e8f4a-1c3d-4e5f-8a6b-7c8d9e0f1a2b",
+        "entity_ref": "tag:0f8fad5b-d9cb-469f-a165-70867728950e",
+        "resolved": {
+          "at": "2026-03-03T09:15:00.000Z",
+          "mutation_id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
+        }
+      }
+    },
+    {
+      "entity": "conflict_record",
+      "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "rev": 33,
+      "deleted": true
+    }
+  ],
+  "next_since": 33,
+  "has_more": false
+}

@@ -39,12 +39,16 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 | Relation | id = `"{from}\|{type}\|{to}"`, from, type, to, locators[]?(Hub) |
 | Tag | id, name, color(`#rrggbb`) |
 | AnnotationLayer | id, target_blob_sha256, page_number, author_device_id, rev, drawing_blob, strokes_blob, page_box, conflict_of? |
-| ConflictRecord | id, entity_ref, field, theirs_rev, mine_value_blob, state |
+| ConflictRecord | id(= 그 patch의 mutation_id), entity_ref, set?{key: change}(열림), resolved?{at, mutation_id}(해소). 모든 멤버를 Hub가 씀 |
 
 - Item에는 `status` 열이 없습니다. task의 상태는 `fields.progress` 하나입니다(U4).
 - Relation `type`은 `about, supersedes, rendition_of, evidence, tagged, conflicts_with`이며 Hub가 보내는 쪽에서 열린 값입니다. Tag 부여는 `item:<id>` → `tag:<id>`인 `tagged` Relation입니다.
 - Relation `locators`는 사용자가 Suggestion을 수락할 때 Hub가 그 evidence에서 복사하는 근거 위치들입니다(D10). evidence Relation에만 있고, 각 Locator의 anchor(blob 또는 capture)는 `to`와 같습니다. 모르는 Relation type의 locators는 막지 않습니다(알려진 type은 Relation `type`의 `examples`, 곧 알려진 값 목록으로 판정합니다). 한 원본의 여러 곳(예: p.2와 p.5)은 Relation 하나의 locators에 함께 담깁니다. 클라이언트는 쓰지 않습니다.
-- AnnotationLayer(#17)와 ConflictRecord(#18)의 스키마는 각 이슈가 추가합니다(E20).
+- AnnotationLayer(#17)의 스키마는 그 이슈가 추가합니다(E20).
+- ConflictRecord(`conflict_record/conflict_record`)는 patch가 제출했지만 Hub가 쓰지 않은 값을 보존합니다(D24). Mutation 하나에 기록 하나라서 재전송이 기록을 겹쳐 만들지 않습니다.
+  - 대상은 `conflict` 결과의 `conflicted_fields` 전부(스칼라·날짜 묶음 포함)와 `rejected{deleted}`된 patch의 키 전부입니다. `suggestion.accept`가 거절된 것은 Suggestion이 의도를 가지므로 기록하지 않습니다.
+  - `set`(patch의 set 모양 그대로)과 `resolved` 중 정확히 하나를 가집니다. 클라이언트는 `set`이 있을 때만 열린 기록으로 봅니다. 해소는 어느 기기에서든 `conflict.resolve` op로 하고, Hub가 `set`을 지우고 `resolved`를 씁니다.
+  - 해소된 기록은 남아 같은 Mutation의 재전송이 기록을 다시 열지 못하게 합니다. 대상 엔터티를 즉시 purge하면 기록도 tombstone이 됩니다.
 
 ### Hub 파생 (읽기 전용으로 동기화)
 
@@ -153,9 +157,10 @@ Capture와 Attachment에는 처리 상태 필드가 없습니다. `unsafe_input`
 ## 10. 동기화와 충돌
 
 - 변경 피드: `GET /v1/changes?since=` → 바뀐 행의 현재 상태와 `hub_id`·`epoch`(D3)
-  - 행은 `{entity, id, rev, deleted, data}`입니다. entity는 capture, attachment, item, relation, tag, artifact, suggestion이고, 클라이언트는 모르는 entity의 행을 건너뜁니다(E18).
+  - 행은 `{entity, id, rev, deleted, data}`입니다. entity는 capture, attachment, item, relation, tag, artifact, suggestion, conflict_record이고, 클라이언트는 모르는 entity의 행을 건너뜁니다(E18).
 - 쓰기: `POST /v1/mutations` → 필드 단위 compare-and-set(D18)
-- 충돌: 스칼라 필드는 같은 필드만 충돌로 판정하고, 텍스트 본문 충돌은 ConflictRecord로 보존합니다. last-write-wins는 없습니다.
+- 충돌: 같은 키를 함께 바꾼 경우만 충돌로 판정하고, 진 값은 스칼라든 텍스트 본문이든 ConflictRecord 하나에 모두 보존합니다(D24). last-write-wins는 없습니다.
+- 복원·이전 뒤: `GET /v1/changes`와 `POST /v1/mutations`는 기준 epoch(`CampusLife-Epoch`)을 싣습니다. Hub의 epoch과 다르면 Hub가 본문을 읽기 전에 409 `epoch_changed`로 답하고, 클라이언트는 캐시를 비우고 `since=0`부터 받고 보관한 Mutation을 다시 보냅니다(D24).
 
 ## 11. 검색
 

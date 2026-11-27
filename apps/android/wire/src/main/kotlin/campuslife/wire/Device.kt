@@ -45,7 +45,7 @@ data class DeviceStatus(
     @SerialName("app_version") val appVersion: String,
     @SerialName("pending_upload_count") val pendingUploadCount: Long,
     @SerialName("pending_mutation_count") val pendingMutationCount: Long,
-    @SerialName("open_conflict_count") val openConflictCount: Long,
+    @SerialName("rejected_mutation_count") val rejectedMutationCount: Long,
     @SerialName("last_successful_sync_at") val lastSuccessfulSyncAt: Instant? = null,
     @SerialName("last_error") val lastError: String? = null,
     @SerialName("retry_after") val retryAfter: Instant? = null,
