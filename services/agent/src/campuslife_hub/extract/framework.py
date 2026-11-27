@@ -48,6 +48,10 @@ PLANNED_ROLES = frozenset({"file", "text", "web_snapshot"})
 """S2: audio_segment and photo are #8's."""
 PLANNER = "files"
 RULES_CHANGED = "the Hub's processing rules changed since this file was read; reprocess it to read it under the new ones"
+
+
+def can_read(job_type: str) -> str:
+    return f"this Hub can now read it with {job_type}; reprocess it to read it"
 HANDLER_SLACK = timedelta(seconds=60)
 """S5: a handler's time is the child's and this, for reading the Blob and storing the body."""
 
@@ -132,14 +136,21 @@ class Files:
         """Where the Attachment stands: the latest identify job of its Blob and, once identified, the latest job of
         each reader refine picks, with what refine found that no job holds (the PR2 decision on identify's input).
         A Blob last identified under other rules (another identify pipeline) is shown as that reading left it, with
-        RULES_CHANGED: nothing replans it until the user reprocesses (decision 5)."""
+        RULES_CHANGED: nothing replans it until the user reprocesses (decision 5). So is a reader with no job under
+        its current pipeline (an extractor added or upgraded since), with can_read; RULES_CHANGED, which a reprocess
+        also answers, stands for those."""
         attachment = store.get(snap, EntityRef(Entity.ATTACHMENT, attachment_id))
         if attachment is None or attachment["role"] not in PLANNED_ROLES:
             return None
         sha256 = attachment["blob_sha256"]
         latest: dict[tuple[str, str], Job] = {}
+        current: set[tuple[str, str]] = set()
         for job in jobs.of_subject(snap, f"blob:{sha256}"):
-            latest[job.job_type, bodies.canonical_json(reading(job.params)).decode()] = job
+            key = job.job_type, bodies.canonical_json(reading(job.params)).decode()
+            latest[key] = job
+            extractor = self.extractors.get(job.job_type)
+            if extractor is not None and job.pipeline.version == self.pipeline(extractor).version:
+                current.add(key)
         identified = latest.get((IDENTIFY, "{}"))
         found = media.get(snap, sha256)
         if found is None:
@@ -152,7 +163,10 @@ class Files:
             facts.append(f"its name or declared type says another kind of file than its bytes, which are {found.media_type}")
         if not refined.jobs:
             facts.append(f"no extractor reads {refined.detected_mime}")
-        wanted = [latest.get((job_type, bodies.canonical_json(dict(params)).decode())) for job_type, params in refined.jobs]
+        keys = [(job_type, bodies.canonical_json(dict(params)).decode()) for job_type, params in refined.jobs]
+        if RULES_CHANGED not in facts:
+            facts.extend(can_read(job_type) for job_type, key in keys if (job_type, key) not in current)
+        wanted = [latest.get(key) for key in keys]
         return FileStatus(refined.detected_mime, tuple(facts), tuple(job for job in (identified, *wanted) if job is not None))
 
     async def _read(
