@@ -23,8 +23,9 @@ from .protocol import EXIT_MEMORY, Status
 
 CHILD = (sys.executable, "-I", "-m", "campuslife_hub.extract.child")
 CRASHES_BEFORE_FAILING = 2
-WINDOWS_ENV = ("SYSTEMROOT", "SystemRoot", "WINDIR", "TEMP", "TMP")
-"""What a Windows child needs to start and to make temporary files; nothing else of the Hub's env is passed."""
+WINDOWS_ENV = ("SYSTEMROOT", "WINDIR")
+"""What a Windows child needs to start; TEMP and TMP point into its work directory. Nothing else of the Hub's env
+is passed."""
 
 REFUSED = {
     Status.CORRUPT: OutcomeCode.CORRUPT,
@@ -50,12 +51,9 @@ type Judged = Answer | Failed | Blocked
 
 
 def child_env(work: Path) -> dict[str, str]:
-    env = {name: os.environ[name] for name in WINDOWS_ENV if name in os.environ} if sys.platform == "win32" else {}
     if sys.platform == "win32":
-        env["TEMP"] = env["TMP"] = str(work)
-    else:
-        env["TMPDIR"] = str(work)
-    return env
+        return {**{name: os.environ[name] for name in WINDOWS_ENV if name in os.environ}, "TEMP": str(work), "TMP": str(work)}
+    return {"TMPDIR": str(work)}
 
 
 def unsafe(reason: str) -> Failed:
