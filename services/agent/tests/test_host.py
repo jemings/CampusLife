@@ -551,6 +551,43 @@ async def test_tokens_paired_and_reissued_over_the_sync_listener_reach_neither_h
     assert held_by_the_database(core, texts) == []
 
 
+async def test_a_token_issued_before_a_restart_is_masked_in_hub_log_once_it_authenticates_after_it(tmp_path):
+    """The restarted Hub's redactor never saw the token issued, so only authenticating registers it."""
+    first = Redactor()
+    async with serving(tmp_path, redactor=first, sync_app=sync_devices.sync_app) as (core, client, listening, *_):
+        offer = await devices.offer(core, now=datetime.now(UTC), public_url="https://campus-laptop.tail0a1b2c.ts.net", redactor=first)
+        async with sync_client_at(listening) as sync:
+            body = {"secret": offer.secret, "platform": "android", "device_name": "Fold8", "app_version": "0.1.0"}
+            token = (await sync.post("/v1/pair", json=body)).json()["token"]
+
+    restarted = Redactor()
+    log_file = tmp_path / "logs" / "hub.log"
+    handler = file_handler(log_file, restarted)
+    root = logging.getLogger()
+    level = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG)
+    try:
+        async with serving(tmp_path, redactor=restarted, sync_app=sync_devices.sync_app) as (core, client, listening, *_):
+            async with sync_client_at(listening) as sync:
+                answer = await sync.get("/v1/hub", headers={"Authorization": f"Bearer {token}"})
+            logging.getLogger("campuslife_hub.test").warning("received %s", token)
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(level)
+        handler.close()
+
+    assert answer.status_code == 200
+    assert token not in log_file.read_text(encoding="utf-8")
+
+
+def sync_client_at(listening):
+    """A client of the sync listener sending no token of its own, every response checked against sync.yaml."""
+    return httpx.AsyncClient(
+        base_url=f"http://127.0.0.1:{listening.sync[1]}", headers={"CampusLife-Contract": "1"}, trust_env=False, event_hooks={"response": [checked]}
+    )
+
+
 async def test_a_paired_devices_token_opens_nothing_on_the_admin_listener(tmp_path):
     redactor = Redactor()
     async with serving(tmp_path, redactor=redactor, sync_app=sync_devices.sync_app) as (core, client, listening, *_):
