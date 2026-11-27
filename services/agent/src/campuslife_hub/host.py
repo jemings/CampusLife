@@ -195,8 +195,6 @@ async def serve(
     listening: Callable[[Serving], None] = lambda serving: None,
 ) -> None:
     """Serve until stop is set; raises when a listener ends on its own, after stopping the rest."""
-    with contextlib.suppress(FileNotFoundError):
-        core.layout.admin_port.unlink()
     runner = JobRunner(JobContext(core.db, core.blobs, registry), clock=clock, stop_grace=config.stop_grace)
     record = RunnerRecord()
     stopping = asyncio.Event()

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Iterable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePath
@@ -75,13 +75,18 @@ def safe_data_root(root: Path, sync_roots: Iterable[Path] | None = None) -> Path
 
 @asynccontextmanager
 async def open_core(root: Path, *, create: bool, sync_roots: Iterable[Path] | None = None) -> AsyncIterator[Core]:
-    """Open the Hub at `root` under its hub.lock; with create, make it first. Making it twice changes nothing."""
+    """Open the Hub at `root` under its hub.lock; with create, make it first. Making it twice changes nothing.
+
+    Taking the lock removes the admin.port an earlier Hub left, so the CLI does not ask whatever holds that port
+    while this Hub opens."""
     layout = Layout(safe_data_root(root, sync_roots))
     if create:
         layout.root.mkdir(parents=True, exist_ok=True)
     elif not layout.database.is_file():
         raise NotInitialized(f"no Hub at {layout.root}; {START_THE_HUB}")
     with HubLock.acquire(layout.lock_file) as lock:
+        with suppress(FileNotFoundError):
+            layout.admin_port.unlink()
         db = await Database.open(layout, lock=lock, create=create)
         try:
             identity, hub_device = await db.write(_issue_identity_and_hub_device)

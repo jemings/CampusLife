@@ -2,9 +2,9 @@
 
 While a Hub holds the data root's hub.lock, the CLI does not touch the database; it asks that Hub,
 at the port it left in admin.port. A lock nobody holds means no Hub serves: the port left behind
-is stale and is removed. A program that holds the port is trusted only once it proves it holds the
-admin token for that port (see admin_auth), and the token is never sent: each request is signed
-instead.
+is stale and is removed before the lock is let go. A program that holds the port is trusted only
+once it proves it holds the admin token for that port (see admin_auth), and the token is never
+sent: each request is signed instead.
 Proxies from the environment are not used: the request never leaves this machine.
 """
 
@@ -43,22 +43,23 @@ class HubDidNotAnswer(Exception):
     pass
 
 
-def _lock_is_free(layout: Layout) -> bool:
+def _no_hub_holds_the_lock(layout: Layout) -> bool:
+    """Whether no Hub holds the lock; the port a Hub left is then removed while the lock is held, so a Hub that takes
+    the lock next keeps the port it leaves."""
     try:
         lock = HubLock.acquire(layout.lock_file)
     except AlreadyRunning:
         return False
     except FileNotFoundError:
         return True
-    lock.release()
+    with lock, contextlib.suppress(FileNotFoundError):
+        layout.admin_port.unlink()
     return True
 
 
 def admin_address(layout: Layout) -> str:
     """The admin listener of the Hub that holds the lock; HubNotServing when none does, or it left no port."""
-    if _lock_is_free(layout):
-        with contextlib.suppress(FileNotFoundError):
-            layout.admin_port.unlink()
+    if _no_hub_holds_the_lock(layout):
         raise HubNotServing(f"no Hub is serving {layout.root}; start it with `campuslife-hub serve`")
     try:
         port = int(layout.admin_port.read_text(encoding="ascii").strip())
