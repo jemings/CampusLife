@@ -104,11 +104,11 @@ class UnknownDevice(LookupError):
 
 
 class HubDeviceRefused(Exception):
-    """The Hub's own Device is never revoked, approved or made dormant."""
+    """The Hub's own Device is never given a token, revoked, approved or made dormant."""
 
 
 class RevokedDevice(Exception):
-    """A revoked Device is never approved; it pairs again as a new Device."""
+    """A revoked Device is never approved or given another token; it pairs again as a new Device."""
 
 
 @dataclass(frozen=True)
@@ -345,13 +345,15 @@ async def authenticate(core: Core, bearer: str | None, *, now: datetime, redacto
 
 
 def _reissue(tx: Tx, *, device: str, token_sha256: str, now: datetime) -> None:
+    if _client_state(tx, device) == DeviceState.REVOKED:
+        raise RevokedDevice(f"device {device} is revoked; pair it again as a new device")
     tx.execute("DELETE FROM device_tokens WHERE device_id = ? AND status = 'pending'", (device,))
     tx.execute("INSERT INTO device_tokens (token_sha256, device_id, status, created_at) VALUES (?, ?, 'pending', ?)", (token_sha256, device, instant(now)))
     audit.record(tx, AuditEvent.REISSUE, at=now, subject=device)
 
 
 async def reissue(core: Core, device: str, *, now: datetime, redactor: Redactor) -> Paired:
-    """Another token for a Device that authenticated (D23, POST /v1/devices/me/token).
+    """Another token for a client Device that authenticated (D23, POST /v1/devices/me/token); never for a revoked one.
 
     The token it holds keeps working until the new one is first used. Asking again issues another token and ends the
     one not used yet: the Hub keeps only SHA-256 of a token, so it cannot hand the same one out again (#19 decision 2).
@@ -382,7 +384,7 @@ def _client_state(tx: Tx, device: str) -> DeviceState:
     if row is None:
         raise UnknownDevice(f"the Hub knows no device {device}")
     if row[0] == HUB_PLATFORM:
-        raise HubDeviceRefused("the Hub's own device is never revoked, approved or made dormant")
+        raise HubDeviceRefused("the Hub's own device is never given a token, revoked, approved or made dormant")
     return DeviceState(row[1])
 
 
