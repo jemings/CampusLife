@@ -73,7 +73,8 @@ PAGE_HEADERS = {
     "content-security-policy": "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
-    "referrer-policy": "no-referrer",
+    # Not no-referrer: under it a browser sends Origin: null on a form's POST, which the Origin check must refuse.
+    "referrer-policy": "same-origin",
     "cache-control": "no-store",
 }
 """Set on every response that has not set its own; an original sets a sandbox policy of its own."""
