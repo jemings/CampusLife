@@ -17,7 +17,7 @@ from conftest import SignedAs
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 
-from campuslife_hub import host, jobs, mutations
+from campuslife_hub import host, jobs, mutations, purge
 from campuslife_hub.core import open_core
 from campuslife_hub.db import Database
 from campuslife_hub.host import HostConfig, PortTaken
@@ -206,6 +206,25 @@ async def test_maintenance_runs_every_period_with_the_hosts_clock(tmp_path):
             return counts == [0, 0, 0]
 
         await until(all_forgotten)
+
+
+async def test_maintenance_finishes_a_purge_left_unfinished(tmp_path):
+    left = tmp_path / "purged.pdf"
+    left.write_bytes(b"synthetic purged slides")
+
+    async with serving(tmp_path, config={"maintenance_every": timedelta(seconds=0.05)}) as (core, *_):
+        sha = (await core.blobs.put_file(left)).sha256
+        target = purge.PurgeTarget(blobs=(sha,))
+        await core.db.write(lambda tx: tx.execute("DELETE FROM blobs WHERE sha256 = ?", (sha,)))
+        await core.db.write(lambda tx: tx.execute("INSERT INTO purge_journal (id, target, registered_at) VALUES ('j', ?, '2026-03-02T00:30:00.000Z')",
+                                                   (target.to_json(),)))
+
+        async def finished():
+            (done,) = await core.db.read(lambda snap: snap.execute("SELECT finished_at IS NOT NULL FROM purge_journal").fetchone())
+            return bool(done)
+
+        await until(finished)
+        assert not core.blobs.path_of(sha).exists()
 
 
 async def test_a_failed_maintenance_round_is_logged_and_the_next_one_runs(tmp_path, caplog):
