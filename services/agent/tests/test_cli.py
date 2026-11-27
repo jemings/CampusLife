@@ -17,7 +17,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from campuslife_hub import admin_client, admin_token, backup
+from campuslife_hub import admin_client, admin_token, backup, host
 from campuslife_hub.admin_auth import hub_proof
 from campuslife_hub.cli import main
 from campuslife_hub.core import open_core
@@ -350,6 +350,27 @@ def test_without_a_console_a_root_the_cli_may_not_look_into_still_ends_with_1(tm
         assert main(["--root", str(shut / "CampusLife"), "stop"]) == 1
     finally:
         shut.chmod(0o700)
+
+
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="chmod 000 keeps out only a POSIX user other than root")
+def test_a_root_that_cannot_be_looked_into_holds_no_hub_and_says_so_without_raising(tmp_path):
+    shut = tmp_path / "shut"
+    shut.mkdir()
+    shut.chmod(0)
+    try:
+        assert host.holds_hub(Layout(shut / "CampusLife")) is False
+    finally:
+        shut.chmod(0o700)
+
+
+def test_without_a_console_a_serve_refused_for_want_of_a_hub_leaves_the_empty_root_empty(tmp_path):
+    root = tmp_path / "Restored"
+    root.mkdir()
+
+    finished = no_console("", ["--root", str(root), "serve", "--admin-port", "0"])
+
+    assert finished.returncode == 1
+    assert list(root.iterdir()) == []
 
 
 def test_with_a_console_the_reason_serve_refused_shows_once_and_is_in_the_log(tmp_path, capsys):
