@@ -133,14 +133,14 @@
 - C. `tailscale cert`로 받은 인증서를 Agent가 직접 로드.
 - D. Agent는 `127.0.0.1`에만 바인딩하고, `tailscale serve`가 `<machine>.<tailnet>.ts.net`의 공인 인증서로 HTTPS를 종단한다.
 
-**결정:** D. C는 측정 결과 serve에 문제가 있을 때 쓰는 대체안입니다(미결 O3).
+**결정:** D. C는 측정 결과 serve에 문제가 있을 때 쓰는 대체안입니다(미결 O8).
 - **listener를 둘로 나눕니다.**
   - sync 포트(`127.0.0.1:P1`)만 serve로 노출합니다. 모든 요청에 장치 토큰이 필요하며, pairing 엔드포인트도 여기 있습니다.
   - admin 포트(`127.0.0.1:P2`)는 serve에 연결하지 않습니다. 로컬 웹 UI, pairing 코드 발급, revoke가 여기 있습니다. 인증은 DPAPI로 보호한 로컬 admin 토큰으로 합니다. 장치 토큰으로는 admin 경로에 접근할 수 없습니다.
 - serve를 거친 요청은 Agent에서 출발지가 127.0.0.1로 보이므로 **출처로 권한을 판단하지 않습니다.**
 - serve는 요청에 `Tailscale-User-Login` 등 신원 헤더를 붙이고, 외부에서 넣은 같은 이름의 헤더는 지웁니다. 하지만 tag가 붙은 장치에서 온 요청에는 이 헤더가 채워지지 않습니다. 그래서 인증 근거로는 쓰지 않고 감사 기록에만 남깁니다.
 - Tailscale HTTPS 인증서를 켜면 장치 FQDN이 공개 Certificate Transparency 로그에 기록됩니다(Tailscale 공식 문서로 확인). 노트북 장치 이름에 실명이나 학교명을 쓰지 않습니다.
-- Funnel은 쓰지 않으며 꺼져 있음을 테스트로 확인합니다. Tailscale ACL은 "내 기기 → Hub:443"만 허용합니다.
+- Funnel은 쓰지 않으며 꺼져 있음을 테스트로 확인합니다. Tailscale ACL은 "내 기기 → Hub:443"만 허용합니다. *(D22로 대체됨: Funnel이 꺼져 있는지는 읽기 전용 `campuslife-hub tailscale-check`가 serve 설정에서 확인합니다(#4 결정 9))*
 - SFTP·FolderSync·OpenSSH는 제품과 PoC 모두에서 쓰지 않습니다. 해시와 ACK를 우회하는 두 번째 수집 경로이기 때문입니다.
 - 운영 한계로 문서화할 것:
   - Android와 iOS는 VPN을 동시에 하나만 쓰는 것으로 알고 있습니다(확인 필요). 학교 VPN을 켜면 Hub에 닿지 못할 수 있으므로, 앱이 그 사유를 표시합니다.
@@ -633,7 +633,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **오케스트레이터 결정: Blob과 업로드** (2026-11-26, "결정"·"PR #29 1차"·"PR3 첫 할 일")
 - **E9. Blob 저장:** `staging/`(같은 볼륨)에 쓰기 → fsync → sha256 → 최종 경로가 이미 있으면 staging만 버리고, 없으면 `os.replace` → 읽기 전용 → `blobs` 행. Windows 잠금(WinError 5/32)은 상한 있는 재시도입니다. 기동 때 lock을 쥔 쪽이 `staging/`의 잔여물을 지우고, 지우지 못한 것은 기록하고 건너뜁니다.
 - **E10. 업로드 세션:** 키는 `(device_id, sha256)`, 디렉터리는 `uploads/<session uuid>/<index>`입니다. 같은 sha의 중복 제거는 finalize에서 합니다. revoke하면 그 장치의 세션을 지웁니다. 7일 동안 건드리지 않은 세션과, 어떤 참조도 없고 마지막으로 받은 지 7일이 지난 Blob은 정리합니다. 참조 테이블 목록은 `BLOB_REFERENCES` 한 곳입니다(Attachment, Artifact, Relation 끝; 뒤에 AnnotationLayer).
-  - 세션을 열 때 `2 × size`가 data root 볼륨의 남은 공간보다 크면 `invalid_request`입니다. *(#4로 대체됨: 요청의 잘못이 아니라 나중에 다시 열 일이므로 400 `hub_storage_full`(#4 결정 5))* 근거: 아무 size나 받으면 `size=2**63-1` 한 번으로 finalize가 `MemoryError`를 냅니다. finalize는 chunk를 둔 채 결합본을 써서 약 두 배가 필요합니다.
+  - 세션을 열 때 `2 × size`가 data root 볼륨의 남은 공간보다 크면 `invalid_request`입니다. *(D22로 대체됨: 요청의 잘못이 아니라 나중에 다시 열 일이므로 400 `hub_storage_full`(#4 결정 5))* 근거: 아무 size나 받으면 `size=2**63-1` 한 번으로 finalize가 `MemoryError`를 냅니다. finalize는 chunk를 둔 채 결합본을 써서 약 두 배가 필요합니다.
   - 같은 index의 chunk는 배타적으로 만듭니다. 같은 바이트면 no-op, 다르면 `chunk_mismatch`입니다. "이미 저장됨"(200)을 답할 때도 7일 시계를 다시 시작합니다.
 
 **오케스트레이터 결정: 작업 큐와 격리** (2026-11-26 "결정", 2026-11-27 "PR #31 1차"·"PR5 첫 할 일")
@@ -687,6 +687,52 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - Hub 코어는 `services/agent`에 있고, 설치·업데이트·제거와 운영은 `services/agent/README.md`가 적습니다.
 - `change_seq`를 쓰는 곳(Mutation, 백업, purge, jobs)은 모두 `store.write` 하나를 거칩니다.
 - D2·D6·D14·D16·D18·D20의 해당 문장은 이 항목을 따릅니다. 범위 밖은 #4(sync HTTP), #19(pairing·토큰·재승인), #18(ConflictRecord·휴지통), #5·#8(extractor·provider), #11(FTS), #9(Suggestion 화면), #14(실기기 확인)입니다.
+
+---
+
+## D22. Sync 리스너 (#4, 2026-11-27)
+
+**문제:** D5·D6·D7·E19가 정한 sync API를 HTTP로 열려면 정하지 않은 것이 넷 있었습니다. 장치 인증 상태를 누가 소유하는지, 오류·404·500을 포함한 모든 응답이 어떤 모양인지, 요청 본문의 상한, 계약 버전 번호를 누가 소유하는지입니다. 각 결정의 근거와 버린 안, 재현은 #4 본문의 "결정"과 착륙 기록에 있습니다.
+
+**검토한 안:** 결정마다 #4 본문에 있습니다. 인증은 #4가 `token_hash`를 직접 읽는 안, 응답 모양은 `@app.middleware`, 이른 거절은 앱이 상한까지 본문을 읽어 버리는 안을 버렸습니다.
+
+**결정** (오케스트레이터 결정, 2026-11-27, 사용자가 결정을 위임)
+- **인증 seam (#4 결정 1):** `create_sync_app(hosted, authenticate, routers=())`입니다. `authenticate(bearer) -> DeviceId | Refusal`은 비동기이고, authenticator와 장치 상태(`token_hash`, dormant, revoked, `last_seen`)는 #19 `devices`가 소유합니다.
+  - 앱 바깥 래퍼가 OpenAPI `security: []`가 아닌 모든 경로에서 authenticator를 부릅니다(fail-closed). 공개 경로는 `POST /v1/pair`뿐입니다.
+  - 라우트는 `device_of(request)`로 DeviceId만 압니다.
+  - #19가 붙기 전의 `serve`는 모든 토큰을 401로 거절합니다.
+  - 근거: 상태마다 소유자가 하나여야 합니다(D1). 버린 안은 #4가 `token_hash`를 직접 읽는 것으로, 소유자가 둘이 됩니다.
+- **판정 순서 (#4 결정 3):** 앱 바깥의 ASGI 래퍼 하나가 404·405·500을 포함한 모든 응답에 Hub 헤더와 `common/error` 모양을 씌우고, 요청은 다음 순서로 판정합니다.
+  1. `CampusLife-Contract`가 없거나 형식이 틀리면 400 `invalid_request`
+  2. 인증 실패는 401(`WWW-Authenticate: Bearer`)
+  3. `contract_too_old`(GET `/v1/hub`는 제외)
+  4. 본문: `loads_strict`로 읽고, JSON 본문은 `Content-Type: application/json`이어야 합니다. 위반이 NFC뿐이면 `not_canonical`, 그 밖은 `invalid_request`입니다.
+  5. 처리하지 못한 예외는 500 `internal_error`이고, 본문에 내부 정보를 싣지 않습니다.
+  - 405는 `invalid_request`에 `Allow`를 붙입니다. 끝에 붙은 슬래시는 redirect하지 않고 404입니다(sync.yaml에 3xx가 없음).
+  - 결과 행에 실을 `mutation_id`가 없는 항목이나 Hub가 아직 적용하지 않는 op의 항목이 든 배치는 전체가 400이고, 아무것도 적용하지 않습니다.
+  - 버린 안: `@app.middleware`는 500·404·405·422에 헤더를 씌우지 못합니다.
+- **한도 (#4 결정 5):**
+  - chunk 본문은 정확히 그 chunk의 길이입니다. Content-Length가 다르면 본문을 읽기 전에 400이고, Content-Length가 없으면 길이+1 바이트까지만 읽습니다.
+  - 일찍 거절할 때 앱은 본문을 비우지 않고 바로 답합니다. 남은 본문은 uvicorn(h11)이 읽어 버리고 연결을 유지합니다.
+    - 근거: 실제 `host.serve`에서 64 MiB를 보낸 401·400·404가 모두 reset 없이 응답을 읽고 같은 연결을 다시 썼습니다(로컬 실측, PR #43 리뷰).
+    - 버린 안: 앱이 상한까지 읽어 버리면 결과는 같고 읽는 바이트만 늘어납니다.
+  - `Expect: 100-continue`로 보낸 요청이 그렇게 거절되면, 클라이언트는 그 연결에 선언한 본문을 보내거나 연결을 닫습니다(#3·#16).
+  - JSON 본문은 8 MiB, 배치는 Mutation 200개(`maxItems`)가 상한입니다.
+  - 업로드를 열 공간이 없으면 400 `hub_storage_full`이고, 클라이언트는 나중에 다시 엽니다.
+  - 동시 업로드 세션 수에는 상한을 두지 않습니다(단일 사용자).
+  - `tailscale serve`를 거친 동작은 #39가 확인합니다.
+- **계약 버전 (#4 결정 8):** `campuslife_contracts.CONTRACT_VERSION = 1`과 `MIN_CONTRACT_VERSION = 1`을 계약 패키지에 두고 Hub가 import합니다(D17, 소유자 하나).
+- **#4의 그 밖의 결정:**
+  - keep-alive는 sync 리스너만 120초입니다(`HostConfig.sync_keep_alive`, 결정 6).
+  - 장치마다 Mutation 배치를 하나씩 적용합니다(결정 7).
+  - chunk 번호는 `0|[1-9][0-9]{0,18}`만 받습니다(결정 11).
+  - 다운로드의 Range 하나, ETag `"<sha256>"`, 304, 416 `bytes */<size>`, 빈 Blob은 직접 구현합니다. 근거: Starlette `FileResponse`는 ETag가 md5이고, 범위 둘에 multipart로 답하며, 304를 내지 않습니다.
+  - `campuslife-hub tailscale-check`(결정 9)는 읽기만 합니다.
+- **업로드를 열 때 "이미 저장됨"(200)을 답하면 그 장치의 그 sha256 세션을 끝냅니다** (2026-11-27, PR #43 리뷰, 오케스트레이터 결정). finalize의 같은 갈래와 같습니다. 근거: 다른 장치가 먼저 올리면 내 세션과 chunk가 7일 동안 남아 공간 판정에도 셉니다.
+
+**결과:**
+- sync 앱은 `services/agent/src/campuslife_hub/sync*.py`에 있습니다. serve 설정, `tailscale-check`, 인증서 공개 같은 운영 절차는 `services/agent/README.md`가 적습니다.
+- D5·D21 E10의 해당 문장은 이 항목을 따릅니다. 실기기 연결성은 #39, pairing·토큰은 #19, 충돌·복원 처리는 #18입니다.
 
 ---
 
