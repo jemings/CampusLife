@@ -40,6 +40,7 @@ import webbrowser
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import NamedTuple
 
 from . import admin_client, autostart, backup, devices, fsck, host, sync_devices, tailscale_check
 from .admin_client import AdminRefused, HubDidNotAnswer, HubNotServing, NotTheHub
@@ -361,31 +362,43 @@ async def _ls(root: Path) -> None:
             print(f"    {attachment.blob_sha256[:12]}  {attachment.cloud_policy:<13}  {attachment.original_filename or '-'}")
 
 
-def _public_url_to_compare(root: Path, given: str | None) -> tuple[str | None, str, bool]:
-    """The public_url to compare, what it is (for the output), and whether a serving Hub hands out none at all.
+class _Compared(NamedTuple):
+    public_url: str | None
+    said: str
+    unset: bool = False
+    failure: str | None = None
 
-    One given wins; otherwise it is the one the Hub serving root hands out, so the check sees what devices are given."""
+
+def _public_url_to_compare(root: Path, given: str | None) -> _Compared:
+    """The public_url to compare and what it is: one given wins; otherwise the one the Hub serving root hands out, so
+    the check sees what devices are given. Failing to ask that Hub leaves nothing to compare, never the exposure check."""
     if given is not None:
-        return given, "given", False
-    layout = _layout(root)
+        return _Compared(given, "given")
     try:
+        layout = _layout(root)
         status = admin_client.call(layout, "GET", "/api/status")
     except HubNotServing:
-        return None, f"no Hub serves {layout.root}; give --public-url to compare one", False
+        return _Compared(None, f"no Hub serves {layout.root}; give --public-url to compare one")
+    except EXPECTED_FAILURES as error:
+        return _Compared(None, "not compared", failure=f"could not ask the running Hub: {error}")
     served = status["devices"]["public_url"]
-    return served, "the serving Hub's" if served else f"the Hub serving {layout.root} was started without --public-url", served is None
+    if served is None:
+        return _Compared(None, f"the Hub serving {layout.root} was started without --public-url", unset=True)
+    return _Compared(served, "the serving Hub's")
 
 
 def _tailscale_check(arguments: argparse.Namespace, root: Path) -> None:
-    public_url, said, unset = _public_url_to_compare(root, arguments.public_url)
+    compared = _public_url_to_compare(root, arguments.public_url)
     verdict = tailscale_check.check(
-        tailscale_check.tailscale, sync_port=arguments.sync_port, admin_port=arguments.admin_port, public_url=public_url,
+        tailscale_check.tailscale, sync_port=arguments.sync_port, admin_port=arguments.admin_port, public_url=compared.public_url,
     )
     print(f"hub_url {verdict.hub_url or '-'}")
-    print(f"public_url {public_url or '-'} ({said})")
+    print(f"public_url {compared.public_url or '-'} ({compared.said})")
     for warning in verdict.warnings:
         print(f"warning: {warning}")
-    if unset:
+    if compared.failure is not None:
+        print(f"warning: {compared.failure}")
+    if compared.unset:
         print(f"warning: no device can be added until serve is given --public-url {verdict.hub_url or '<the hub_url>'}")
     for problem in verdict.problems:
         print(f"problem: {problem}")
