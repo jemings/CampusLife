@@ -10,11 +10,26 @@ through serve, looks the same. A request is let in when
 
 The admin token itself is never sent. The CLI finds the Hub by the port it left in admin.port,
 and another program may hold that port by then, so the Hub proves itself first: the CLI posts a
-nonce of its own to /api/hello and the Hub answers with a nonce of its own and an HMAC of both
-under the token. Only then does the CLI send its request, signed with an HMAC under the token of
-the Hub's nonce, the method, the path and query and the body. The Hub takes each of its nonces
-once, so whoever receives a signed request can neither learn the token from it nor sign another.
-Routes added to the app, #19's pairing and revoke among them, pass the same checks.
+nonce of its own to /api/hello with an HMAC of it under the token, and the Hub answers with a
+nonce of its own and an HMAC of both. Only then does the CLI send its request, signed with an
+HMAC of the Hub's nonce and the request. Each HMAC covers the listener's address, which the Hub
+takes from the port it listens on and never from the request, so a program on another port that
+passes everything on to the Hub gets an answer that proves nothing to the CLI, and the Hub
+refuses what the CLI signed for that program. The Hub takes each of its nonces once, so whoever
+receives a signed request can neither learn the token from it nor sign another. Routes added to
+the app, #19's pairing and revoke among them, pass the same checks.
+
+How a client signs:
+- MAC(purpose, *parts) is the lowercase hex HMAC-SHA256 under the admin token, as UTF-8, of
+  purpose and the parts, each as UTF-8, joined by NUL. address is "127.0.0.1:<port>".
+- hello: POST /api/hello with {"nonce": cn, "mac": MAC("campuslife-admin-hello", address, cn)},
+  cn 64 lowercase hex digits. The Hub answers {"nonce": hn, "proof":
+  MAC("campuslife-hub-proof", address, cn, hn)}; anything else means it is not this Hub.
+- request: Authorization: CampusLife <hn>.<MAC("campuslife-admin-request", address, hn, method,
+  path, query, body hash)>, where method is as sent, path is percent-decoded (the ASGI path),
+  query is the raw query string as sent, without "?" ("" when none), and body hash is the
+  lowercase hex SHA-256 of the body as sent (of b"" when none). hn signs one request, within
+  HELLO_LIFETIME.
 """
 
 from __future__ import annotations
@@ -24,7 +39,7 @@ import hmac
 import json
 import re
 import secrets
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from starlette.datastructures import Headers, MutableHeaders
@@ -42,11 +57,14 @@ HELLO_PATH = "/api/hello"
 PUBLIC_PATHS = frozenset({"/login", "/static/admin.css", HELLO_PATH})
 API_PREFIX = "/api/"
 AUTH_SCOPE_KEY = "campuslife.admin"
+LISTENER_SCOPE_KEY = "campuslife.listener"
 SIGNED_SCHEME = "CampusLife"
 HELLO_LIFETIME = timedelta(minutes=1)
 """How long a nonce the Hub gave in its hello may sign a request."""
 MAX_PENDING_HELLOS = 256
 MAX_SIGNED_BODY_BYTES = 1024 * 1024
+MAX_PUBLIC_BODY_BYTES = 1024
+"""The most a request may carry before it is logged in or signed; a hello is about 150 bytes."""
 CLIENT_NONCE = re.compile("[0-9a-f]{64}")
 
 PAGE_HEADERS = {
@@ -67,14 +85,23 @@ def _mac(token: str, purpose: str, *parts: str) -> str:
     return hmac.new(token.encode(), "\0".join((purpose, *parts)).encode(), hashlib.sha256).hexdigest()
 
 
-def hub_proof(token: str, client_nonce: str, hub_nonce: str) -> str:
-    """The Hub's answer to a client's hello, which only a holder of the token can give."""
-    return _mac(token, "campuslife-hub-proof", client_nonce, hub_nonce)
+def listener_address(port: int) -> str:
+    return f"127.0.0.1:{port}"
 
 
-def signed_authorization(token: str, hub_nonce: str, method: str, path: str, query: str, body: bytes) -> str:
-    """The authorization header of one admin API request, under a nonce the Hub gave in its hello."""
-    signature = _mac(token, "campuslife-admin-request", hub_nonce, method, path, query, hashlib.sha256(body).hexdigest())
+def hello_mac(token: str, address: str, client_nonce: str) -> str:
+    """The client's half of a hello to the listener at address, which only a holder of the token can give."""
+    return _mac(token, "campuslife-admin-hello", address, client_nonce)
+
+
+def hub_proof(token: str, address: str, client_nonce: str, hub_nonce: str) -> str:
+    """The answer of the Hub listening at address to a client's hello, which only a holder of the token can give."""
+    return _mac(token, "campuslife-hub-proof", address, client_nonce, hub_nonce)
+
+
+def signed_authorization(token: str, address: str, hub_nonce: str, method: str, path: str, query: str, body: bytes) -> str:
+    """The authorization header of one admin API request to the listener at address, under a nonce it gave in its hello."""
+    signature = _mac(token, "campuslife-admin-request", address, hub_nonce, method, path, query, hashlib.sha256(body).hexdigest())
     return f"{SIGNED_SCHEME} {hub_nonce}.{signature}"
 
 
@@ -98,10 +125,12 @@ class AdminAuth:
         into[_digest(secret)] = now + lifetime
         return secret
 
-    def hello(self, client_nonce: object) -> tuple[str, str] | None:
+    def hello(self, address: str, client_nonce: object, mac: object) -> tuple[str, str] | None:
         """A nonce of the Hub's that may sign one request within HELLO_LIFETIME, and the Hub's proof for
-        client_nonce; None when client_nonce is not 64 hex digits."""
-        if not isinstance(client_nonce, str) or not CLIENT_NONCE.fullmatch(client_nonce):
+        client_nonce, to a client whose mac shows it holds the token; None to any other."""
+        if not isinstance(client_nonce, str) or not CLIENT_NONCE.fullmatch(client_nonce) or not isinstance(mac, str):
+            return None
+        if not hmac.compare_digest(mac.encode(), hello_mac(self._token, address, client_nonce).encode()):
             return None
         now = self._clock()
         for nonce in [nonce for nonce, until in self._hellos.items() if until <= now]:
@@ -110,16 +139,16 @@ class AdminAuth:
             del self._hellos[next(iter(self._hellos))]
         hub_nonce = secrets.token_urlsafe(SECRET_BYTES)
         self._hellos[hub_nonce] = now + HELLO_LIFETIME
-        return hub_nonce, hub_proof(self._token, client_nonce, hub_nonce)
+        return hub_nonce, hub_proof(self._token, address, client_nonce, hub_nonce)
 
-    def is_signed(self, authorization: str, method: str, path: str, query: str, body: bytes) -> bool:
+    def is_signed(self, address: str, authorization: str, method: str, path: str, query: str, body: bytes) -> bool:
         """Whether authorization signs this request under an unused, unexpired nonce of the Hub's, which is then used."""
         scheme, _, credentials = authorization.partition(" ")
         hub_nonce, _, _ = credentials.partition(".")
         until = self._hellos.pop(hub_nonce, None)
         if scheme != SIGNED_SCHEME or until is None or until <= self._clock():
             return False
-        expected = signed_authorization(self._token, hub_nonce, method, path, query, body)
+        expected = signed_authorization(self._token, address, hub_nonce, method, path, query, body)
         return hmac.compare_digest(authorization.encode(), expected.encode())
 
     def issue_login_code(self) -> str:
@@ -147,8 +176,8 @@ def session_cookie(headers: Headers) -> str | None:
     return cookie_parser(headers.get("cookie", "")).get(SESSION_COOKIE) or None
 
 
-async def _body(receive: Receive) -> bytes | None:
-    """The request body, up to MAX_SIGNED_BODY_BYTES; None past that or when the client leaves."""
+async def _body(receive: Receive, limit: int) -> bytes | None:
+    """The request body, up to limit bytes; None past that or when the client leaves."""
     chunks, size = [], 0
     while True:
         message = await receive()
@@ -156,7 +185,7 @@ async def _body(receive: Receive) -> bytes | None:
             return None
         chunks.append(message.get("body", b""))
         size += len(chunks[-1])
-        if size > MAX_SIGNED_BODY_BYTES:
+        if size > limit:
             return None
         if not message.get("more_body", False):
             return b"".join(chunks)
@@ -183,10 +212,11 @@ async def _refuse(send: Send, status: int, reason: str, *, api: bool) -> None:
 
 
 class AdminGuard:
-    def __init__(self, app: ASGIApp, auth: AdminAuth, hosts: Iterable[str]) -> None:
+    def __init__(self, app: ASGIApp, auth: AdminAuth, port: int) -> None:
         self.app = app
         self.auth = auth
-        self.hosts = frozenset(hosts)
+        self.address = listener_address(port)
+        self.hosts = frozenset({self.address, f"localhost:{port}"})
         self.origins = frozenset(f"http://{host}" for host in self.hosts)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -207,26 +237,33 @@ class AdminGuard:
             return
         authorised = None
         if api and "authorization" in headers:
-            body = await _body(receive)
+            body = await _body(receive, MAX_SIGNED_BODY_BYTES)
             if body is None:
                 await _refuse(send, 413, "a signed request carries at most 1 MiB", api=True)
                 return
             receive = _replaying(body, receive)
             query = scope.get("query_string", b"").decode("latin-1")
-            authorised = "signed" if self.auth.is_signed(headers["authorization"], scope["method"], path, query, body) else None
+            authorised = "signed" if self.auth.is_signed(self.address, headers["authorization"], scope["method"], path, query, body) else None
         elif not api:
             session = session_cookie(headers)
             authorised = "session" if session is not None and self.auth.has_session(session) else None
-        if authorised is None and path not in PUBLIC_PATHS:
-            if api:
-                await _refuse(send, 401, "the admin API takes requests signed with the admin token", api=True)
-            else:
-                await _refuse(send, 401, "not logged in: open the local UI with <code>campuslife-hub open</code>", api=False)
-            return
+        if authorised is None:
+            if path not in PUBLIC_PATHS:
+                if api:
+                    await _refuse(send, 401, "the admin API takes requests signed with the admin token", api=True)
+                else:
+                    await _refuse(send, 401, "not logged in: open the local UI with <code>campuslife-hub open</code>", api=False)
+                return
+            body = await _body(receive, MAX_PUBLIC_BODY_BYTES)
+            if body is None:
+                await _refuse(send, 413, "a request before login carries at most 1 KiB", api=api)
+                return
+            receive = _replaying(body, receive)
         if authorised == "session" and scope["method"] not in SAFE_METHODS and origin is None:
             await _refuse(send, 403, "a change without an Origin is refused", api=False)
             return
         scope[AUTH_SCOPE_KEY] = authorised
+        scope[LISTENER_SCOPE_KEY] = self.address
 
         async def with_page_headers(message: Message) -> None:
             if message["type"] == "http.response.start":

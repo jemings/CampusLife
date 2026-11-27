@@ -3,7 +3,8 @@
 While a Hub holds the data root's hub.lock, the CLI does not touch the database; it asks that Hub,
 at the port it left in admin.port. A lock nobody holds means no Hub serves: the port left behind
 is stale and is removed. A program that holds the port is trusted only once it proves it holds the
-admin token (see admin_auth), and the token is never sent: each request is signed instead.
+admin token for that port (see admin_auth), and the token is never sent: each request is signed
+instead.
 Proxies from the environment are not used: the request never leaves this machine.
 """
 
@@ -18,9 +19,8 @@ import urllib.error
 import urllib.request
 
 from . import admin_token
-from .admin_auth import HELLO_PATH, hub_proof, signed_authorization
+from .admin_auth import HELLO_PATH, hello_mac, hub_proof, listener_address, signed_authorization
 from .data_root import Layout
-from .host import LOOPBACK
 from .lock import AlreadyRunning, HubLock
 
 REQUEST_TIMEOUT_S = 600.0
@@ -54,7 +54,7 @@ def _lock_is_free(layout: Layout) -> bool:
     return True
 
 
-def admin_url(layout: Layout) -> str:
+def admin_address(layout: Layout) -> str:
     """The admin listener of the Hub that holds the lock; HubNotServing when none does, or it left no port."""
     if _lock_is_free(layout):
         with contextlib.suppress(FileNotFoundError):
@@ -64,7 +64,7 @@ def admin_url(layout: Layout) -> str:
         port = int(layout.admin_port.read_text(encoding="ascii").strip())
     except (FileNotFoundError, ValueError):
         raise HubNotServing(f"no Hub is serving {layout.root}; start it with `campuslife-hub serve`") from None
-    return f"http://{LOOPBACK}:{port}"
+    return listener_address(port)
 
 
 def _exchange(url: str, method: str, target: str, body: bytes, headers: dict[str, str]) -> dict:
@@ -94,39 +94,42 @@ def _exchange(url: str, method: str, target: str, body: bytes, headers: dict[str
     return answer
 
 
-def _hub_nonce(layout: Layout, url: str, token: str) -> str:
-    """A nonce from the program at url, once it has proved it holds the token; NotTheHub when it cannot."""
-    client_nonce = secrets.token_hex(32)
+def _hub_nonce(layout: Layout, address: str, token: str) -> str:
+    """A nonce from the program at address, once it has proved it is the Hub listening there; NotTheHub when it cannot."""
+    url, client_nonce = f"http://{address}", secrets.token_hex(32)
     not_the_hub = NotTheHub(f"the program answering on {url} is not the Hub of {layout.root}; nothing was sent to it")
+    hello = {"nonce": client_nonce, "mac": hello_mac(token, address, client_nonce)}
     try:
-        answer = _exchange(url, "POST", HELLO_PATH, json.dumps({"nonce": client_nonce}).encode(), {})
+        answer = _exchange(url, "POST", HELLO_PATH, json.dumps(hello).encode(), {})
     except AdminRefused:
         raise not_the_hub from None
     hub_nonce, proof = answer.get("nonce"), answer.get("proof")
     if not isinstance(hub_nonce, str) or not isinstance(proof, str):
         raise not_the_hub
-    if not hmac.compare_digest(proof.encode(), hub_proof(token, client_nonce, hub_nonce).encode()):
+    if not hmac.compare_digest(proof.encode(), hub_proof(token, address, client_nonce, hub_nonce).encode()):
         raise not_the_hub
     return hub_nonce
 
 
-def _signed_call(layout: Layout, url: str, method: str, target: str, body: object) -> dict:
+def _signed_call(layout: Layout, address: str, method: str, target: str, body: object) -> dict:
     token = admin_token.read(layout.admin_token)
-    hub_nonce = _hub_nonce(layout, url, token)
+    hub_nonce = _hub_nonce(layout, address, token)
     data = b"" if body is None else json.dumps(body).encode("utf-8")
     path, _, query = target.partition("?")
-    return _exchange(url, method, target, data, {"authorization": signed_authorization(token, hub_nonce, method, path, query, data)})
+    authorization = signed_authorization(token, address, hub_nonce, method, path, query, data)
+    return _exchange(f"http://{address}", method, target, data, {"authorization": authorization})
 
 
 def call(layout: Layout, method: str, target: str, body: object = None) -> dict:
     """The JSON the serving Hub answers; AdminRefused with its reason when it refuses."""
-    return _signed_call(layout, admin_url(layout), method, target, body)
+    return _signed_call(layout, admin_address(layout), method, target, body)
 
 
 def login_url(layout: Layout) -> str:
     """A one-time login link to the serving Hub's local UI; NotTheHub when the answer links anywhere else."""
-    url = admin_url(layout)
-    login = _signed_call(layout, url, "POST", "/api/login", None).get("url")
+    address = admin_address(layout)
+    url = f"http://{address}"
+    login = _signed_call(layout, address, "POST", "/api/login", None).get("url")
     if not isinstance(login, str) or not re.fullmatch(re.escape(f"{url}/login?code=") + "[A-Za-z0-9_-]+", login):
         raise NotTheHub(f"the Hub at {url} answered a login link that is not its own; it was not opened")
     return login

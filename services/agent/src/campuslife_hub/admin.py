@@ -24,7 +24,7 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from . import jobs
-from .admin_auth import HELLO_PATH, SESSION_COOKIE, SESSION_LIFETIME, AdminAuth, AdminGuard, session_cookie
+from .admin_auth import HELLO_PATH, LISTENER_SCOPE_KEY, SESSION_COOKIE, SESSION_LIFETIME, AdminAuth, AdminGuard, session_cookie
 from .core import Core
 from .job_runner import JobRunner
 from .jobs import Job, JobState, NoSuchJob, NotRetryable
@@ -249,9 +249,10 @@ async def api_hello(request: Request) -> Response:
         body = await request.json()
     except ValueError:
         body = None
-    answer = _admin(request).auth.hello(body.get("nonce") if isinstance(body, dict) else None)
+    fields = body if isinstance(body, dict) else {}
+    answer = _admin(request).auth.hello(request.scope[LISTENER_SCOPE_KEY], fields.get("nonce"), fields.get("mac"))
     if answer is None:
-        return JSONResponse({"error": "the body is {nonce: 64 hex digits}"}, status_code=400)
+        return JSONResponse({"error": "a hello is {nonce: 64 hex digits, mac: their HMAC under the admin token}"}, status_code=401)
     hub_nonce, proof = answer
     return JSONResponse({"nonce": hub_nonce, "proof": proof})
 
@@ -259,7 +260,7 @@ async def api_hello(request: Request) -> Response:
 @router.post("/api/login")
 async def api_login(request: Request) -> Response:
     code = _admin(request).auth.issue_login_code()
-    return JSONResponse({"url": f"http://{request.headers['host']}/login?code={code}"})
+    return JSONResponse({"url": f"http://{request.scope[LISTENER_SCOPE_KEY]}/login?code={code}"})
 
 
 def _strings(value: object) -> list[str] | None:
@@ -311,15 +312,10 @@ for action, change in (("retry", _retry), ("cancel", _cancel)):
     router.add_api_route(f"/api/jobs/{{job_id}}/{action}", _job_change(change, api=True), methods=["POST"])
 
 
-def hosts_of(port: int) -> tuple[str, ...]:
-    """The Host header values that name the listener on port."""
-    return (f"127.0.0.1:{port}", f"localhost:{port}")
-
-
 def create_app(admin: Admin, *, port: int, routers: Sequence[APIRouter] = ()) -> AdminGuard:
     """The admin app for the listener on 127.0.0.1:port; routers are added behind the same guard (#19)."""
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None, telemetry=NO_TELEMETRY)
     for added in (router, *routers):
         app.include_router(added)
     app.state.admin = admin
-    return AdminGuard(app, admin.auth, hosts_of(port))
+    return AdminGuard(app, admin.auth, port)

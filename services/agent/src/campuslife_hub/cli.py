@@ -114,7 +114,7 @@ def _status(root: Path) -> None:
     status = admin_client.call(layout, "GET", "/api/status")
     print(f"hub_id {status['hub_id']}")
     print(f"data root {status['data_root']}")
-    print(f"admin {admin_client.admin_url(layout)}")
+    print(f"admin http://{admin_client.admin_address(layout)}")
     print("jobs " + " ".join(f"{state}={count}" for state, count in status["jobs"].items()))
     print(f"runner restarts {status['runner']['restarts']} last error {status['runner']['last_error'] or '-'}")
 
