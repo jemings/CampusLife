@@ -10,6 +10,7 @@ from campuslife_hub.core import open_core
 from campuslife_hub.extract import bodies, sniff
 from campuslife_hub.extract.extractors import TEXT, Extractor
 from campuslife_hub.extract.framework import IDENTIFY
+from campuslife_hub.extract.limits import Limits
 from campuslife_hub.ingest import INGEST
 from campuslife_hub.jobs import JobState, Pipeline
 from campuslife_hub.purge import PurgeHooks
@@ -217,3 +218,17 @@ async def test_the_work_directories_a_stopped_hub_left_are_removed_when_the_hub_
 
     async with open_core(root, create=False, sync_roots=[]):
         assert not core.layout.work.exists()
+
+
+async def test_a_blob_identified_under_another_identify_pipeline_is_identified_again_when_next_planned(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path)
+    await hub.capture(("a.txt", NOTES))
+    await hub.settle()
+    stricter = hub_with(db, blob_store, device, tmp_path, limits=Limits(timeout_s=TEST_LIMITS.timeout_s + 1))
+
+    await stricter.capture(("b.txt", NOTES))
+    await stricter.settle()
+
+    assert [job.pipeline.version for job in await hub.jobs(IDENTIFY)] == [hub.files.identify_pipeline.version, stricter.files.identify_pipeline.version]
+    assert (await hub.media(sha(NOTES))).pipeline_version == stricter.files.identify_pipeline.version
+    assert len(await hub.artifacts("identify")) == 2
