@@ -1,7 +1,6 @@
 import asyncio
 import errno
 import hashlib
-import os
 import shutil
 import stat
 import threading
@@ -18,6 +17,7 @@ from campuslife_hub.blobs import (
     ChunkMismatch,
     FileOps,
     HashMismatch,
+    HubStorageFull,
     Incomplete,
     InvalidUpload,
     NoUploadSession,
@@ -302,13 +302,13 @@ async def session_count(db):
     return await db.read(lambda snap: snap.execute("SELECT count(*) FROM upload_sessions").fetchone()[0])
 
 
-async def test_an_upload_needing_more_than_the_free_space_for_its_chunks_and_their_combination_is_invalid(tmp_path, db, phone):
+async def test_an_upload_needing_more_than_the_free_space_for_its_chunks_and_their_combination_is_refused_as_storage_full(tmp_path, db, phone):
     store = uploads_in(tmp_path, db, free_space=lambda path: 2 * len(DATA) - 1)
 
-    with pytest.raises(InvalidUpload) as refused:
+    with pytest.raises(HubStorageFull) as refused:
         await store.open_upload(phone, sha(DATA), len(DATA))
 
-    assert body("common/error", refused.value)["code"] == "invalid_request"
+    assert body("common/error", refused.value)["code"] == "hub_storage_full"
     assert await session_count(db) == 0
 
 
@@ -332,13 +332,23 @@ async def test_the_free_space_is_measured_on_the_nearest_directory_that_exists_a
     uploads = tmp_path / "not yet made" / "uploads"
     store = BlobStore(db, blobs_dir=tmp_path / "blobs", staging_dir=tmp_path / "staging", uploads_dir=uploads, chunk_size=CHUNK)
 
-    with pytest.raises(InvalidUpload):
+    with pytest.raises(HubStorageFull):
         await store.open_upload(phone, sha(DATA), len(DATA))
     uploads.mkdir(parents=True)
-    with pytest.raises(InvalidUpload):
+    with pytest.raises(HubStorageFull):
         await store.open_upload(phone, sha(DATA), len(DATA))
 
     assert measured == [tmp_path, uploads]
+
+async def test_chunk_length_is_what_put_chunk_will_take_for_that_index(store, phone):
+    await store.open_upload(phone, sha(DATA), len(DATA))
+
+    assert [await store.chunk_length(phone, sha(DATA), index) for index in range(3)] == [4, 4, 2]
+    with pytest.raises(InvalidUpload):
+        await store.chunk_length(phone, sha(DATA), 3)
+    with pytest.raises(NoUploadSession):
+        await store.chunk_length(phone, sha(b"other"), 0)
+
 
 async def test_resuming_is_not_measured_against_the_free_space_again(tmp_path, db, phone):
     free = [2 * len(DATA)]

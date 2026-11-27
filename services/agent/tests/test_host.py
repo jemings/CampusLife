@@ -489,3 +489,61 @@ async def test_only_the_sync_listener_keeps_an_idle_connection_for_the_time_the_
 
     assert closed == {"sync": True}
     assert host.HostConfig().sync_keep_alive == timedelta(seconds=120)
+
+
+UPLOADED = b"a synthetic lecture photo"
+UPLOADED_SHA = hashlib.sha256(UPLOADED).hexdigest()
+
+
+async def raw_request(reader, writer, head: str, body: bytes = b""):
+    writer.write(head.encode() + body)
+    await writer.drain()
+    return await asyncio.wait_for(read_response(reader), 10)
+
+
+async def test_an_upload_cut_off_mid_chunk_is_finished_over_another_connection(tmp_path):
+    async with serving(tmp_path, sync_app=sync_admitting_the_hub_device) as (core, client, listening, stop, served):
+        async with sync_client(listening) as sync:
+            assert (await sync.post("/v1/blobs/uploads", json={"sha256": UPLOADED_SHA, "size": len(UPLOADED)})).status_code == 201
+        reader, writer = await asyncio.open_connection("127.0.0.1", listening.sync[1])
+        writer.write(
+            f"PUT /v1/blobs/uploads/{UPLOADED_SHA}/chunks/0 HTTP/1.1\r\nHost: 127.0.0.1\r\nCampusLife-Contract: 1\r\n"
+            f"Authorization: Bearer {SYNC_TOKEN}\r\nContent-Length: {len(UPLOADED)}\r\n\r\n".encode() + UPLOADED[:5]
+        )
+        await writer.drain()
+        await asyncio.sleep(0.2)
+        writer.close()
+        await asyncio.sleep(0.3)
+        async with sync_client(listening) as sync:
+            resumed = await sync.post("/v1/blobs/uploads", json={"sha256": UPLOADED_SHA, "size": len(UPLOADED)})
+            sent = await sync.put(f"/v1/blobs/uploads/{UPLOADED_SHA}/chunks/0", content=UPLOADED)
+            finalized = await sync.post(f"/v1/blobs/uploads/{UPLOADED_SHA}/finalize")
+
+    assert resumed.json()["received"] == []
+    assert sent.status_code == 204
+    assert finalized.json() == {"sha256": UPLOADED_SHA, "size": len(UPLOADED)}
+    assert core.blobs.path_of(UPLOADED_SHA).read_bytes() == UPLOADED
+
+
+@pytest.mark.parametrize("refusal", ["unknown token", "wrong length"])
+async def test_a_chunk_refused_before_its_body_is_answered_at_once_and_the_connection_goes_on(tmp_path, refusal):
+    """The refusal comes before the client sends the body; the server then reads and drops that body, so the same
+    connection takes the next request (#4 decision 5)."""
+    token, length = (("someone-else", len(UPLOADED)) if refusal == "unknown token" else (SYNC_TOKEN, len(UPLOADED) + 1))
+    async with serving(tmp_path, sync_app=sync_admitting_the_hub_device) as (core, client, listening, stop, served):
+        async with sync_client(listening) as sync:
+            await sync.post("/v1/blobs/uploads", json={"sha256": UPLOADED_SHA, "size": len(UPLOADED)})
+        reader, writer = await asyncio.open_connection("127.0.0.1", listening.sync[1])
+        head = (
+            f"PUT /v1/blobs/uploads/{UPLOADED_SHA}/chunks/0 HTTP/1.1\r\nHost: 127.0.0.1\r\nCampusLife-Contract: 1\r\n"
+            f"Authorization: Bearer {token}\r\nContent-Length: {length}\r\n\r\n"
+        )
+        refused, _ = await raw_request(reader, writer, head)
+        writer.write(b"x" * length)
+        after, body = await raw_request(reader, writer, "GET /v1/hub HTTP/1.1\r\nHost: 127.0.0.1\r\nCampusLife-Contract: 1\r\n"
+                                        f"Authorization: Bearer {SYNC_TOKEN}\r\n\r\n")
+        writer.close()
+
+    assert refused.split()[1] == (b"401" if refusal == "unknown token" else b"400")
+    assert after.split()[1] == b"200"
+    assert json.loads(body)["hub_id"] == core.identity.hub_id

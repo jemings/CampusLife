@@ -57,6 +57,10 @@ class ErrorCode(enum.StrEnum):
     CONTRACT_TOO_OLD = "contract_too_old"
     NOT_FOUND = "not_found"
     INTERNAL_ERROR = "internal_error"
+    CHUNK_MISMATCH = "chunk_mismatch"
+    INCOMPLETE = "incomplete"
+    HASH_MISMATCH = "hash_mismatch"
+    HUB_STORAGE_FULL = "hub_storage_full"
 
 
 @dataclass(frozen=True)

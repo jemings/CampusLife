@@ -110,6 +110,12 @@ class InvalidUpload(UploadRefused):
     code = "invalid_request"
 
 
+class HubStorageFull(UploadRefused):
+    """Not the request's fault: the data root's volume has no room for the upload now (#4 decision 5)."""
+
+    code = "hub_storage_full"
+
+
 class NoUploadSession(UploadRefused):
     code = "not_found"
 
@@ -162,6 +168,16 @@ class _Session:
 def _open_session(runner: Tx | Snapshot, device: DeviceId, sha256: str) -> _Session | None:
     row = runner.execute("SELECT id, size, chunk_size FROM upload_sessions WHERE device_id = ? AND sha256 = ?", (device, sha256)).fetchone()
     return None if row is None else _Session(*row)
+
+
+def _session_taking(runner: Tx | Snapshot, device: DeviceId, sha256: str, index: int) -> _Session:
+    """The device's open upload of sha256, which must have a chunk `index`."""
+    session = _open_session(runner, device, sha256)
+    if session is None:
+        raise NoUploadSession(f"this device has no open upload of {sha256}")
+    if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < session.chunk_count:
+        raise InvalidUpload(f"chunk {index!r} is not one of the {session.chunk_count} chunks of this upload")
+    return session
 
 
 def _stored_blob(runner: Tx | Snapshot, sha256: str) -> StoredBlob | None:
@@ -424,7 +440,7 @@ class BlobStore:
             if session is None:
                 free = self._free_space(self._uploads_dir)
                 if 2 * size > free:
-                    raise InvalidUpload(f"{size} bytes and their combined copy do not fit in the {free} bytes free on the data root's volume")
+                    raise HubStorageFull(f"{size} bytes and their combined copy do not fit in the {free} bytes free on the data root's volume")
                 session = _Session(str(uuid.uuid4()), size, self._chunk_size)
                 tx.execute(
                     "INSERT INTO upload_sessions (id, device_id, sha256, size, chunk_size, touched_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -465,14 +481,17 @@ class BlobStore:
         if chunk.read_bytes() != data:
             raise ChunkMismatch(f"other bytes are already stored as chunk {chunk.name}")
 
+    async def chunk_length(self, device: DeviceId, sha256: str, index: int) -> int:
+        """How many bytes put_chunk takes as chunk `index` of the device's open upload of `sha256`, so a caller can
+        refuse a body of another length before reading it."""
+        _refuse_outside_contract("common/sha256", sha256)
+        session = await self._db.read(lambda snap: _session_taking(snap, device, sha256, index))
+        return session.chunk_length(index)
+
     async def put_chunk(self, device: DeviceId, sha256: str, index: int, data: bytes) -> None:
         """Store chunk `index` of the device's open upload of `sha256`; the same bytes again change nothing (E19)."""
         _refuse_outside_contract("common/sha256", sha256)
-        session = await self._db.read(lambda snap: _open_session(snap, device, sha256))
-        if session is None:
-            raise NoUploadSession(f"this device has no open upload of {sha256}")
-        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < session.chunk_count:
-            raise InvalidUpload(f"chunk {index!r} is not one of the {session.chunk_count} chunks of this upload")
+        session = await self._db.read(lambda snap: _session_taking(snap, device, sha256, index))
         if len(data) != session.chunk_length(index):
             raise InvalidUpload(f"chunk {index} is {session.chunk_length(index)} bytes, not {len(data)}")
         try:
