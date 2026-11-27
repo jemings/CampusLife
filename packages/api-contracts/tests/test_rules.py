@@ -1,3 +1,4 @@
+import hashlib
 import os
 import subprocess
 import sys
@@ -509,3 +510,75 @@ def test_conflict_self_refuses_the_own_id_and_skips_a_broken_one(make_contract):
         RuleViolation(path="/conflicts_with/1", rule=Rule.CONFLICT_SELF)
     ]
     assert contract.validate("t/s", {"id": "s", "conflicts_with": ["s"]}) == [SchemaViolation(path="/id", keyword="minLength")]
+
+
+SOURCE = "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+OTHER_BLOB = "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9"
+HEX64 = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+EXTRACTED = {
+    "type": "object",
+    "properties": {
+        "blob": HEX64,
+        "extractor": {"type": "object", "properties": {"id": {"type": "string"}, "version": {"type": "string"}}},
+        "blocks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"id": HEX64, "refs": {"type": "array", "items": {"type": "object", "properties": {"page": {"type": "integer", "minimum": 1}}}}},
+            },
+        },
+    },
+    "x-block-id": True,
+    "x-block-anchor": True,
+}
+
+
+def block_id_by_hand(ordinal):
+    """sha256 of canonical_json([blob, extractor id, extractor version, ordinal]), the canonical bytes written out."""
+    return hashlib.sha256(f'["{SOURCE}","text","1",{ordinal}]'.encode()).hexdigest()
+
+
+def extracted(*blocks, blob=SOURCE, extractor=None):
+    return {"blob": blob, "extractor": extractor or {"id": "text", "version": "1"}, "blocks": list(blocks)}
+
+
+def block(ordinal, *refs, id_=None):
+    return {"id": id_ or block_id_by_hand(ordinal), "refs": list(refs) or [{"blob": SOURCE}]}
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (extracted(block(0), block(1)), []),
+        (extracted(block(1), block(0)),
+         [RuleViolation("/blocks/0/id", Rule.BLOCK_ID), RuleViolation("/blocks/1/id", Rule.BLOCK_ID)]),
+        (extracted(block(0), extractor={"id": "text", "version": "2"}), [RuleViolation("/blocks/0/id", Rule.BLOCK_ID)]),
+        (extracted(block(0), blob=OTHER_BLOB, extractor=None) | {"blocks": [block(0, {"blob": OTHER_BLOB})]},
+         [RuleViolation("/blocks/0/id", Rule.BLOCK_ID)]),
+        (extracted(block(0, id_="AB" * 32)), [SchemaViolation("/blocks/0/id", "pattern")]),
+        (extracted(block(0, {"blob": SOURCE, "page": 0}, id_="ab" * 32)), [SchemaViolation("/blocks/0/refs/0/page", "minimum")]),
+        (extracted(block(0, id_="ab" * 32), blob="AB" * 32), [SchemaViolation("/blob", "pattern")]),
+    ],
+    ids=["in-order", "swapped", "other-version", "other-blob", "malformed-id", "malformed-block", "malformed-blob"],
+)
+def test_block_id_is_derived_from_blob_extractor_and_ordinal(make_contract, body, expected):
+    assert make_contract({"t/x": EXTRACTED}).validate("t/x", body) == expected
+
+
+@pytest.mark.parametrize(
+    ("refs", "expected"),
+    [
+        ([{"blob": SOURCE}, {"kind": "later"}], []),
+        ([{"blob": SOURCE}, {"blob": OTHER_BLOB}], [RuleViolation("/blocks/0/refs/1/blob", Rule.BLOCK_ANCHOR)]),
+        ([{"capture": "16fd2706-8baf-433b-82eb-8c7fada847da"}], [RuleViolation("/blocks/0/refs/0/capture", Rule.BLOCK_ANCHOR)]),
+        ([{"blob": OTHER_BLOB, "page": 0}], [SchemaViolation("/blocks/0/refs/0/page", "minimum")]),
+    ],
+    ids=["source-and-anchorless", "other-blob", "capture", "malformed-ref"],
+)
+def test_block_anchor_ties_every_ref_to_the_extracted_blob(make_contract, refs, expected):
+    assert make_contract({"t/x": EXTRACTED}).validate("t/x", extracted(block(0, *refs))) == expected
+
+
+def test_block_anchor_leaves_refs_alone_when_the_blob_is_malformed(make_contract):
+    body = extracted(block(0, {"blob": OTHER_BLOB}, id_="ab" * 32), blob="AB" * 32)
+    assert make_contract({"t/x": EXTRACTED}).validate("t/x", body) == [SchemaViolation("/blob", "pattern")]
