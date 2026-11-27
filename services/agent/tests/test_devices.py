@@ -423,7 +423,9 @@ async def test_after_ten_failed_pairings_in_ten_minutes_no_secret_is_judged_unti
         offer = await b.offer()
 
         assert await b.pair(offer.secret) == Refusal(RefusalCode.UNAUTHORIZED, retry_after=240)
-        b.clock.advance(minutes=4, milliseconds=-1)
+        b.clock.advance(seconds=1.5)
+        assert await b.pair(offer.secret) == Refusal(RefusalCode.UNAUTHORIZED, retry_after=239)
+        b.clock.advance(seconds=238.5, milliseconds=-1)
         assert await b.pair(offer.secret) == Refusal(RefusalCode.UNAUTHORIZED, retry_after=1)
         b.clock.advance(milliseconds=1)
 
