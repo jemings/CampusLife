@@ -174,6 +174,6 @@ Capture와 Attachment에는 처리 상태 필드가 없습니다. `unsafe_input`
 
 ## 11. 검색
 
-- MVP는 SQLite FTS5와 구조화 필터를 씁니다. 한국어 분석기는 측정 후 결정합니다(DECISIONS O2).
+- MVP는 SQLite FTS5와 구조화 필터를 씁니다. 한국어 분석기는 한글·CJK 연속 구간을 겹치는 2-gram으로 나눈 뒤 `unicode61`로 색인하는 `hangul-bigram@1`이고, 1글자 질의는 원문을 LIKE로 찾습니다(DECISIONS D27).
 - 인덱싱 대상: ContentBlock(extraction 본문의 block), Artifact, Item·Note, 파일명.
 - 인덱스는 순수 캐시이므로 백업하지 않고 재구축합니다.

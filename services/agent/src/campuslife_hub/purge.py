@@ -37,6 +37,7 @@ from .store import Entity, EntityRef
 
 log = logging.getLogger(__name__)
 
+WAL_KEPT_REASON = "the write-ahead log could not be emptied (another connection is reading)"
 UNFINISHED_JOBS = (JobState.PENDING.value, JobState.RETRY_WAIT.value, JobState.RUNNING.value)
 
 
@@ -86,10 +87,12 @@ class Finish:
     journal_id: str
     failed_hooks: tuple[str, ...] = ()
     kept: list[KeptLeftover] = field(default_factory=list)
+    wal_kept: bool = False
+    """The write-ahead log could not be emptied because a reader held it."""
 
     @property
     def finished(self) -> bool:
-        return not self.failed_hooks and not self.kept
+        return not self.failed_hooks and not self.kept and not self.wal_kept
 
 
 @dataclass(frozen=True)
@@ -278,9 +281,10 @@ async def _finish(db: Database, blobs: BlobStore, hooks: PurgeHooks, journal_id:
     async with blobs.removals:
         for sha256 in target.blobs:
             kept += await blobs.discard(sha256)
-    if not failed and not kept:
+    emptied = await db.truncate_wal()
+    if not failed and not kept and emptied:
         await db.write(lambda tx: tx.execute("UPDATE purge_journal SET finished_at = ? WHERE id = ?", (now_instant(), journal_id)))
-    return Finish(journal_id, tuple(failed), kept)
+    return Finish(journal_id, tuple(failed), kept, not emptied)
 
 
 async def purge_blob(db: Database, blobs: BlobStore, sha256: str, *, delete_notes: Iterable[str] = (), hooks: PurgeHooks = HOOKS) -> Purged:
@@ -289,7 +293,7 @@ async def purge_blob(db: Database, blobs: BlobStore, sha256: str, *, delete_note
     chosen = tuple(delete_notes)
     journal_id, target, marked, cancelled = await db.write(lambda tx: _purge(tx, sha256, chosen))
     finish = await _finish(db, blobs, hooks, journal_id, target)
-    return Purged(journal_id, finish.failed_hooks, finish.kept, target, marked, cancelled)
+    return Purged(journal_id, finish.failed_hooks, finish.kept, finish.wal_kept, target, marked, cancelled)
 
 
 def purged_at(runner: Tx | Snapshot, artifact_id: str) -> str | None:

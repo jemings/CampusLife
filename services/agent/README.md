@@ -10,7 +10,7 @@ Windows 11 노트북에서 도는 CampusLife의 유일한 원천 저장소(Hub)�
 - [Git](https://git-scm.com/)과 [uv](https://docs.astral.sh/uv/)
 - Python 3.12: `uv python install 3.12`로 uv가 관리하는 Python을 설치합니다. python.org 설치본도 됩니다.
   - **Microsoft Store Python은 쓸 수 없습니다.** Store Python은 `%LOCALAPPDATA%` 아래 쓰기를 자기 패키지 폴더로 돌려보내므로, 모든 명령이 이유를 출력하고 거부합니다(E21).
-  - Hub는 기동할 때 SQLite 3.35 이상과 FTS5·trigram·`json_extract`·generated column을 검사하고, 맞지 않으면 이유와 함께 거부합니다(E2).
+  - Hub는 기동할 때 SQLite 3.35 이상과 FTS5·trigram·`json_extract`·generated column을 검사하고, `secure_delete`를 켜지 못하는 빌드도 포함해 맞지 않으면 이유와 함께 거부합니다(E2).
 
 ## 설치
 
@@ -185,7 +185,7 @@ uv run campuslife-hub --root D:\CampusLife-restored restore --from E:\CampusLife
 |---|---|
 | 원본 Blob | 무기한(읽기 전용). Attachment·Artifact·Relation 어느 것도 가리키지 않게 된 Blob은 마지막으로 받은 지 7일 뒤 정리 |
 | tombstone(삭제 표시) | 무기한. purge 뒤에도 남음 |
-| purge | 즉시: Blob, 그것을 가리키는 Attachment, 파생 Artifact·Suggestion과 그 Relation. fork된 Note는 남기고 근거가 지워졌다고 표시(U2). 백업 세대에는 남음 |
+| purge | 즉시: Blob, 그것을 가리키는 Attachment, 파생 Artifact·Suggestion과 그 Relation(SQLite 파일과 WAL의 바이트까지. `secure_delete` 켬, purge 끝에 WAL 비움. 다른 연결이 읽는 중이면 다음 maintenance에서 끝나고, 이 수정 이전에 지운 페이지의 바이트는 지우지 않음). fork된 Note는 남기고 근거가 지워졌다고 표시(U2). 백업 세대에는 남음 |
 | 끝나지 않은 업로드 세션 | 마지막으로 열거나 chunk를 받은 지 7일. 그사이 다른 장치가 같은 Blob을 올렸으면 다시 열 때 바로 끝남 |
 | Mutation 결과(`applied_mutations`) | 90일. 그보다 오래된 재전송은 create·patch는 다시 판정되어 해가 없고, delete·restore·Relation create는 다시 적용됨(수용) |
 | 백업 세대 | 드라이브마다 최근 N개(기본 5) |
