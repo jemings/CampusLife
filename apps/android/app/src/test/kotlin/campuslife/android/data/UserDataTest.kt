@@ -36,6 +36,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonUnquotedLiteral
 import kotlinx.serialization.json.jsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -342,12 +343,23 @@ class UserDataTest {
     }
 
     @Test
-    fun `a number JSON cannot write is refused and nothing goes out`() {
+    fun `a value the Hub cannot read as JSON is refused and nothing goes out`() {
         val id = cached(title = "A")
-        for (number in listOf(Double.NaN, Double.POSITIVE_INFINITY)) {
-            assertThrows(IllegalArgumentException::class.java) { items.patch(ref(id), mapOf("fields.credits" to JsonPrimitive(number))) }
-            val fields = JsonObject(mapOf("credits" to JsonPrimitive(number)))
-            assertThrows(IllegalArgumentException::class.java) { items.create(ItemData(kind = ItemKind.COURSE, title = "B", fields = fields)) }
+        val values = listOf(
+            JsonPrimitive(Double.NaN),
+            JsonPrimitive(Double.POSITIVE_INFINITY),
+            JsonUnquotedLiteral("1E+400"),
+            JsonUnquotedLiteral("9".repeat(4301)),
+            JsonUnquotedLiteral("TRUE"),
+        )
+        for (value in values) {
+            assertThrows(value.content, IllegalArgumentException::class.java) {
+                items.patch(ref(id), mapOf("fields.credits" to value))
+            }
+            val fields = JsonObject(mapOf("credits" to value))
+            assertThrows(value.content, IllegalArgumentException::class.java) {
+                items.create(ItemData(kind = ItemKind.COURSE, title = "B", fields = fields))
+            }
         }
         assertEquals(emptyList<Mutation>(), sent())
     }

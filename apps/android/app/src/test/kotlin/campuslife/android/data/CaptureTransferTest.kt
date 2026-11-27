@@ -352,6 +352,32 @@ class CaptureTransferTest {
     }
 
     @Test
+    fun `a copy that still holds its bytes is uploaded again when the Hub found the bytes it got different`() {
+        val id = sealedCapture(ABC)
+        sync.onUpload(ABC_SHA, BlobEvent.SESSION_OPENED)
+
+        sync.onUpload(ABC_SHA, BlobEvent.COPY_LOST)
+
+        assertEquals(ABC, File(blobDir, ABC_SHA).readText())
+        assertEquals(listOf(ABC_SHA to TransferState.WAITING), sync.uploads().map { it.sha256 to it.state })
+        assertEquals(CaptureTransfer.PENDING, transferOf(id))
+        storeEveryBlob()
+        assertEquals(listOf(id), commits().map { it.capture.id })
+    }
+
+    @Test
+    fun `bytes added again over a copy that no longer holds them replace it`() {
+        val id = captures.open(Origin(OriginType.CAMERA))
+        captures.addFile(id, ABC.byteInputStream(), photo)
+        File(blobDir, ABC_SHA).writeText("abd")
+
+        captures.addFile(id, ABC.byteInputStream(), photo)
+
+        assertEquals(ABC, File(blobDir, ABC_SHA).readText())
+        assertEquals(listOf(ABC_SHA), blobDir.list()!!.toList())
+    }
+
+    @Test
     fun `a capture sealed after its blob copy was lost needs attention`() {
         val id = captures.open(Origin(OriginType.CAMERA))
         captures.addFile(id, ABC.byteInputStream(), photo)
@@ -365,12 +391,15 @@ class CaptureTransferTest {
 
     @Test
     fun `a stored blob stays stored whatever happens to the copy`() {
-        val id = sealedCapture(ABC)
-        storeEveryBlob()
+        val id = sealedCapture(ABC, NIST_448)
+        sync.onUpload(ABC_SHA, BlobEvent.HUB_HAS_BLOB)
         File(blobDir, ABC_SHA).delete()
 
         sync.onUpload(ABC_SHA, BlobEvent.COPY_LOST)
 
+        assertEquals(TransferState.STORED.column, db.blobs().get(ABC_SHA)?.state)
+        assertEquals(CaptureTransfer.PENDING, transferOf(id))
+        sync.onUpload(NIST_448_SHA, BlobEvent.HUB_HAS_BLOB)
         sync.onResults(listOf(applied(sync.nextBatch().single().mutationId)))
         assertCommitted(id)
     }
@@ -394,6 +423,46 @@ class CaptureTransferTest {
 
         assertEquals(CaptureTransfer.NEEDS_ATTENTION, transferOf(second))
         assertEquals(emptyList<SyncStore.Upload>(), sync.uploads())
+    }
+
+    @Test
+    fun `a blob a held commit still needs stays for it when another commit finds the copy gone`() {
+        val first = sealedCapture(ABC)
+        val second = sealedCapture(ABC, NIST_448)
+        sync.onUpload(ABC_SHA, BlobEvent.HUB_HAS_BLOB)
+        val sent = sync.nextBatch().single()
+        File(blobDir, ABC_SHA).delete()
+
+        sync.onResults(listOf(MutationResult(sent.mutationId, MutationOutcome.RETRY, missingBlobs = listOf(ABC_SHA))))
+
+        assertEquals(CaptureTransfer.NEEDS_ATTENTION, transferOf(first))
+        assertEquals(CaptureTransfer.PENDING, transferOf(second))
+        assertEquals(setOf(ABC_SHA, NIST_448_SHA), sync.uploads().map { it.sha256 }.toSet())
+
+        sync.onUpload(ABC_SHA, BlobEvent.COPY_LOST)
+
+        assertEquals(CaptureTransfer.NEEDS_ATTENTION, transferOf(second))
+    }
+
+    @Test
+    fun `a blob a pending commit still needs stays for it when another commit finds the copy gone`() {
+        val first = sealedCapture(ABC)
+        val second = sealedCapture(ABC)
+        storeEveryBlob()
+        val (one, two) = sync.nextBatch().map { it.mutationId }
+        File(blobDir, ABC_SHA).delete()
+
+        sync.onResults(
+            listOf(
+                MutationResult(one, MutationOutcome.RETRY, missingBlobs = listOf(ABC_SHA)),
+                MutationResult(two, MutationOutcome.NOT_ATTEMPTED),
+            ),
+        )
+
+        assertEquals(CaptureTransfer.NEEDS_ATTENTION, transferOf(first))
+        assertEquals(listOf(ABC_SHA to TransferState.WAITING), sync.uploads().map { it.sha256 to it.state })
+        assertEquals(listOf(two), sync.nextBatch().map { it.mutationId })
+        assertEquals(CaptureTransfer.UPLOADING, transferOf(second))
     }
 
     @Test
