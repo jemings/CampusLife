@@ -112,9 +112,9 @@ private fun vectorChecks(root: Path): List<() -> String?> =
         agrees(root, path, TextHashVector.serializer()) { textHash(it.text) to it.hash }
     }
 
-private fun <V> agrees(root: Path, path: Path, serializer: KSerializer<V>, run: (V) -> Pair<Any, Any>): () -> String? = {
+private fun <V> agrees(root: Path, path: Path, serializer: KSerializer<V>, compute: (V) -> Pair<Any, Any>): () -> String? = {
     val name = root.relativize(path).joinToString("/")
-    runCatching { run(wireJson.decodeFromString(serializer, path.readText())) }.fold(
+    runCatching { compute(wireJson.decodeFromString(serializer, path.readText())) }.fold(
         onSuccess = { (actual, expected) -> if (actual == expected) null else "$name: gives $actual, the vector expects $expected" },
         onFailure = { "$name: $it" },
     )
