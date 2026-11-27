@@ -580,6 +580,29 @@ def test_serve_takes_the_public_url_and_the_dormant_period_for_devices(tmp_path,
     assert config.devices == DeviceSettings(public_url="https://campus-laptop.tail0a1b2c.ts.net", dormant_after=timedelta(days=30))
 
 
+def test_serve_takes_a_dormant_period_of_up_to_a_hundred_years(tmp_path, monkeypatch):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    started = []
+    monkeypatch.setattr(host, "run_hub", lambda root, config, *, sync_app: started.append(config))
+    monkeypatch.setattr(host, "run", lambda ran: None)
+
+    assert hub(root, "serve", "--dormant-after-days", "36500") == 0
+
+    [config] = started
+    assert config.devices.dormant_after == timedelta(days=36500)
+
+
+@pytest.mark.parametrize("days", ["36501", "10000000000"])
+def test_a_dormant_period_over_a_hundred_years_is_refused_in_words_a_person_reads(tmp_path, capsys, days):
+    """Longer would put now - dormant_after before year 1 and fail every authentication."""
+    assert exit_code(tmp_path / "CampusLife", "serve", "--dormant-after-days", days) == 2
+
+    shown = capsys.readouterr().err
+    assert f"argument --dormant-after-days: {days!r} is not a whole number from 1 to 36500" in shown
+    assert "Traceback" not in shown
+
+
 @pytest.mark.parametrize("command", ["serve", "tailscale-check"])
 @pytest.mark.parametrize(
     "url",
@@ -922,7 +945,7 @@ def exit_code(*args):
     ("--admin-port", "argument --admin-port: 'abc' is not a port (0 to 65535)"),
     ("--sync-port", "argument --sync-port: 'abc' is not a port (0 to 65535)"),
     ("--backup-keep", "argument --backup-keep: 'abc' is not a whole number of at least 1"),
-    ("--dormant-after-days", "argument --dormant-after-days: 'abc' is not a whole number of at least 1"),
+    ("--dormant-after-days", "argument --dormant-after-days: 'abc' is not a whole number from 1 to 36500"),
 ])
 def test_a_serve_option_that_is_not_a_number_is_refused_in_words_a_person_reads(tmp_path, capsys, option, said):
     assert exit_code(tmp_path / "CampusLife", "serve", option, "abc") == 2
@@ -937,7 +960,7 @@ def test_a_serve_option_that_is_not_a_number_is_refused_in_words_a_person_reads(
     (["backup", "--to", "{root}/inside"], 1, "inside the data root"),
     (["backup", "--to", "{drive}", "--keep", "0"], 2, "at least 1"),
     (["serve", "--backup-warn-days", "0"], 2, "at least 1"),
-    (["serve", "--dormant-after-days", "0"], 2, "at least 1"),
+    (["serve", "--dormant-after-days", "0"], 2, "from 1 to 36500"),
 ])
 def test_backup_and_restore_say_why_they_refuse(tmp_path, capsys, command, code, said):
     root, drive = tmp_path / "CampusLife", tmp_path / "drive"
