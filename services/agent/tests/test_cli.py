@@ -696,11 +696,15 @@ def program_on_the_port(root, *, token=None, answer=None, stall=None, hello_stat
                 reply = {"url": "http://evil.example/", "hub_id": "evil", "data_root": "evil", "jobs": {}, "stopping": True}
                 reply |= answer(base) if answer is not None else {}
             data = json.dumps(reply).encode()
-            self.send_response(hello_status if self.path == "/api/hello" else 200)
-            self.send_header("content-type", "application/json")
-            self.send_header("content-length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            # The client may have timed out and closed the connection while stall held this request.
+            try:
+                self.send_response(hello_status if self.path == "/api/hello" else 200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError):
+                return
 
         def log_message(self, *args):
             pass
