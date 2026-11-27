@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import signal
 import sys
@@ -221,3 +222,28 @@ async def test_a_program_that_does_not_end_when_killed_fails_the_run_and_is_ende
 async def test_a_program_that_is_not_there_is_file_not_found():
     with pytest.raises(FileNotFoundError):
         await isolate.run(["campuslife-no-such-program"], stdin=None, timeout_s=5.0, mem_bytes=256 * MiB)
+
+
+def bare_env(**extra):
+    """What a Windows program needs to start at all, plus extra."""
+    return {**({"SYSTEMROOT": os.environ["SYSTEMROOT"]} if WINDOWS else {}), **extra}
+
+
+async def test_a_program_runs_in_cwd_with_only_the_env_it_is_given(tmp_path, monkeypatch):
+    monkeypatch.setenv("CAMPUSLIFE_PARENT_ONLY", "parent")
+    probe = (
+        "import json, os; print(json.dumps([os.getcwd(), os.environ.get('CAMPUSLIFE_PROBE'),"
+        " os.environ.get('CAMPUSLIFE_PARENT_ONLY')]))"
+    )
+
+    result = await run(probe, cwd=tmp_path, env=bare_env(CAMPUSLIFE_PROBE="given"))
+
+    assert json.loads(result.stdout) == [os.path.realpath(tmp_path), "given", None]
+
+
+async def test_without_env_the_program_inherits_the_hubs(monkeypatch):
+    monkeypatch.setenv("CAMPUSLIFE_PARENT_ONLY", "parent")
+
+    result = await run("import os; print(os.environ.get('CAMPUSLIFE_PARENT_ONLY'))")
+
+    assert result.stdout.strip() == b"parent"
