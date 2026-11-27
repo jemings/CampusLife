@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/device/pairing_offer.json",
   "title": "Pairing offer",
-  "description": "What the Hub's \"add device\" screen offers a new Device (D6): the QR code holds this JSON. It is good once, for five minutes. The manual code shows the same secret as eight groups of four hex digits and carries nothing else: the user types hub_url, the client drops the separators before it sends the secret in device/pair_request, and it takes hub_id from the CampusLife-Hub-Id of the pair response. Open.",
+  "description": "What the Hub's \"add device\" screen offers a new Device (D6): the QR code holds this JSON. It is good once, for five minutes. The manual code carries nothing else: the Hub shows the secret as eight groups of four lowercase hex digits joined by -, the user types hub_url, and the client drops spaces and - from what the user typed and lowercases it before it sends it as device/pair_request secret. It then takes hub_id from the CampusLife-Hub-Id of the pair response. Open.",
   "type": "object",
   "required": ["hub_url", "hub_id", "secret"],
   "properties": {
