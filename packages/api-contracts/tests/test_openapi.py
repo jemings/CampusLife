@@ -350,8 +350,8 @@ def test_a_reissued_token_replaces_the_old_one_at_its_first_use():
     assert "both tokens work" in description
     assert "Asking again returns another new token, and the unused one it replaces stops working" in description
     assert "the client keeps the old token until a new one has worked" in description
-    assert "401 unauthorized, not device_revoked" in description
-    assert "same unused new token" not in description
+    assert "and ends at that moment" in description and "revoked at that moment" not in description
+    assert description.endswith("A token ended either way is unknown to the Hub from then on: 401 unauthorized, not device_revoked.")
 
 
 def prose(text):
@@ -377,6 +377,7 @@ def test_the_bearer_scheme_says_when_a_token_ends():
     assert "revoke ends it" in description
     assert "the new token's first use ends the old one" in description
     assert "another reissue ends a new token not yet used" in description
+    assert "same unused new token" not in prose(DOCUMENT.read_text(encoding="utf-8"))
 
 
 def test_header_names_are_the_header_schemas_property_names():
