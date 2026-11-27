@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/capture/timeline.json",
   "title": "Recording timeline",
-  "description": "Monotonic-clock timeline of one recording (D15, E15). Events carry no wall clock; wall time comes only from the anchors, each pairing a wall-clock reading with the monotonic clock of the same boot. Open; capture.commit closes it.",
+  "description": "Monotonic-clock timeline of one recording (D15, E15). Events carry no wall clock; wall time comes only from the anchors, each pairing a wall-clock reading with the monotonic clock of the same boot. A resume closes the most recent pause, interrupted or silenced span. The recording's audio_segment Attachments number their seq from 0 in recording order. Open; capture.commit closes it.",
   "type": "object",
   "required": ["boot_id", "anchors", "events"],
   "properties": {

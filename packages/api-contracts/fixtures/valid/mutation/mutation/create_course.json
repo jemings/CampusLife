@@ -7,6 +7,7 @@
     "kind": "course",
     "title": "자료구조",
     "fields": {
+      "term_id": "9b2c1f4e-3a5d-4c6b-8e7f-1a2b3c4d5e6f",
       "instructor": "김교수",
       "room": "공학관 301",
       "credits": 3,

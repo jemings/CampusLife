@@ -118,7 +118,7 @@
     },
     "closed_fields": {
       "term": { "$ref": "../item/fields/term.json", "properties": { "year": true, "semester": true, "starts_on": true, "ends_on": true }, "additionalProperties": false },
-      "course": { "$ref": "../item/fields/course.json", "properties": { "instructor": true, "room": true, "credits": true, "schedule_slots": true, "default_cloud_policy": true, "confirm_each_send": true }, "additionalProperties": false },
+      "course": { "$ref": "../item/fields/course.json", "properties": { "term_id": true, "instructor": true, "room": true, "credits": true, "schedule_slots": true, "default_cloud_policy": true, "confirm_each_send": true }, "additionalProperties": false },
       "lecture_session": { "$ref": "../item/fields/lecture_session.json", "properties": { "course_id": true, "date": true }, "additionalProperties": false },
       "note": { "$ref": "../item/fields/note.json", "properties": { "forked_from_artifact": true }, "additionalProperties": false },
       "task": { "$ref": "../item/fields/task.json", "properties": { "progress": true, "reminders": true }, "additionalProperties": false },
