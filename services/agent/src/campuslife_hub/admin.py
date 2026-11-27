@@ -344,6 +344,8 @@ async def purge_form(request: Request, blob: str) -> Response:
         purged = await purge.purge_blob(admin.core.db, admin.core.blobs, blob, delete_notes=chosen, hooks=admin.core.purge_hooks)
     except PurgeRefused as error:
         return _refused("Purge refused", str(error))
+    for job_id in purged.cancelled:
+        await admin.runner.cancel(job_id)
     target = purged.target
     left = (
         '<p class="warning">Part of the clean-up is left for the next maintenance: '
