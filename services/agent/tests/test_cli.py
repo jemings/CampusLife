@@ -17,7 +17,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from campuslife_hub import admin_client, admin_token
+from campuslife_hub import admin_client, admin_token, backup
 from campuslife_hub.admin_auth import hub_proof
 from campuslife_hub.cli import main
 from campuslife_hub.core import open_core
@@ -614,8 +614,27 @@ def test_backup_restore_and_fsck_from_the_cli(tmp_path, capsys):
     generation = made.split()[1]
     assert "blobs 1 copied 1" in made
     assert checked.strip() == "no findings"
-    assert f"restored generation {generation}" in said and "pair them again" in said
+    assert f"restored generation {generation}" in said
+    assert "Every device must be approved again; do not approve a device that was lost or revoked." in said
+    assert "purge those files again" in said
     assert "week4.txt" in capsys.readouterr().out
+
+
+def test_a_backup_with_no_hub_serving_removes_no_generation_unless_told_how_many_to_keep(tmp_path, capsys):
+    root, drive = tmp_path / "CampusLife", tmp_path / "drive"
+    hub(root, "init")
+    capsys.readouterr()
+
+    for _ in range(backup.DEFAULT_KEEP + 1):
+        assert hub(root, "backup", "--to", str(drive)) == 0
+    unpruned = capsys.readouterr().out
+    assert len(backup.generations(drive)) == backup.DEFAULT_KEEP + 1
+    assert hub(root, "backup", "--to", str(drive), "--keep", "2") == 0
+    pruned = capsys.readouterr().out
+
+    assert unpruned.count("prune skipped") == backup.DEFAULT_KEEP + 1 and "removed generation" not in unpruned
+    assert len(backup.generations(drive)) == 2
+    assert pruned.count("removed generation") == backup.DEFAULT_KEEP and "prune skipped" not in pruned
 
 
 def test_fsck_names_each_finding_and_exits_non_zero(tmp_path, capsys):
