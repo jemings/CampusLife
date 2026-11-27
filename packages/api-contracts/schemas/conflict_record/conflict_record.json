@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/conflict_record/conflict_record.json",
+  "title": "ConflictRecord",
+  "description": "What one patch submitted and the Hub did not write, kept so nothing is lost (D18, D24). There is one record per Mutation and its id is that Mutation's mutation_id, so a resend never makes a second one. The Hub makes it for every key a conflict result names in conflicted_fields and for every key of a patch refused as rejected{deleted}, and reports its id in conflict_record_ids; a suggestion.accept refused that way makes none, as the Suggestion keeps the intent. A record is open while it carries set; resolving it (conflict.resolve, from any device) removes set and writes resolved, and exactly one of the two is present. A client treats a record as open exactly when set is present, so a later Hub can add another closed state as a member of its own (D20). The Hub writes every member and syncs the record as a changes row of entity conflict_record. Open, as the Hub sends it: clients ignore members they do not know.",
+  "type": "object",
+  "required": ["id", "entity_ref"],
+  "properties": {
+    "id": { "description": "The mutation_id of the patch whose values this record keeps.", "$ref": "../common/uuid.json", "x-owner": "hub" },
+    "entity_ref": { "description": "The entity the patch named.", "$ref": "../common/entity_ref.json", "x-owner": "hub" },
+    "set": {
+      "description": "The changes the patch submitted for the keys that were not written, keyed and shaped as in its set. Present while the record is open.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "../mutation/mutation.json#/$defs/set_key" },
+      "additionalProperties": { "$ref": "#/$defs/submitted_change" },
+      "x-owner": "hub"
+    },
+    "resolved": {
+      "description": "When and by which conflict.resolve Mutation the record was resolved. Present once it is.",
+      "type": "object",
+      "required": ["at", "mutation_id"],
+      "properties": {
+        "at": { "$ref": "../common/instant.json" },
+        "mutation_id": { "$ref": "../common/uuid.json" }
+      },
+      "x-owner": "hub"
+    }
+  },
+  "if": { "required": ["set"] },
+  "then": { "not": { "required": ["resolved"] } },
+  "else": { "required": ["resolved"] },
+  "$defs": {
+    "submitted_change": {
+      "description": "A set entry as the patch sent it (mutation change), but open.",
+      "type": "object",
+      "required": ["to"],
+      "properties": {
+        "from": true,
+        "from_hash": { "anyOf": [{ "$ref": "../common/sha256.json" }, { "type": "null" }] },
+        "to": true
+      },
+      "if": { "required": ["from_hash"] },
+      "then": { "not": { "required": ["from"] } },
+      "else": { "required": ["from"] }
+    }
+  }
+}
