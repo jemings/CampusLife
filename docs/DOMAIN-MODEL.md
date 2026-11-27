@@ -55,13 +55,18 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 | Entity | 주요 필드 |
 |---|---|
 | Artifact | id, artifact_type(transcript\|ocr\|summary\|rendition\|overlay, 열린 값), subject_ref, job_key, provider?, model?, prompt_version?, pipeline_version, input_hashes[], content_blob, created_at |
-| Suggestion | id, source_artifact_id, action: create_item\|patch_item\|add_relation(열린 값), proposed{…}, evidence[](Locator), fingerprint, state, conflicts_with[]?(자기 id 제외) |
+| Suggestion | id, source_artifact_id, action: create_item\|patch_item\|add_relation(열린 값), proposed{…}, evidence[](Locator), fingerprint, state, conflicts_with[]?(자기 id 제외), created_item_id?(accepted만) |
 | ProcessingJob | id, job_key, job_type, subject_ref, state, outcome_code?, attempts, next_attempt_at, error (상세는 동기화하지 않고 `processing_summary`만 노출) |
 | ContentBlock | id = hash(blob, extractor_id, extractor_version, ordinal), blob_sha256, block_type, text 또는 payload, locator (동기화하지 않음) |
 
 - Artifact의 provider·model·prompt_version은 모델을 쓴 job에만 있습니다(렌디션에는 없음). 본문 구조(`blocks`, `refs`)와 `processing_summary`의 모양은 #8이 정합니다(E20). 유효 `cloud_policy`는 저장하지 않고 호출 때 계산합니다(D8).
 - Suggestion `proposed`의 모양은 action을 따릅니다. create_item은 Item create의 data, patch_item은 `{entity: item, id, set}`, add_relation은 Relation이며, Hub가 보내는 모양이라 안쪽도 열려 있습니다. 다만 patch_item의 `set` 키는 같은 계약의 열 이름이라 열려 있지 않습니다(새 열을 제안하는 patch는 계약 버전이 같은 Hub만 보냅니다). 모르는 action은 표시만 하고 수락할 수 없습니다.
-- `suggestion.accept`의 `edits`는 patch의 set처럼 키를 쓰고, 값은 제안 대신 쓸 값입니다. 공통 열 키는 계약 검증기가 owner·set_type으로 검사하고, `fields.<key>`와 제안에 있는 키인지는 Hub 적용기(#2)가 판정합니다.
+- `suggestion.accept`의 `edits`는 patch의 set처럼 키를 쓰고, 값은 그 키에 쓸 값입니다(#9 결정 3·4).
+  - create_item은 제안에 없던 사용자 열과 그 kind의 `fields.<key>`도 받습니다. Hub는 edits를 반영한 결과를 클라이언트의 create처럼 닫힌 fields로 판정합니다.
+  - patch_item은 `proposed.set`에 있는 키만 받습니다. 새 키에는 compare-and-set할 `from`이 없기 때문입니다.
+  - `kind`는 키가 될 수 없습니다(owner). 수락하면서 kind를 바꾸지 않고, 다른 종류로 만들려면 기각한 뒤 수동 create에 evidence Relation을 붙입니다.
+  - 공통 열 키는 계약 검증기가 owner·set_type으로 검사하고, `fields.<key>`의 값과 그 Suggestion이 받는 키인지는 Hub 적용기가 판정합니다.
+- create_item을 수락하면 Hub가 같은 트랜잭션에서 만든 Item id를 Suggestion의 `created_item_id`에 씁니다. 어느 기기든 이것으로 수락한 Item을 찾습니다(#9 결정 5).
 - create_item·patch_item을 수락하면 Hub가 evidence의 anchor마다 evidence Relation을 하나씩 만들고 locators를 합집합으로 모읍니다. patch_item은 결과가 키를 하나라도 적용할 때만 이 근거 Relation을 만듭니다.
   - add_relation은 만든 Relation이 evidence type이면 anchor가 `to`인 Locator만 그 locators에 넣고, 다른 type은 locators 없이 만듭니다(규칙 `locator_anchor`). 근거는 accepted Suggestion의 `evidence`에 그대로 남습니다(D21).
 
@@ -86,10 +91,19 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 | exam | course_id, scope_text | MVP |
 | task | progress(inbox/planned/in_progress/blocked/completed/cancelled), reminders[] | MVP |
 | note | forked_from_artifact? (`refs[]`는 #8이 추가, E20) | MVP |
-| event, announcement, opportunity, organization, place, person | kind별 스키마 | 후속 |
+| event | category?, place?, organization_id?, url? | 시작은 `starts_at`. 끝 시각은 #10 |
+| announcement | category?, organization_id?, url? | 본문은 `body`, 공지가 정한 기한은 `due_at` |
+| opportunity | category?, eligibility_text?, due_text?, organization_id?, url? | 접수 시작 `starts_at`, 마감 `due_at` |
+| organization | category?, url? | 다른 kind가 `organization_id`로 가리킴 |
+| place, person | — | 미룸: place는 소비자가 없고, person은 민감정보 |
 
 - 일정 로직에 필요한 날짜(`starts_at`, `due_at`, `all_day`)는 공통 열입니다. `all_day`가 true면 날짜는 `local_date`, 아니면 `instant`입니다. 상태 공통 열은 없습니다(U4).
 - `kind`는 `^[a-z][a-z_]*$`인 열린 값입니다.
+- event·announcement·opportunity·organization(#9 결정 8)
+  - `category`는 닫힌 enum이 아니라 `^[a-z][a-z_]*$`인 열린 이름입니다. 스키마의 `examples`는 클라이언트가 고르기 목록으로 내놓는 값이고, 그 밖의 값도 보존합니다.
+  - 소속은 `organization_id`(organization Item의 id)로 가리킵니다. `course.term_id`와 같은 방식입니다.
+  - `url`은 Capture `url`과 같은 규칙(`http(s)://`, 공백·제어문자 없음)입니다.
+  - 날짜는 공통 열을 씁니다(D10). 행사 끝 시각과 알림(reminders)은 #10이 정합니다.
 - 클라이언트는 모르는 kind를 제목·날짜·본문만으로 렌더링합니다.
 - 성적, 주민등록번호, 금융정보 등 불필요하게 민감한 데이터는 기본 수집 대상이 아닙니다. 추가할 때는 별도 보호 정책과 사용자의 명시적 동의가 먼저입니다.
 
@@ -97,13 +111,21 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 
 모든 외부 입력은 먼저 Capture로 들어옵니다. AI 분류는 Suggestion을 만들 뿐 엔터티를 만들지 않습니다.
 
+**Inbox는 계산값입니다(규범, #9 결정 1).** Inbox 엔터티나 읽음·보관·snooze 상태는 없습니다.
+
+- Inbox = {`state`가 open인 Suggestion} ∪ {미분류 Capture}.
+- **미분류 Capture:** Capture C에 대해 `capture:C`, C의 모든 Attachment A의 `attachment:A`, 그 Blob의 `blob:<A.blob_sha256>` 가운데 어느 것도 살아 있는(삭제되지 않은) Relation의 `from`이나 `to`에 없으면 C는 미분류입니다.
+- 미분류에서 빠지는 길은 "항목으로 만들기" 하나입니다. 클라이언트가 [create item, create relation item —evidence→ capture] 를 한 배치로 보냅니다. 녹음 화면에서 고른 `links[]`도 Relation이므로 그 Capture는 처음부터 분류된 것입니다.
+- "나중에"는 Suggestion을 open으로 두는 것입니다. Suggestion `state`는 닫힌 enum이라 값을 더할 수 없고(D20), Hub는 다시 알릴 수 없습니다(D19).
+- 받아들이는 단점: 분류하고 싶지 않은 자료가 계속 남습니다. 목록의 필터와 페이지로 완화합니다.
+
 - 강의 녹음 + 판서 사진 → Capture 1개(녹음 세그먼트 + 사진 Attachment). 녹음 화면에서 고른 과목·강의는 `links[]`로 즉시 확정 Relation이 됩니다.
 - 학교 행사 공지 PDF → Capture → 추출 Artifact → `create_item(kind=event)` Suggestion → 사용자가 수락하면 Item과 근거 Relation이 생깁니다.
 - 장학금 웹 링크 → Capture(URL + 스냅샷 Blob) → `opportunity` Suggestion
 - 개인 음성 메모 → Capture → `note`·`task` Suggestion
 - 교수자 자료 v2 재배포 → 새 Capture·새 Blob → `supersedes` Relation Suggestion
 
-기각된 Suggestion은 fingerprint로 기억하므로 재처리해도 다시 열리지 않습니다.
+결정된(수락하거나 기각한) Suggestion은 fingerprint로 기억하므로 재처리해도 다시 열리지 않습니다.
 
 ## 5. 상태 — 소유자별 분리 (D1)
 
