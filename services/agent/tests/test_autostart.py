@@ -98,11 +98,29 @@ def test_autostart_xml_out_writes_the_utf_16_file_register_hands_task_scheduler(
     assert hub(root, "autostart", "xml", "--out", str(out)) == 0
 
     written = out.read_bytes()
-    assert written.startswith(b"\xff\xfe")
-    text = written.decode("utf-16")
+    text = written[2:].decode("utf-16-le")
+    assert written == b"\xff\xfe" + text.encode("utf-16-le")
     assert text.startswith('<?xml version="1.0" encoding="UTF-16"?>\n')
+    assert "\r" not in text
     assert value(read_task(text), "Actions/Exec/Arguments") == f"--root {root.resolve()} serve"
     assert capsys.readouterr().out == f"wrote {out}\n"
+
+
+def test_register_hands_task_scheduler_the_same_bytes_as_the_out_file_on_every_platform(tmp_path, monkeypatch):
+    launcher = tmp_path / "campuslife-hubw.exe"
+    launcher.write_bytes(b"")
+    task = LogonTask(str(launcher), ("--root", r"D:\Campus Life", "serve"), r"D:\Campus Life", r"LAPTOP\kim")
+    handed = []
+    monkeypatch.setattr(autostart, "_on_windows", lambda: None)
+    monkeypatch.setattr(autostart, "_schtasks", lambda *args: handed.append((args, Path(args[args.index("/XML") + 1]).read_bytes())))
+
+    autostart.register(task, "CampusLife Hub test")
+
+    out = tmp_path / "task.xml"
+    autostart.write_task(out, task)
+    [(args, sent)] = handed
+    assert args[:3] == ("/Create", "/TN", "CampusLife Hub test") and args[-1] == "/F"
+    assert sent == out.read_bytes() == b"\xff\xfe" + task_xml(task).encode("utf-16-le")
 
 
 @pytest.mark.parametrize(
@@ -227,6 +245,19 @@ def schtasks_query(name):
     return ET.fromstring(text.strip())
 
 
+def scheduled_task_state(name):
+    """The task's state, then whether its logon trigger, the task and start on demand are enabled, as Task Scheduler
+    reports them: /Query /XML leaves out an element at its default, and these enum and boolean names are not translated
+    for the locale, unlike the /FO CSV /V columns."""
+    script = (
+        f"$task = Get-ScheduledTask -TaskName '{name}'; "
+        '"$($task.State) $($task.Triggers[0].Enabled) $($task.Settings.Enabled) $($task.Settings.AllowDemandStart)"'
+    )
+    finished = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True, timeout=120)
+    assert finished.returncode == 0, finished.stderr
+    return finished.stdout.split()
+
+
 @windows_only
 def test_autostart_register_adds_the_task_task_scheduler_reads_back_and_unregister_removes_it(tmp_path, capsys):
     root = tmp_path / "Campus Life"
@@ -242,9 +273,11 @@ def test_autostart_register_adds_the_task_task_scheduler_reads_back_and_unregist
         assert value(task, "Settings/DisallowStartIfOnBatteries") == "false"
         assert value(task, "Settings/StopIfGoingOnBatteries") == "false"
         assert value(task, "Settings/MultipleInstancesPolicy") == "IgnoreNew"
-        assert value(task, "Triggers/LogonTrigger/Enabled") == "true"
-        assert value(task, "Settings/Enabled") == "true"
-        assert value(task, "Settings/AllowStartOnDemand") == "true"
+        for default_true in ("Triggers/LogonTrigger/Enabled", "Settings/Enabled", "Settings/AllowStartOnDemand"):
+            assert value(task, default_true) != "false"
+        state, *enabled = scheduled_task_state(name)
+        assert state != "Disabled"
+        assert enabled == ["True", "True", "True"]
         assert value(task, "Principals/Principal/LogonType") == "InteractiveToken"
         assert value(task, "Actions/Exec/Command") == str(Path(sys.executable).with_name("campuslife-hubw.exe"))
         assert value(task, "Actions/Exec/Arguments") == f'--root "{root.resolve()}" serve --admin-port 8800'
