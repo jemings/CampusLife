@@ -846,12 +846,15 @@ async def test_serve_with_the_default_registry_identifies_and_extracts_an_import
     async with serving(tmp_path, registry=default_registry()) as (core, client, listening, stop, served):
         await import_files(core, [source])
 
-        async def extracted():
-            return await core.db.read(lambda snap: snap.execute("SELECT data FROM artifacts WHERE artifact_type = 'extraction'").fetchone())
+        async def jobs_states():
+            return await core.db.read(lambda snap: snap.execute("SELECT job_type, state FROM processing_jobs ORDER BY rowid").fetchall())
 
-        await until(extracted, within_s=60)
-        [(data,)] = [await extracted()]
-        states = await core.db.read(lambda snap: snap.execute("SELECT job_type, state FROM processing_jobs ORDER BY rowid").fetchall())
+        async def extract_finished():
+            return any(job_type == "extract.text" and state not in ("pending", "running", "retry_wait") for job_type, state in await jobs_states())
+
+        await until(extract_finished, within_s=60)
+        states = await jobs_states()
+        (data,) = await core.db.read(lambda snap: snap.execute("SELECT data FROM artifacts WHERE artifact_type = 'extraction'").fetchone())
 
     assert states == [("capture.ingest", "succeeded"), ("identify", "succeeded"), ("extract.text", "succeeded")]
     assert json.loads(data)["pipeline_version"].startswith("text-")
