@@ -50,6 +50,12 @@ class ExactNumbersTest {
             JsonPrimitive(Float.NEGATIVE_INFINITY),
             JsonUnquotedLiteral("1."),
             JsonUnquotedLiteral("01"),
+            JsonUnquotedLiteral("1E+400"),
+            JsonUnquotedLiteral("-1e400"),
+            JsonUnquotedLiteral("9".repeat(4301)),
+            JsonUnquotedLiteral("-" + "9".repeat(4301)),
+            JsonUnquotedLiteral("TRUE"),
+            JsonUnquotedLiteral("False"),
         )
         for (value in values) {
             assertThrows(value.content, IllegalArgumentException::class.java) { JsonArray(listOf(value)).withExactNumbers() }
@@ -58,7 +64,7 @@ class ExactNumbersTest {
 
     @Test
     fun `every JSON number form is kept`() {
-        val text = """[-0,0.5,-1.25e-3,1E+20,6.02e23]"""
+        val text = """[-0,0.5,-1.25e-3,1E+20,6.02e23,1e-400,${"9".repeat(4300)},-${"9".repeat(4300)}]"""
 
         assertEquals(text, wireJson.encodeToString(JsonElement.serializer(), wireJson.parseToJsonElement(text).withExactNumbers()))
     }
