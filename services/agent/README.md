@@ -185,3 +185,5 @@ uv run campuslife-hub --root D:\CampusLife-restored restore --from E:\CampusLife
 | pairing secret 해시 | 쓴 것은 남김(Hub를 다시 시작해도 재사용을 잡기 위해). 쓰지 않은 것은 새 코드를 만들 때 지움 |
 | 로그 `logs\hub.log` | 지금 파일과 이전 파일 5개(`hub.log.1`…`.5`), 각 5 MiB, 최대 30 MiB. 비밀 값과 강의 본문은 가림(E19) |
 | `staging\`의 쓰다 만 파일 | 다음 기동 때 지움 |
+| 판별·추출 결과(identify·extraction Artifact, Blob마다의 판별 형식) | 무기한. 원본을 purge하면 함께 지움. 추출기 버전이 바뀌어 새로 추출해도 옛 Artifact는 남음 |
+| `work\<job id>\`(추출 child의 작업 디렉터리) | job이 끝날 때 지움. Hub가 멈춰 남은 것은 다음 기동 때 지움 |
