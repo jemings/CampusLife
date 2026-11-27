@@ -93,7 +93,7 @@ README와 Epic #1의 MVP 기준은 이 목록을 따릅니다.
 - 다수 파일을 Relation으로 같은 LectureSession·Course에 연결, 개정판은 `supersedes` Suggestion (#5)
 - 확장자 + MIME + magic bytes 기반 형식 탐지, extractor subprocess 격리
 - PDF 텍스트·스캔 OCR, PPTX, DOCX, XLSX/CSV (#6)
-- PDF 렌디션 Blob(`rendition_of`)
+- PDF 렌디션(rendition Artifact, 변환기는 O4, D26)
 - HWP/HWPX adapter와 미지원 fallback (#7)
 - ZIP 안전 검사, 코드/Jupyter, 오디오/비디오/자막 (#13)
 - 결정적 ContentBlock id와 공통 Locator (D13)
@@ -126,7 +126,7 @@ README와 Epic #1의 MVP 기준은 이 목록을 따릅니다.
 
 ## Phase 8 — Search & Study Assistant
 
-- SQLite FTS5 전문 검색, NFC 정규화 (한국어 분석기는 측정 후 결정, DECISIONS O2)
+- SQLite FTS5 전문 검색, NFC 정규화 (한국어 분석기는 한글·CJK 겹침 2-gram 선토큰화 `hangul-bigram@1`, DECISIONS D27)
 - 과목/학기/도메인/날짜/태그 필터
 - 근거를 포함하는 AI 질문
 - 플래시카드, 간격 반복 복습, 퀴즈·오답·취약 개념

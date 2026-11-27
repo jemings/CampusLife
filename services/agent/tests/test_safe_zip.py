@@ -1,3 +1,6 @@
+import io
+import zipfile
+
 import pytest
 
 import malicious_files as make
@@ -92,3 +95,64 @@ def test_nested_archives_open_up_to_the_depth_of_the_table(tmp_path):
         with pytest.raises(Refused) as refused, middle.open_nested("inner.zip"):
             pass
     assert refused.value.status is Status.UNSAFE_INPUT
+
+
+@pytest.mark.parametrize(
+    ("limits", "case"),
+    [
+        (Limits(zip_max_member_bytes=5), make.plain_zip),
+        (Limits(zip_max_ratio=2), make.compressible),
+        (LIMITS, make.bomb),
+    ],
+    ids=["member size", "ratio", "bomb"],
+)
+def test_opened_for_its_names_an_archive_keeps_no_byte_limit_until_a_member_is_read(tmp_path, limits, case):
+    path = case(tmp_path / "x.zip")
+
+    with open_zip(path, limits, names_only=True) as archive:
+        names = [member.name for member in archive.members]
+        with pytest.raises(Refused) as refused:
+            archive.read(names[-1])
+
+    assert refused.value.status is Status.UNSAFE_INPUT
+
+
+@pytest.mark.parametrize(
+    ("limits", "case", "status"),
+    [
+        (LIMITS, make.traversal, Status.UNSAFE_INPUT),
+        (LIMITS, make.symlink, Status.UNSAFE_INPUT),
+        (LIMITS, make.listed_twice, Status.UNSAFE_INPUT),
+        (LIMITS, make.encrypted_member, Status.PASSWORD_REQUIRED),
+        (Limits(zip_max_members=3), lambda path: make.many_members(path, 4), Status.UNSAFE_INPUT),
+    ],
+    ids=["traversal", "link", "listed twice", "encrypted", "members"],
+)
+def test_opened_for_its_names_an_archive_still_has_its_names_and_count_checked(tmp_path, limits, case, status):
+    with pytest.raises(Refused) as refused, open_zip(case(tmp_path / "x.zip"), limits, names_only=True):
+        pass
+
+    assert refused.value.status is status
+
+
+def test_opened_for_its_names_an_archive_over_the_total_limit_reads_a_member_within_the_member_limits(tmp_path):
+    with open_zip(make.plain_zip(tmp_path / "a.zip"), Limits(zip_max_total_bytes=1), names_only=True) as archive:
+        assert archive.read("notes/week1.txt").decode() == "1주차 노트"
+
+
+def test_an_archive_inside_an_archive_has_its_total_checked_when_opened(tmp_path):
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("a.bin", bytes(600))
+        archive.writestr("b.bin", bytes(600))
+    path = tmp_path / "outer.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr("inner.zip", inner.getvalue())
+    limits = Limits(zip_max_total_bytes=1000)
+
+    with open_zip(path, limits) as outer, pytest.raises(Refused) as refused, outer.open_nested("inner.zip"):
+        pass
+
+    assert len(inner.getvalue()) < 1000
+    assert refused.value.status is Status.UNSAFE_INPUT
+    assert "together" in str(refused.value)

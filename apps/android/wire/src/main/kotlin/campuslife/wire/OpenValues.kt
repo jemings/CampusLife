@@ -64,7 +64,7 @@ value class RelationType(val value: String) {
     }
 }
 
-/** The entity of a changes row; a client skips rows of entities it does not know. */
+/** The entity of a changes row; a client does not interpret rows of entities it does not know. */
 @Serializable
 @JvmInline
 value class EntityName(val value: String) {

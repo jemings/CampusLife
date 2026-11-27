@@ -42,7 +42,7 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 | ConflictRecord | id(= 그 patch의 mutation_id), entity_ref, set?{key: change}(열림), resolved?{at, mutation_id}(해소). 모든 멤버를 Hub가 씀 |
 
 - Item에는 `status` 열이 없습니다. task의 상태는 `fields.progress` 하나입니다(U4).
-- Relation `type`은 `about, supersedes, rendition_of, evidence, tagged, conflicts_with`이며 Hub가 보내는 쪽에서 열린 값입니다. Tag 부여는 `item:<id>` → `tag:<id>`인 `tagged` Relation입니다.
+- Relation `type`은 `about, supersedes, rendition_of, evidence, tagged, conflicts_with`이며 Hub가 보내는 쪽에서 열린 값입니다. Tag 부여는 `item:<id>` → `tag:<id>`인 `tagged` Relation입니다. `rendition_of`는 사용자가 수동으로 잇는 Relation(교수가 배포한 PDF가 PPTX의 렌디션)이고, Hub가 만든 렌디션은 Relation이 아니라 rendition Artifact입니다(D26).
 - Relation `locators`는 사용자가 Suggestion을 수락할 때 Hub가 그 evidence에서 복사하는 근거 위치들입니다(D10). evidence Relation에만 있고, 각 Locator의 anchor(blob 또는 capture)는 `to`와 같습니다. 모르는 Relation type의 locators는 막지 않습니다(알려진 type은 Relation `type`의 `examples`, 곧 알려진 값 목록으로 판정합니다). 한 원본의 여러 곳(예: p.2와 p.5)은 Relation 하나의 locators에 함께 담깁니다. 클라이언트는 쓰지 않습니다.
 - AnnotationLayer(#17)의 스키마는 그 이슈가 추가합니다(E20).
 - ConflictRecord(`conflict_record/conflict_record`)는 patch가 제출했지만 Hub가 쓰지 않은 값을 보존합니다(D24). Mutation 하나에 기록 하나라서 재전송이 기록을 겹쳐 만들지 않습니다.
@@ -54,12 +54,13 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 
 | Entity | 주요 필드 |
 |---|---|
-| Artifact | id, artifact_type(transcript\|ocr\|summary\|rendition\|overlay, 열린 값), subject_ref, job_key, provider?, model?, prompt_version?, pipeline_version, input_hashes[], content_blob, created_at |
+| Artifact | id, artifact_type(transcript\|ocr\|summary\|rendition\|overlay\|identify\|extraction, 열린 값), subject_ref, job_key, provider?, model?, prompt_version?, pipeline_version, input_hashes[], content_blob, created_at |
 | Suggestion | id, source_artifact_id, action: create_item\|patch_item\|add_relation(열린 값), proposed{…}, evidence[](Locator), fingerprint, state, conflicts_with[]?(자기 id 제외), created_item_id?(accepted만) |
 | ProcessingJob | id, job_key, job_type, subject_ref, state, outcome_code?, attempts, next_attempt_at, error (상세는 동기화하지 않고 `processing_summary`만 노출) |
-| ContentBlock | id = hash(blob, extractor_id, extractor_version, ordinal), blob_sha256, block_type, text 또는 payload, locator (동기화하지 않음) |
 
-- Artifact의 provider·model·prompt_version은 모델을 쓴 job에만 있습니다(렌디션에는 없음). 본문 구조(`blocks`, `refs`)와 `processing_summary`의 모양은 #8이 정합니다(E20). 유효 `cloud_policy`는 저장하지 않고 호출 때 계산합니다(D8).
+- Artifact의 provider·model·prompt_version은 모델을 쓴 job에만 있습니다(렌디션에는 없음). `processing_summary`의 모양은 #8이 정합니다(E20). 유효 `cloud_policy`는 저장하지 않고 호출 때 계산합니다(D8).
+- ContentBlock은 테이블이 아니라 extraction Artifact 본문의 block입니다(D26). `id = sha256(canonical_json([blob, extractor.id, extractor.version, extractor.params, ordinal]))`, block_type, text 또는 payload, refs(Locator)를 가집니다. 같은 Blob을 같은 추출기·버전·params로 읽으면 id가 같습니다.
+- 본문이 있는 Artifact의 `content_blob`은 공통 envelope `artifact/body` `{v, blocks:[{id, block_type, text?, payload?, refs}]}`이고 type마다 스키마가 좁힙니다(`extraction`, `identify`). `rendition`은 본문이 없고 `content_blob`이 렌디션 PDF 자체입니다. 파이프라인은 렌디션을 Relation으로 잇지 않습니다(D26).
 - Suggestion `proposed`의 모양은 action을 따릅니다. create_item은 Item create의 data, patch_item은 `{entity: item, id, set}`, add_relation은 Relation이며, Hub가 보내는 모양이라 안쪽도 열려 있습니다. 다만 patch_item의 `set` 키는 같은 계약의 열 이름이라 열려 있지 않습니다(새 열을 제안하는 patch는 계약 버전이 같은 Hub만 보냅니다). 모르는 action은 표시만 하고 수락할 수 없습니다.
 - `suggestion.accept`의 `edits`는 patch의 set처럼 키를 쓰고, 값은 그 키에 쓸 값입니다(#9 결정 3·4).
   - create_item은 제안에 없던 사용자 열과 그 kind의 `fields.<key>`도 받습니다. Hub는 edits를 반영한 결과를 클라이언트의 create처럼 닫힌 fields로 판정합니다.
@@ -157,10 +158,10 @@ Capture와 Attachment에는 처리 상태 필드가 없습니다. `unsafe_input`
 
 ## 7. 출처 (D13)
 
-- 모든 Artifact 본문은 `blocks[{text, refs}]` 구조이고, ref는 공통 Locator를 가리킵니다. 본문 스키마는 #8이 정합니다(E20).
+- 본문이 있는 Artifact는 `artifact/body` envelope `{v, blocks:[{id, block_type, text?, payload?, refs}]}`이고, ref는 공통 Locator를 가리킵니다. #5가 envelope과 extraction·identify 본문을 정했고 #8이 additive로 넓힙니다(D26). `rendition`처럼 PDF 등 파일 자체가 내용인 Artifact는 envelope을 쓰지 않습니다.
 - Locator(`locator/locator`)의 kind는 `pdf_page, slide, doc_path, sheet_range, media_time, image_region, web_snapshot, document`입니다. kind는 Hub가 보내는 쪽에서 열린 값이고, 모르는 kind는 `blob`이 있으면 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. 이 계약의 `v`는 1이고, page·slide·shape는 1부터, `block_index`는 0부터 셉니다. `box`는 표시 방향 기준 `[x, y, w, h]`입니다(E17). `annotation` kind는 #17이 추가합니다. 모르는 kind도 `blob`(sha256), `capture`(UUID), `box`(정규화 `[x, y, w, h]`(D12·E17), `box_extent` 규칙도 적용)는 타입을 지킵니다. 시트 이름의 31자 한도는 코드 포인트 기준이고, 스프레드시트의 한도는 UTF-16 31단위입니다.
 - 앵커는 Blob 해시입니다(녹음은 Capture 타임라인, 필기는 레이어 revision).
-- LLM은 입력 ContentBlock id로만 인용하고, Hub가 그 id를 검증해 Locator로 치환합니다.
+- LLM은 입력 ContentBlock id(extraction 본문의 block id)로만 인용하고, Hub가 그 id를 검증해 Locator로 치환합니다.
 - 정확한 위치가 없으면 `document`를 쓰고 추정하지 않습니다.
 
 ## 8. AI 산출물과 사용자 편집 (D9)
@@ -174,7 +175,7 @@ Capture와 Attachment에는 처리 상태 필드가 없습니다. `unsafe_input`
 - `AnnotationLayer(target_blob, page_number, author_device)`는 작성자가 하나입니다. 화면에서는 같은 (Blob, page)의 모든 레이어를 겹쳐 그립니다.
 - payload: `drawing.pkd`(PencilKit 원본, iPad 편집용) + `strokes.v1.json`(표준, 정규화 좌표)
 - overlay PDF는 Hub가 strokes로 렌더링하는 Artifact입니다.
-- Office·HWP 문서의 필기는 PDF 렌디션 Blob에 고정되고, 그 렌디션은 pin됩니다.
+- Office·HWP 문서의 필기는 PDF 렌디션 Blob(rendition Artifact의 `content_blob`)에 고정되고, 그 렌디션은 pin됩니다.
 
 ## 10. 동기화와 충돌
 
@@ -186,6 +187,6 @@ Capture와 Attachment에는 처리 상태 필드가 없습니다. `unsafe_input`
 
 ## 11. 검색
 
-- MVP는 SQLite FTS5와 구조화 필터를 씁니다. 한국어 분석기는 측정 후 결정합니다(DECISIONS O2).
-- 인덱싱 대상: ContentBlock, Artifact, Item·Note, 파일명.
+- MVP는 SQLite FTS5와 구조화 필터를 씁니다. 한국어 분석기는 한글·CJK 연속 구간을 겹치는 2-gram으로 나눈 뒤 `unicode61`로 색인하는 `hangul-bigram@1`이고, 1글자 질의는 원문을 LIKE로 찾습니다(DECISIONS D27).
+- 인덱싱 대상: ContentBlock(extraction 본문의 block), Artifact, Item·Note, 파일명.
 - 인덱스는 순수 캐시이므로 백업하지 않고 재구축합니다.

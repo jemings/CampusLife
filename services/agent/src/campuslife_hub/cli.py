@@ -5,6 +5,7 @@
            both on 127.0.0.1, the job runner, maintenance
   open     open the local UI in the browser through a one-time login link
   import   store files as Blobs and commit them as one Capture
+  reprocess  read the files of one Capture, or of all, again with the extractors this Hub runs now
   backup   write a backup generation to a folder on a backup drive and keep the newest ones
   restore  restore a backup generation into an empty data root, under a new epoch, every device dormant
   fsck     recompute every Blob's hash and find missing, corrupt and orphan Blobs
@@ -18,7 +19,7 @@
   revoke   revoke a lost device for good
   approve  let a dormant device sync again
 
-While a Hub serves the data root it holds the data root's hub.lock, and init, import, backup, devices,
+While a Hub serves the data root it holds the data root's hub.lock, and init, import, reprocess, backup, devices,
 revoke and approve go through its admin API (E11); otherwise they take the lock themselves. restore takes the lock of the
 empty root it fills. open, status and stop need a serving Hub. ls and fsck take no lock and write no data.
 tailscale-check reads what the tailscale command reports and, unless given --public-url, the public_url of
@@ -42,7 +43,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
 
-from . import admin_client, autostart, backup, devices, fsck, host, pipelines, sync_devices, tailscale_check
+from . import admin_client, autostart, backup, devices, fsck, host, ingest, pipelines, sync_devices, tailscale_check
 from .admin_client import AdminRefused, HubDidNotAnswer, HubNotServing, NotTheHub
 from .admin_token import AdminTokenUnusable
 from .autostart import AutostartFailed, LogonTask
@@ -52,6 +53,7 @@ from .data_root import Layout, default_data_root
 from .db import NotInitialized, SchemaMismatch, StartupRefused
 from .devices import DEFAULT_DORMANT_AFTER, MAX_DORMANT_AFTER, DeviceSettings, HubDeviceRefused, RevokedDevice, UnknownDevice
 from .host import DEFAULT_ADMIN_PORT, DEFAULT_SYNC_PORT, HostConfig, PortTaken
+from .ingest import NoSuchCapture
 from .listing import list_captures
 from .local_import import UnimportableFile, import_files
 from .lock import AlreadyRunning
@@ -63,7 +65,7 @@ ROOT_ENV = "CAMPUSLIFE_ROOT"
 EXPECTED_FAILURES = (
     AlreadyRunning, NotInitialized, SchemaMismatch, UnsafeDataRoot, StartupRefused, DatabaseTooNew, UnimportableFile,
     HubNotServing, NotTheHub, AdminRefused, HubDidNotAnswer, AdminTokenUnusable, PortTaken, BackupRefused, RestoreRefused,
-    AutostartFailed, TailscaleUnavailable, UnknownDevice, HubDeviceRefused, RevokedDevice,
+    AutostartFailed, TailscaleUnavailable, UnknownDevice, HubDeviceRefused, RevokedDevice, NoSuchCapture,
     OSError, UnicodeError, sqlite3.Error,
 )
 
@@ -104,14 +106,22 @@ def _hub_url(text: str) -> str:
     return text
 
 
-def _device_id(text: str) -> str:
+def _whole_id(text: str, said: str) -> str:
     try:
         canonical = str(uuid.UUID(text))
     except ValueError:
         canonical = None
     if canonical != text:
-        raise argparse.ArgumentTypeError(f"{text!r} is not a device id: give the whole id `campuslife-hub devices` lists")
+        raise argparse.ArgumentTypeError(f"{text!r} is not a {said}")
     return text
+
+
+def _device_id(text: str) -> str:
+    return _whole_id(text, "device id: give the whole id `campuslife-hub devices` lists")
+
+
+def _capture_id(text: str) -> str:
+    return _whole_id(text, "Capture id: give the whole id `campuslife-hub ls` lists")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -126,6 +136,10 @@ def _parser() -> argparse.ArgumentParser:
     importing.add_argument("files", nargs="+", type=Path)
     importing.add_argument("--link", action="append", default=[], metavar="item:<id>", help="course or lecture session Item to link")
     importing.add_argument("--policy", choices=["blocked", "local_only", "cloud_allowed"], help="cloud_policy for every file")
+    reprocessing = commands.add_parser("reprocess", help="read the files of a Capture, or of all, again; the originals stay as they are")
+    which = reprocessing.add_mutually_exclusive_group(required=True)
+    which.add_argument("--capture", type=_capture_id, metavar="ID", help="the Capture's id, as `ls` lists it")
+    which.add_argument("--all", action="store_true", help="every Capture")
     backing_up = commands.add_parser("backup", help="write a backup generation to a folder on a backup drive")
     backing_up.add_argument("--to", type=Path, required=True, dest="target", metavar="FOLDER", help="the folder on the backup drive")
     backing_up.add_argument("--keep", type=_at_least_one, help="generations to keep (default: the serving Hub's setting; with no Hub serving, every one)")
@@ -226,6 +240,21 @@ async def _import(root: Path, files: list[Path], links: list[str], policy: str |
     if result["result"] != "applied":
         raise CommandFailed(f"import {result['result']}: {result.get('reason') or result}")
     print(f"capture {capture_id}")
+
+
+async def _reprocess(root: Path, capture: str | None) -> None:
+    """With no Hub serving, the jobs are queued and run when it next serves."""
+    try:
+        async with open_core(root, create=False) as core:
+            done = await core.db.write(lambda tx: ingest.reprocess(tx, None if capture is None else [capture]))
+        nonce, captures, later = done.nonce, list(done.captures), True
+    except AlreadyRunning as held:
+        answer = _through_the_holder(root, held, "POST", "/api/reprocess", {"all": True} if capture is None else {"capture_id": capture})
+        nonce, captures, later = answer["nonce"], answer["captures"], False
+    print(f"reprocess {nonce}")
+    print(f"captures {len(captures)}")
+    if later:
+        print("no Hub serves this data root: the jobs run when `campuslife-hub serve` next runs")
 
 
 async def _backup(root: Path, target: Path, keep: int | None) -> None:
@@ -462,6 +491,8 @@ def _run(arguments: argparse.Namespace, root: Path) -> None:
             _open(root, not arguments.no_browser)
         case "import":
             asyncio.run(_import(root, arguments.files, arguments.link, arguments.policy))
+        case "reprocess":
+            asyncio.run(_reprocess(root, arguments.capture))
         case "backup":
             asyncio.run(_backup(root, arguments.target, arguments.keep))
         case "restore":

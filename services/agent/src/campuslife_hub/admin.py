@@ -4,13 +4,14 @@ The app is FastAPI (D16) with its OpenAPI document and /docs and /redoc turned o
 is packages/api-contracts, and nothing here describes the admin surface to whoever asks. Bodies
 are read as they come; no request model stands beside validate() (D17).
 
-The local UI is server-rendered HTML: Captures and their Attachments, each original as a download,
-the import form a file is dropped on, and the jobs with retry and cancel (MVP-5); backups to a drive
+The local UI is server-rendered HTML: Captures and their Attachments, each original as a download with
+where its processing stands (S13), and a reprocess of one Capture or of all; the import form files are dropped on,
+with the lecture session to link them to; and the jobs with retry and cancel (MVP-5); backups to a drive
 with the overdue warning (U3); and the purge of one Blob, after a page that shows what goes, asks
 about the fork Notes and says the backup generations still hold it (U2). An original is always sent
 as an attachment, as octet-stream, nosniff and in a sandbox, so nothing a file holds runs in this
 origin. The admin API under /api/ is what the CLI uses while the Hub runs: login links, imports of
-local paths, backups, retry, cancel, status and stop (E11).
+local paths, reprocess, backups, retry, cancel, status and stop (E11).
 """
 
 from __future__ import annotations
@@ -27,21 +28,24 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from . import backup, device_admin, jobs, purge
+from . import backup, device_admin, ingest, jobs, purge
 from .admin_auth import HELLO_PATH, LISTENER_SCOPE_KEY, SESSION_COOKIE, SESSION_LIFETIME, AdminAuth, AdminGuard, session_cookie
 from .admin_page import page
 from .backup import BackupRefused, BackupSettings
 from .core import Core
+from .db import Snapshot
 from .devices import DeviceSettings
-from .job_runner import JobRunner
+from .ingest import FileStatus, NoSuchCapture
+from .job_runner import JobRegistry, JobRunner
 from .jobs import Job, JobState, NoSuchJob, NotRetryable
-from .listing import latest_captures
+from .listing import CaptureSummary, latest_captures, lecture_session, lecture_sessions
 from .local_import import UnimportableFile, import_files
 from .purge import PurgePlan, PurgeRefused
 from .redaction import Redactor
 from .staged_form import FormRefused, stage_form
 
 PAGE_ROWS = 200
+STATUS_ERROR_CHARS = 200
 CLOUD_POLICIES = ("blocked", "local_only", "cloud_allowed")
 RETRYABLE = frozenset({JobState.FAILED, JobState.BLOCKED})
 CANCELLABLE = frozenset({JobState.PENDING, JobState.RETRY_WAIT, JobState.RUNNING})
@@ -66,6 +70,7 @@ input[name=target] { width: 100%; box-sizing: border-box; }
 .drop { display: block; width: 100%; box-sizing: border-box; padding: 3rem 1rem; border: 2px dashed #999; background: #fff; }
 .drop:hover { border-color: #333; }
 td form { display: inline; }
+.fact { color: #8a5300; }
 """
 
 
@@ -108,22 +113,86 @@ async def _backup_warning(admin: Admin) -> str:
     return f'<p class="warning">{said} <a href="/backup">Back up to a drive</a>.</p>'
 
 
+def _captures_and_statuses(snap: Snapshot, registry: JobRegistry) -> tuple[list[CaptureSummary], dict[str, list[FileStatus]]]:
+    captures = latest_captures(snap, PAGE_ROWS)
+    statuses = {
+        attachment.id: [found for _, status in registry.statuses if (found := status(snap, attachment.id)) is not None]
+        for capture in captures
+        for attachment in capture.attachments
+    }
+    return captures, statuses
+
+
+def _job_status(job: Job, redactor: Redactor) -> str:
+    said = f"{job.job_type} {job.state}" + (f" ({job.outcome_code})" if job.outcome_code else "")
+    if job.state in RETRYABLE or job.state is JobState.RETRY_WAIT:
+        said += f": {redactor.redact(job.error or '')[:STATUS_ERROR_CHARS]}"
+    return escape(said)
+
+
+def _not_identified(identify_jobs: Sequence[Job]) -> str:
+    """"yet" only while identify has still to run: one that failed or was cancelled waits for a retry or a reprocess."""
+    return "not identified yet" if all(job.state in CANCELLABLE for job in identify_jobs) else "not identified"
+
+
+def _file_status(statuses: Sequence[FileStatus], redactor: Redactor) -> str:
+    """Where an Attachment's processing stands: its media type and jobs on one line, and what refine found under it."""
+    lines = []
+    for status in statuses:
+        parts = [escape(status.detected_mime or _not_identified(status.jobs)), *(_job_status(job, redactor) for job in status.jobs)]
+        lines.append(f"<small>{' · '.join(parts)}</small>")
+        lines += [f'<small class="fact">{escape(fact)}</small>' for fact in status.facts]
+    return "".join(f"<br>{line}" for line in lines)
+
+
 @router.get("/")
 async def captures_page(request: Request) -> Response:
     admin = _admin(request)
-    captures = await admin.core.db.read(lambda snap: latest_captures(snap, PAGE_ROWS))
-    imported = request.query_params.get("imported")
+    registry = admin.runner.context.registry
+    captures, statuses = await admin.core.db.read(lambda snap: _captures_and_statuses(snap, registry))
+    imported, reprocessed = request.query_params.get("imported"), request.query_params.get("reprocessed")
     rows = []
     for capture in captures:
         files = "<br>".join(
             f'<a href="/attachments/{escape(attachment.id)}/original">{escape(attachment.original_filename or attachment.blob_sha256[:12])}</a>'
             f' <small>{escape(attachment.cloud_policy)}</small> <small><a href="/blobs/{escape(attachment.blob_sha256)}/purge">purge</a></small>'
+            + _file_status(statuses[attachment.id], admin.redactor)
             for attachment in capture.attachments
         )
-        rows.append(f"<tr><td>{escape(capture.created_at)}</td><td>{escape(capture.origin_type)}</td><td>{files or '-'}</td></tr>")
+        again = f'<form method="post" action="/captures/{escape(capture.id)}/reprocess"><button>Reprocess</button></form>'
+        rows.append(f"<tr><td>{escape(capture.created_at)}</td><td>{escape(capture.origin_type)}</td><td>{files or '-'}</td><td>{again}</td></tr>")
     notice = f'<p class="notice">Imported as Capture <code>{escape(imported)}</code>.</p>' if imported else ""
-    table = "<table><tr><th>Taken</th><th>From</th><th>Files</th></tr>" + "".join(rows) + "</table>" if rows else "<p>No Captures yet.</p>"
+    if reprocessed:
+        notice += f'<p class="notice">Reprocessing {escape(reprocessed)} Captures; the jobs page shows them.</p>'
+    table = (
+        "<table><tr><th>Taken</th><th>From</th><th>Files</th><th></th></tr>" + "".join(rows) + "</table>"
+        '<form method="post" action="/captures/reprocess"><p><button>Reprocess every Capture</button> '
+        "<small>Reads every file again with the extractors this Hub runs now; the originals stay as they are.</small></p></form>"
+        if rows
+        else "<p>No Captures yet.</p>"
+    )
     return page("Captures", await _backup_warning(admin) + notice + table)
+
+
+async def _reprocess(admin: Admin, capture_ids: Sequence[str] | None) -> ingest.Reprocessed:
+    done = await admin.core.db.write(lambda tx: ingest.reprocess(tx, capture_ids))
+    admin.runner.wake()
+    return done
+
+
+@router.post("/captures/reprocess")
+async def reprocess_all_form(request: Request) -> Response:
+    done = await _reprocess(_admin(request), None)
+    return RedirectResponse(f"/?reprocessed={len(done.captures)}", status_code=303)
+
+
+@router.post("/captures/{capture_id}/reprocess")
+async def reprocess_form(request: Request, capture_id: str) -> Response:
+    try:
+        done = await _reprocess(_admin(request), [capture_id])
+    except NoSuchCapture:
+        return page("Not found", "<p>No such Capture.</p>", status=404)
+    return RedirectResponse(f"/?reprocessed={len(done.captures)}", status_code=303)
 
 
 @router.get("/attachments/{attachment_id}/original")
@@ -145,12 +214,18 @@ async def original(request: Request, attachment_id: str) -> Response:
 
 
 @router.get("/import")
-async def import_page() -> Response:
+async def import_page(request: Request) -> Response:
+    sessions = await _admin(request).core.db.read(lambda snap: lecture_sessions(snap, PAGE_ROWS))
     options = '<option value="">the course or global default</option>' + "".join(f"<option>{policy}</option>" for policy in CLOUD_POLICIES)
+    choices = '<option value="">none</option>' + "".join(
+        f'<option value="{escape(session.id)}">{escape(" · ".join(part for part in (session.date, session.course, session.title) if part))}</option>'
+        for session in sessions
+    )
     return page(
         "Import",
         '<form method="post" action="/import" enctype="multipart/form-data">'
         '<p><input class="drop" type="file" name="files" multiple required aria-label="Drop files here or choose them"></p>'
+        f'<p><label>Lecture session <select name="lecture_session">{choices}</select></label></p>'
         f'<p><label>cloud_policy <select name="cloud_policy">{options}</select></label></p>'
         "<p><button>Import as one Capture</button></p></form>",
     )
@@ -168,12 +243,17 @@ async def import_form(request: Request) -> Response:
     except FormRefused as error:
         return _refused("Import refused", str(error))
     try:
-        policy = form.fields.get("cloud_policy") or None
+        policy, session = form.fields.get("cloud_policy") or None, form.fields.get("lecture_session") or None
         if not form.files:
             return _refused("Import refused", "choose or drop at least one file")
         if policy is not None and policy not in CLOUD_POLICIES:
             return _refused("Import refused", f"cloud_policy is one of {', '.join(CLOUD_POLICIES)}")
-        imported = await import_files(admin.core, [staged.path for staged in form.files], names=[staged.name for staged in form.files], cloud_policy=policy)
+        if session is not None and await admin.core.db.read(lambda snap: lecture_session(snap, session)) is None:
+            return _refused("Import refused", "the lecture session chosen is not in the Hub, or is in the trash")
+        links = [f"item:{session}"] if session else []
+        imported = await import_files(
+            admin.core, [staged.path for staged in form.files], names=[staged.name for staged in form.files], links=links, cloud_policy=policy,
+        )
     except UnimportableFile as error:
         return _refused("Import refused", str(error))
     finally:
@@ -336,7 +416,7 @@ async def purge_form(request: Request, blob: str) -> Response:
     target = purged.target
     left = (
         '<p class="warning">Part of the clean-up is left for the next maintenance: '
-        + escape("; ".join([*(f"hook {name} failed" for name in purged.failed_hooks), *(f"{kept.path}: {kept.reason}" for kept in purged.kept)]))
+        + escape("; ".join([*(f"hook {name} failed" for name in purged.failed_hooks), *(f"{kept.path}: {kept.reason}" for kept in purged.kept), *([purge.WAL_KEPT_REASON] if purged.wal_kept else [])]))
         + "</p>"
         if not purged.finished
         else ""
@@ -418,6 +498,23 @@ async def api_import(request: Request) -> Response:
         return JSONResponse({"error": str(error)}, status_code=400)
     admin.runner.wake()
     return JSONResponse({"capture_id": imported.capture_id, "result": imported.result})
+
+
+@router.post("/api/reprocess")
+async def api_reprocess(request: Request) -> Response:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    body = body if isinstance(body, dict) else {}
+    capture_id, every = body.get("capture_id"), body.get("all")
+    if not ((isinstance(capture_id, str) and every is None) or (capture_id is None and every is True)):
+        return JSONResponse({"error": "the body is {capture_id: str} or {all: true}"}, status_code=400)
+    try:
+        done = await _reprocess(_admin(request), None if every else [capture_id])
+    except NoSuchCapture:
+        return JSONResponse({"error": f"no Capture {capture_id}"}, status_code=404)
+    return JSONResponse({"nonce": done.nonce, "captures": list(done.captures)})
 
 
 @router.post("/api/backup")
