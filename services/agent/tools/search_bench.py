@@ -2,6 +2,9 @@
 
     uv run python tools/search_bench.py [--blocks 100000] [--dir DIR]
 
+The indexes go to a temporary directory removed at the end; with --dir they go to a new
+directory under DIR and stay there.
+
 Every number it prints comes from local synthetic text (lecture notes, notices and spoken
 transcripts made from a fixed word list and seed), never from real data. Checking the choice
 against a copy of a real database is #67.
@@ -11,7 +14,7 @@ Variants:
   unicode61-prefix  the same with every term a prefix query ("term"*)
   trigram           FTS5 trigram; a query with a term under 3 characters scans with LIKE
   bigram            hangul-bigram@1 (campuslife_hub.search.analyzer): analyzed text in FTS5
-                    with the NFC original in a plain table for scans and snippets
+                    with the original (through fold_original) in a plain table for scans
   bigram-contentless  the same with a contentless FTS5 table, so the original is stored once
 
 A block is relevant when its NFC text holds every query term as a case-folded substring.
@@ -193,7 +196,7 @@ def measure(variant: Variant, texts: list[str], folded: list[str], directory: Pa
     with con:
         con.executemany(variant.insert, rows)
         if not variant.holds_original:
-            con.executemany("INSERT INTO original(id, text) VALUES (?, ?)", enumerate(unicodedata.normalize("NFC", t) for t in texts))
+            con.executemany("INSERT INTO original(id, text) VALUES (?, ?)", enumerate(HANGUL_BIGRAM.fold_original(t) for t in texts))
         con.execute("INSERT INTO fts(fts) VALUES ('optimize')")
     built = time.perf_counter()
     con.execute("VACUUM")
@@ -237,7 +240,9 @@ def _p(values: list[float], q: float) -> str:
 def main(argv: list[str] | None = None) -> dict[str, Result]:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--blocks", type=int, default=100_000)
-    parser.add_argument("--dir", type=Path, help="where to build the indexes (default: a new temporary directory)")
+    parser.add_argument(
+        "--dir", type=Path, help="build the indexes in a new directory under DIR and keep them (default: a temporary directory, removed)"
+    )
     args = parser.parse_args(argv)
 
     texts = corpus(args.blocks)
@@ -246,8 +251,12 @@ def main(argv: list[str] | None = None) -> dict[str, Result]:
         f"출처: 로컬 합성 (seed {SEED}, blocks {len(texts)}, chars {sum(map(len, texts))}) · "
         f"Python {sys.version.split()[0]} · SQLite {sqlite3.sqlite_version} · {platform.system()} {platform.machine()} · warm page cache"
     )
-    directory = Path(tempfile.mkdtemp(dir=args.dir))
-    results = {variant.name: measure(variant, texts, folded, directory) for variant in VARIANTS}
+    if args.dir is None:
+        with tempfile.TemporaryDirectory() as directory:
+            results = {variant.name: measure(variant, texts, folded, Path(directory)) for variant in VARIANTS}
+    else:
+        directory = Path(tempfile.mkdtemp(dir=args.dir))
+        results = {variant.name: measure(variant, texts, folded, directory) for variant in VARIANTS}
 
     print()
     print("| variant | analyze s | build s | size MB | MATCH p50/p95/max ms | scan p50/p95/max ms | all p95 ms |")
