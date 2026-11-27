@@ -7,11 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from campuslife_hub import autostart
+from campuslife_hub import autostart, host
 from campuslife_hub.autostart import LogonTask, store_python, task_xml
 from campuslife_hub.cli import main
 
 TASK = "{http://schemas.microsoft.com/windows/2004/02/mit/task}"
+STORE = r"C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0"
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Task Scheduler and the gui-script launcher are Windows'")
 
 
@@ -39,6 +40,9 @@ def test_the_task_starts_the_launcher_at_this_users_logon_and_never_stops_it():
     [trigger] = task.find(f"{TASK}Triggers")
     assert trigger.tag == f"{TASK}LogonTrigger"
     assert value(task, "Triggers/LogonTrigger/UserId") == r"LAPTOP\kim"
+    assert value(task, "Triggers/LogonTrigger/Enabled") == "true"
+    assert value(task, "Settings/Enabled") == "true"
+    assert value(task, "Settings/AllowStartOnDemand") == "true"
     assert value(task, "Principals/Principal/UserId") == r"LAPTOP\kim"
     assert value(task, "Principals/Principal/LogonType") == "InteractiveToken"
     assert value(task, "Principals/Principal/RunLevel") == "LeastPrivilege"
@@ -73,14 +77,59 @@ def test_autostart_xml_prints_the_task_for_the_initialised_root_with_the_serve_o
     monkeypatch.setenv("USERDOMAIN", "LAPTOP")
     monkeypatch.setenv("USERNAME", "kim")
 
-    assert hub(root, "autostart", "xml", "--admin-port", "8800", "--backup-keep", "3") == 0
+    assert hub(root, "autostart", "xml", "--admin-port", "8800", "--backup-keep", "3", "--backup-warn-days", "14") == 0
 
-    task = read_task(capsys.readouterr().out)
+    printed = capsys.readouterr().out
+    assert not printed.startswith("<?xml")
+    task = read_task(printed)
     launcher = "campuslife-hubw.exe" if sys.platform == "win32" else "campuslife-hubw"
     assert value(task, "Actions/Exec/Command") == str(Path(sys.executable).with_name(launcher))
-    assert value(task, "Actions/Exec/Arguments") == f'--root "{root.resolve()}" serve --admin-port 8800 --backup-keep 3'
+    assert value(task, "Actions/Exec/Arguments") == f'--root "{root.resolve()}" serve --admin-port 8800 --backup-keep 3 --backup-warn-days 14'
     assert value(task, "Actions/Exec/WorkingDirectory") == str(root.resolve())
     assert value(task, "Triggers/LogonTrigger/UserId") == r"LAPTOP\kim"
+
+
+def test_autostart_xml_out_writes_the_utf_16_file_register_hands_task_scheduler(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    capsys.readouterr()
+    out = tmp_path / "task.xml"
+
+    assert hub(root, "autostart", "xml", "--out", str(out)) == 0
+
+    written = out.read_bytes()
+    assert written.startswith(b"\xff\xfe")
+    text = written.decode("utf-16")
+    assert text.startswith('<?xml version="1.0" encoding="UTF-16"?>\n')
+    assert value(read_task(text), "Actions/Exec/Arguments") == f"--root {root.resolve()} serve"
+    assert capsys.readouterr().out == f"wrote {out}\n"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [["serve", "--admin-port", "65536"], ["autostart", "xml", "--admin-port", "70000"], ["autostart", "register", "--admin-port", "-1"]],
+    ids=["serve", "xml", "register"],
+)
+def test_an_admin_port_outside_0_to_65535_is_refused_before_anything_runs(tmp_path, capsys, monkeypatch, command):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    capsys.readouterr()
+    monkeypatch.setattr(host, "run", lambda coroutine: coroutine.close() or pytest.fail("serve started"))
+
+    with pytest.raises(SystemExit) as exited:
+        hub(root, *command)
+
+    assert exited.value.code == 2
+    assert "0 to 65535" in capsys.readouterr().err
+
+
+def test_the_highest_port_goes_into_the_task(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    capsys.readouterr()
+
+    assert hub(root, "autostart", "xml", "--admin-port", "65535") == 0
+    assert value(read_task(capsys.readouterr().out), "Actions/Exec/Arguments") == f"--root {root.resolve()} serve --admin-port 65535"
 
 
 def test_autostart_refuses_a_root_without_a_hub(tmp_path, capsys):
@@ -137,14 +186,31 @@ def test_another_python_is_not_the_store_one(paths):
     assert store_python(paths) is None
 
 
-def test_every_command_refuses_to_run_on_a_microsoft_store_python(tmp_path, capsys, monkeypatch):
+def test_init_on_a_store_python_creates_nothing(tmp_path, capsys, monkeypatch):
     root = tmp_path / "CampusLife"
-    monkeypatch.setattr(sys, "base_prefix", r"C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0")
+    monkeypatch.setattr(sys, "base_prefix", STORE)
 
     assert hub(root, "init") == 1
 
     assert "Microsoft Store" in capsys.readouterr().err
     assert not root.exists()
+
+
+@pytest.mark.parametrize("command", [["serve", "--admin-port", "0"], ["ls"], ["fsck"], ["status"], ["autostart", "xml"]])
+def test_every_command_refuses_on_a_store_python(tmp_path, capsys, monkeypatch, command):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    capsys.readouterr()
+    monkeypatch.setattr(sys, "base_prefix", STORE)
+
+    def started(coroutine):
+        coroutine.close()
+        pytest.fail("serve started on a Store Python")
+
+    monkeypatch.setattr(host, "run", started)
+
+    assert hub(root, *command) == 1
+    assert "Microsoft Store" in capsys.readouterr().err
 
 
 def schtasks_query(name):
@@ -176,7 +242,9 @@ def test_autostart_register_adds_the_task_task_scheduler_reads_back_and_unregist
         assert value(task, "Settings/DisallowStartIfOnBatteries") == "false"
         assert value(task, "Settings/StopIfGoingOnBatteries") == "false"
         assert value(task, "Settings/MultipleInstancesPolicy") == "IgnoreNew"
-        assert task.find(f"{TASK}Triggers/{TASK}LogonTrigger") is not None
+        assert value(task, "Triggers/LogonTrigger/Enabled") == "true"
+        assert value(task, "Settings/Enabled") == "true"
+        assert value(task, "Settings/AllowStartOnDemand") == "true"
         assert value(task, "Principals/Principal/LogonType") == "InteractiveToken"
         assert value(task, "Actions/Exec/Command") == str(Path(sys.executable).with_name("campuslife-hubw.exe"))
         assert value(task, "Actions/Exec/Arguments") == f'--root "{root.resolve()}" serve --admin-port 8800'
