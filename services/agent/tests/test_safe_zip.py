@@ -1,3 +1,6 @@
+import io
+import zipfile
+
 import pytest
 
 import malicious_files as make
@@ -135,3 +138,21 @@ def test_opened_for_its_names_an_archive_still_has_its_names_and_count_checked(t
 def test_opened_for_its_names_an_archive_over_the_total_limit_reads_a_member_within_the_member_limits(tmp_path):
     with open_zip(make.plain_zip(tmp_path / "a.zip"), Limits(zip_max_total_bytes=1), names_only=True) as archive:
         assert archive.read("notes/week1.txt").decode() == "1주차 노트"
+
+
+def test_an_archive_inside_an_archive_has_its_total_checked_when_opened(tmp_path):
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("a.bin", bytes(600))
+        archive.writestr("b.bin", bytes(600))
+    path = tmp_path / "outer.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr("inner.zip", inner.getvalue())
+    limits = Limits(zip_max_total_bytes=1000)
+
+    with open_zip(path, limits) as outer, pytest.raises(Refused) as refused, outer.open_nested("inner.zip"):
+        pass
+
+    assert len(inner.getvalue()) < 1000
+    assert refused.value.status is Status.UNSAFE_INPUT
+    assert "together" in str(refused.value)

@@ -1,4 +1,6 @@
 import codecs
+import io
+import zipfile
 
 import pytest
 
@@ -152,3 +154,43 @@ def test_an_ole_file_without_the_marker_is_cfb_whatever_its_chunks(tmp_path):
 
 def test_identify_names_a_zip_bomb_an_archive_and_leaves_its_bytes_to_the_extractor(tmp_path):
     assert sniff.identify(make.bomb(tmp_path / "input"), Limits()) == formats.ZIP
+
+
+@pytest.mark.parametrize("scan", [7, 31, 32, 33, 64])
+@pytest.mark.parametrize("pad", range(0, 70))
+def test_the_scan_finds_a_marker_at_any_offset_whatever_its_chunk_size(tmp_path, monkeypatch, scan, pad):
+    monkeypatch.setattr(sniff, "SCAN_BYTES", scan)
+    marker, path = sniff.ENCRYPTED_PACKAGE, tmp_path / "input"
+
+    path.write_bytes(b"x" * pad + marker)
+    assert sniff._holds(path, marker)
+    path.write_bytes(b"x" * pad + marker + b"y" * 5)
+    assert sniff._holds(path, marker)
+    path.write_bytes(b"x" * pad + marker[:-1] + b"y" * 40)
+    assert not sniff._holds(path, marker)
+
+
+@pytest.mark.parametrize("data", [b"", b"x", sniff.ENCRYPTED_PACKAGE[:-1]])
+def test_the_scan_of_a_file_shorter_than_the_marker_finds_nothing(tmp_path, data):
+    path = tmp_path / "input"
+    path.write_bytes(data)
+
+    assert not sniff._holds(path, sniff.ENCRYPTED_PACKAGE)
+
+
+def hwpx_with_mimetype(path, mimetype):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("mimetype", mimetype)
+        archive.writestr("Contents/section0.xml", b"<x/>")
+    path.write_bytes(buffer.getvalue())
+    return path
+
+
+@pytest.mark.parametrize(
+    ("size", "media_type"), [(sniff.MIMETYPE_MAX_BYTES, formats.HWPX), (sniff.MIMETYPE_MAX_BYTES + 1, formats.ZIP)], ids=["at the bound", "past it"],
+)
+def test_an_hwpx_mimetype_is_read_up_to_its_bound(tmp_path, size, media_type):
+    mimetype = formats.HWPX.encode().ljust(size, b"\n")
+
+    assert sniff.identify(hwpx_with_mimetype(tmp_path / "a.hwpx", mimetype), Limits()) == media_type
