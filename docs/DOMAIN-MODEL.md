@@ -54,7 +54,7 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 
 | Entity | 주요 필드 |
 |---|---|
-| Artifact | id, artifact_type(transcript\|ocr\|summary\|rendition\|overlay\|identify\|extraction\|web_snapshot, 열린 값), subject_ref, job_key, provider?, model?, prompt_version?, pipeline_version, input_hashes[](입력 Blob이 없는 job은 빈 배열), content_blob, created_at, fetched?{final_url, media_type}(web_snapshot에 필수) |
+| Artifact | id, artifact_type(transcript\|ocr\|summary\|rendition\|overlay\|identify\|extraction\|web_snapshot, 열린 값), subject_ref, job_key, provider?, model?, prompt_version?, pipeline_version, input_hashes[](입력 Blob이 없는 job은 빈 배열, extraction·rendition·identify는 1개 이상), content_blob, created_at, fetched?{final_url, media_type}(web_snapshot에 필수) |
 | Suggestion | id, source_artifact_id, action: create_item\|patch_item\|add_relation(열린 값), proposed{…}, evidence[](Locator), fingerprint, state, conflicts_with[]?(자기 id 제외) |
 | ProcessingJob | id, job_key, job_type, subject_ref, state, outcome_code?, attempts, next_attempt_at, error (상세는 동기화하지 않고 `processing_summary`만 노출) |
 

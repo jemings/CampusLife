@@ -83,7 +83,7 @@ uv run campuslife-contracts compare fixtures/valid <out>
 
 `rendition`은 envelope을 쓰지 않습니다. `content_blob`이 렌디션 PDF Blob 그 자체이고, 필기 레이어가 고정되는 Blob도 이것입니다(D12). 무엇의 렌디션인지는 `artifact_type`, `subject_ref`(`blob:<원본>`), `pipeline_version`이 말합니다.
 
-`web_snapshot`도 envelope을 쓰지 않습니다. `content_blob`은 Hub가 `url`이 있는 Capture(subject `capture:<id>`)의 페이지를 가져와 받은 응답 본문 바이트 그대로이고, `web_snapshot` Locator가 가리키는 Blob도 이것입니다(D13). 입력 Blob이 없으므로 `input_hashes`는 빈 배열입니다. 가져온 시각은 `created_at`, 리다이렉트 뒤 최종 URL과 매개변수를 뺀 media type은 Hub 소유 멤버 `fetched{final_url, media_type}`에 있고, 200 응답만 저장하므로 상태 코드는 없습니다. `artifact_type`이 `web_snapshot`이면 `fetched`가 필수입니다. 다른 객체처럼 `fetched`도 열려 있어 모르는 멤버를 무시합니다.
+`web_snapshot`도 envelope을 쓰지 않습니다. `content_blob`은 Hub가 `url`이 있는 Capture(subject `capture:<id>`)의 페이지를 가져와 받은 응답 본문 바이트 그대로이고, `web_snapshot` Locator가 가리키는 Blob도 이것입니다(D13). 입력 Blob이 없으므로 `input_hashes`는 빈 배열입니다. Blob에서 파생하는 `extraction`·`rendition`·`identify`는 `input_hashes`가 1개 이상이어야 합니다. purge가 파생 Artifact를 `input_hashes`와 `content_blob`으로 찾기 때문입니다(D2). 유효 정책은 입력이 없으므로 subject Capture의 것을 씁니다(#8). 가져온 시각은 `created_at`, 리다이렉트 뒤 최종 URL과 매개변수를 뺀 media type은 Hub 소유 멤버 `fetched{final_url, media_type}`에 있고, 200 응답만 저장하므로 상태 코드는 없습니다. `artifact_type`이 `web_snapshot`이면 `fetched`가 필수입니다. 다른 객체처럼 `fetched`도 열려 있어 모르는 멤버를 무시합니다.
 
 어느 type이 JSON 본문 스키마를 갖는지는 `tests/test_schema_conventions.py`의 `ARTIFACT_BODY_SCHEMAS`가 고정하고, 바이트 자체가 본문인 type(`rendition`, `web_snapshot`)은 `BYTES_AS_BODY`가 고정합니다.
 
