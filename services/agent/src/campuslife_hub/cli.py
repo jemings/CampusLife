@@ -10,10 +10,13 @@
   status   what the serving Hub reports about itself
   stop     ask the serving Hub to stop
   ls       list Captures and their Attachments
+  autostart  start the Hub at logon through Windows Task Scheduler: xml prints the task, register adds or
+             replaces it, unregister removes it
 
 While a Hub serves the data root it holds the data root's hub.lock, and init, import and backup go
 through its admin API (E11); otherwise they take the lock themselves. restore takes the lock of the
 empty root it fills. open, status and stop need a serving Hub. ls and fsck take no lock and write no data.
+Every command refuses to run on a Microsoft Store Python (E21).
 """
 
 from __future__ import annotations
@@ -27,9 +30,10 @@ import webbrowser
 from datetime import timedelta
 from pathlib import Path
 
-from . import admin_client, backup, fsck, host
+from . import admin_client, autostart, backup, fsck, host
 from .admin_client import AdminRefused, HubDidNotAnswer, HubNotServing, NotTheHub
 from .admin_token import AdminTokenUnusable
+from .autostart import AutostartFailed, LogonTask
 from .backup import DEFAULT_KEEP, DEFAULT_WARN_AFTER, BackupRefused, BackupSettings, RestoreRefused
 from .core import UnsafeDataRoot, open_core, open_core_readonly, safe_data_root
 from .data_root import Layout, default_data_root
@@ -44,6 +48,7 @@ ROOT_ENV = "CAMPUSLIFE_ROOT"
 EXPECTED_FAILURES = (
     AlreadyRunning, NotInitialized, SchemaMismatch, UnsafeDataRoot, StartupRefused, DatabaseTooNew, UnimportableFile,
     HubNotServing, NotTheHub, AdminRefused, HubDidNotAnswer, AdminTokenUnusable, PortTaken, BackupRefused, RestoreRefused,
+    AutostartFailed,
     OSError, UnicodeError, sqlite3.Error,
 )
 
@@ -64,13 +69,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--root", type=Path, help=f"data root (default: ${ROOT_ENV}, else the platform default)")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init", help="create the data root and database")
-    serving = commands.add_parser("serve", help="run the Hub until Ctrl+C, a terminate request or `stop`")
-    serving.add_argument("--admin-port", type=int, default=DEFAULT_ADMIN_PORT, help=f"port of the admin listener on 127.0.0.1 (default {DEFAULT_ADMIN_PORT})")
-    serving.add_argument("--backup-keep", type=_at_least_one, default=DEFAULT_KEEP, help=f"generations a backup keeps on the drive (default {DEFAULT_KEEP})")
-    serving.add_argument(
-        "--backup-warn-days", type=_at_least_one, default=DEFAULT_WARN_AFTER.days,
-        help=f"warn when the last backup is older than this many days (default {DEFAULT_WARN_AFTER.days})",
-    )
+    _serve_options(commands.add_parser("serve", help="run the Hub until Ctrl+C, a terminate request or `stop`"), defaults=True)
     opening = commands.add_parser("open", help="open the local UI of the serving Hub")
     opening.add_argument("--no-browser", action="store_true", help="only print the one-time login link")
     importing = commands.add_parser("import", help="import files as one Capture")
@@ -87,6 +86,33 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("status", help="what the serving Hub reports")
     commands.add_parser("stop", help="ask the serving Hub to stop")
     commands.add_parser("ls", help="list Captures")
+    starting = commands.add_parser("autostart", help="start the Hub at logon through Windows Task Scheduler")
+    actions = starting.add_subparsers(dest="action", required=True)
+    for action, said in (("xml", "print the task register adds"), ("register", "add the task for this user, or replace it")):
+        _serve_options(_task_name(actions.add_parser(action, help=said)), defaults=False)
+    _task_name(actions.add_parser("unregister", help="remove the task"))
+    return parser
+
+
+def _serve_options(parser: argparse.ArgumentParser, *, defaults: bool) -> argparse.ArgumentParser:
+    """serve's options; without defaults, for a task that passes on to serve only the options given."""
+    parser.add_argument(
+        "--admin-port", type=int, default=DEFAULT_ADMIN_PORT if defaults else None,
+        help=f"port of the admin listener on 127.0.0.1 (default {DEFAULT_ADMIN_PORT})",
+    )
+    parser.add_argument(
+        "--backup-keep", type=_at_least_one, default=DEFAULT_KEEP if defaults else None,
+        help=f"generations a backup keeps on the drive (default {DEFAULT_KEEP})",
+    )
+    parser.add_argument(
+        "--backup-warn-days", type=_at_least_one, default=DEFAULT_WARN_AFTER.days if defaults else None,
+        help=f"warn when the last backup is older than this many days (default {DEFAULT_WARN_AFTER.days})",
+    )
+    return parser
+
+
+def _task_name(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument("--name", default=autostart.TASK_NAME, help=f"the task's name in Task Scheduler (default {autostart.TASK_NAME!r})")
     return parser
 
 
@@ -205,6 +231,31 @@ async def _ls(root: Path) -> None:
             print(f"    {attachment.blob_sha256[:12]}  {attachment.cloud_policy:<13}  {attachment.original_filename or '-'}")
 
 
+def _logon_task(root: Path, arguments: argparse.Namespace) -> LogonTask:
+    """The task that serves root with the serve options given; root must hold a Hub."""
+    layout = _layout(root)
+    if not layout.database.is_file():
+        raise NotInitialized(f"no Hub at {layout.root}; run `campuslife-hub init` first")
+    options = [(flag, value) for flag, value in (
+        ("--admin-port", arguments.admin_port), ("--backup-keep", arguments.backup_keep), ("--backup-warn-days", arguments.backup_warn_days),
+    ) if value is not None]
+    serve = ["--root", str(layout.root), "serve", *[part for flag, value in options for part in (flag, str(value))]]
+    return LogonTask(str(autostart.launcher()), tuple(serve), str(layout.root), autostart.this_user())
+
+
+def _autostart(root: Path, arguments: argparse.Namespace) -> None:
+    match arguments.action:
+        case "xml":
+            print(autostart.task_xml(_logon_task(root, arguments)), end="")
+        case "register":
+            task = _logon_task(root, arguments)
+            autostart.register(task, arguments.name)
+            print(f"registered {arguments.name!r}: {task.launcher} {' '.join(task.arguments)} at logon of {task.user}")
+        case "unregister":
+            autostart.unregister(arguments.name)
+            print(f"unregistered {arguments.name!r}")
+
+
 def _run(arguments: argparse.Namespace, root: Path) -> None:
     match arguments.command:
         case "init":
@@ -228,12 +279,15 @@ def _run(arguments: argparse.Namespace, root: Path) -> None:
             _stop(root)
         case "ls":
             asyncio.run(_ls(root))
+        case "autostart":
+            _autostart(root, arguments)
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     root = arguments.root or Path(os.environ.get(ROOT_ENV) or default_data_root())
     try:
+        autostart.refuse_store_python()
         _run(arguments, root)
     except (*EXPECTED_FAILURES, CommandFailed) as error:
         print(f"campuslife-hub: {error}", file=sys.stderr)
