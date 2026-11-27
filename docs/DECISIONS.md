@@ -586,8 +586,8 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **사용자 결정**
 - **U1. 백업은 암호화하지 않습니다** (2026-11-26, "결정"). 설치·운영 문서(`services/agent/README.md`)와 PRIVACY-SECURITY에 백업 드라이브 분리 보관과 분실 위험을 적습니다.
 - **U2. 즉시 purge는 Blob 단위입니다** (2026-11-26, "결정").
-  - 그 Blob을 가리키는 모든 Attachment, 거기서 파생된 Artifact·Suggestion(전이 폐쇄), 그 끝을 가진 Relation, 인덱스·렌디션을 지웁니다.
-  - 그 Artifact에서 fork된 Note(사용자 데이터)는 지우지 않고 `evidence_purged_at`으로 근거가 사라졌다고 표시합니다. purge 확인 화면은 "이 Note들도 지울까요?"를 함께 묻고, 고른 Note는 휴지통 없이 tombstone이 됩니다.
+  - 그 Blob을 가리키는 모든 Attachment, 거기서 파생된 Artifact·Suggestion(전이 폐쇄), 인덱스·렌디션을 지웁니다.
+  - 그 Artifact에서 fork된 Note(사용자 데이터)는 지우지 않고 근거 링크가 사라졌다고 표시합니다. purge 확인 화면에 "이 Note들도 지울까요?"를 함께 보여 줍니다.
   - 백업 세대에는 남아 있음을 알립니다.
 - **U3. 백업은 수동입니다** (2026-11-26, "결정"). 로컬 UI와 CLI로 하고, 마지막 백업에서 7일이 지나면 경고하며, 드라이브에는 최근 5세대를 남깁니다. 둘 다 설정값(`serve --backup-warn-days`, `--backup-keep`)입니다.
 - **U4. CI는 ubuntu에서 항상, windows-latest에서는 path filter(`services/agent/**`, `packages/api-contracts/**`)로 전체 pytest를 돌립니다** (2026-11-26, "결정").
@@ -602,7 +602,8 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 읽기 명령(`ls`, `fsck`)은 DB에 쓰지 않습니다(2026-11-26, "PR #28 1차"). migrate·신원 발급을 하지 않고, 스키마가 코드와 다르면 거부합니다. 근거: lock을 쥔 옛 Hub가 있는데 새 checkout의 읽기 명령이 DB를 새 버전으로 올리면 옛 Hub가 깨집니다.
 - **E23. data root 검사:** 경로와 알려진 동기화 루트 목록을 받는 순수 함수로 판정하고, 동기화 루트 탐지(`OneDrive*` 환경 변수, Dropbox `info.json`)는 얇은 진입부에 둡니다. `\\`로 시작하는 드라이브(UNC 공유 등)도 거부합니다(2026-11-26, "PR #28 2차": SQLite가 file URI의 authority를 거부함). `\\?\C:\…`는 `C:\…`로 판정합니다.
 - **E21. 설치:** git checkout + `uv sync --frozen` + venv의 gui-script 런처(pythonw)를 Task Scheduler XML로 등록합니다. 로그온 트리거, `ExecutionTimeLimit PT0S`, 배터리 시작·중지 조건 끔, `MultipleInstancesPolicy IgnoreNew`입니다. MS Store Python(`WindowsApps` 경로)은 `%LOCALAPPDATA%` 쓰기를 가상화하므로 거부합니다.
-  - 구현(PR8): 런처는 `campuslife-hubw`, 작업은 이 사용자로 `InteractiveToken`·`LeastPrivilege`, 이름은 `CampusLife Hub`이고 `campuslife-hub autostart xml|register|unregister`가 다룹니다. 작업 인자에는 등록 시점의 data root와 준 serve 옵션만 들어갑니다. Store Python 거부는 기동만이 아니라 모든 CLI 명령에서 합니다(어느 명령이든 data root를 가상화된 곳에 읽고 쓰게 되므로).
+  - 구현자 결정, PR #38 리뷰에서 받아들임(2026-11-27): 런처는 `campuslife-hubw`, 작업은 이 사용자로 `InteractiveToken`·`LeastPrivilege`, 이름은 `CampusLife Hub`이고 `campuslife-hub autostart xml|register|unregister`가 다룹니다. 작업 인자에는 등록 시점의 data root와 준 serve 옵션만 들어갑니다. Store Python 거부는 기동만이 아니라 모든 CLI 명령에서 합니다(어느 명령이든 data root를 가상화된 곳에 읽고 쓰게 되므로).
+  - pythonw로 뜬 Hub에는 stderr가 없으므로 기동 거부 이유를 `<root>/logs/hub.log`에 남깁니다(2026-11-27, PR #38 리뷰, 오케스트레이터 결정). `run_hub`은 로그 파일을 붙인 뒤 Hub를 끝낸 오류를 기록하고, CLI는 stderr가 없을 때 그보다 앞선 실패(Store Python 거부 등)를 같은 파일에 덧붙입니다.
   - 재부팅 뒤 로그인 전에는 Hub가 없다는 D16의 한계는 그대로이고, 알림은 Hub와 상관없습니다(D19). 실기기의 로그온 자동 시작·장시간 생존은 #14가 확인합니다.
 
 **오케스트레이터 결정: 저장과 쓰기 경로** (2026-11-26, "결정")
@@ -617,6 +618,17 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **E15. 로컬 import:** NFC 파일명(다르면 `original_filename_raw`), cloud_policy 해석, Hub 자신의 `windows_hub` Device 행으로 payload를 만들고 같은 `apply()`를 부릅니다(#20 A7). import 한 번이 Capture 하나입니다. 파일명이 UTF-8로 인코딩되지 않으면 Blob을 저장하기 전에 그 파일을 거부합니다(2026-11-26, "PR #28 1차").
 - **E22.** `suggestion.accept`·`dismiss`는 이 적용기가 구현합니다(판정 지점 하나). `edits`의 `fields.<key>`가 kind 스키마에 맞는지, 제안에 있는 키인지는 적용기가 Suggestion을 읽고 판정해 `rejected{schema}`로 답합니다.
 
+**적용기 판정 (받아들인 구현자 결정)** — 클라이언트가 결과로 보는 것
+- Relation의 끝이나 commit `links[]`의 대상이 없거나 tombstone이면 `rejected{link_target_missing}`입니다. soft-delete된 Item은 있는 것으로 봅니다(2026-11-26 "PR #28 1차", Relation create까지 넓힌 것은 2026-11-27 "PR #30 1차").
+- 계약이 fields를 정하지 않은 kind의 Item create는 `rejected{schema}`입니다(2026-11-27, "PR3(#30) 범위 메모"에서 제안, "PR #30 1차"에서 받아들임). 이 아래 넷의 출처도 같습니다.
+- 지울 것이 없는 delete(이미 지워졌거나 없는 대상)는 `applied`입니다. 대상은 결국 없는 상태가 됩니다.
+- 없거나 soft-delete된 Item에 온 patch는 `rejected{deleted}`이고 제출값은 `conflict_stash`에 남깁니다. 없는 Item의 restore도 `rejected{deleted}`이며, 남길 값이 없으므로 stash하지 않습니다.
+- Tag를 지우면 그 Tag를 끝으로 가진 Relation도 tombstone이 됩니다.
+- 이미 `to` 값을 가진 키는 수렴으로 보고 `applied`로 답하며 아무것도 쓰지 않습니다(D18).
+- 한 commit 안에서 Attachment id가 겹치면 `rejected{schema}`입니다(2026-11-26, "PR #28 1차").
+- 로컬 import가 링크한 과목의 기본 `cloud_policy`가 여럿이면 가장 엄격한 값(min)을 씁니다(2026-11-26, "PR #28 1차", D8).
+- 이미 저장된 Blob을 다른 size로 열면 업로드를 거부합니다. HTTP에서는 400 `invalid_request`이고 매핑은 #4가 합니다(2026-11-26, "PR #29 1차"·"#20 종료 뒤 반영" E10).
+
 **오케스트레이터 결정: Blob과 업로드** (2026-11-26, "결정"·"PR #29 1차"·"PR3 첫 할 일")
 - **E9. Blob 저장:** `staging/`(같은 볼륨)에 쓰기 → fsync → sha256 → 최종 경로가 이미 있으면 staging만 버리고, 없으면 `os.replace` → 읽기 전용 → `blobs` 행. Windows 잠금(WinError 5/32)은 상한 있는 재시도입니다. 기동 때 lock을 쥔 쪽이 `staging/`의 잔여물을 지우고, 지우지 못한 것은 기록하고 건너뜁니다.
 - **E10. 업로드 세션:** 키는 `(device_id, sha256)`, 디렉터리는 `uploads/<session uuid>/<index>`입니다. 같은 sha의 중복 제거는 finalize에서 합니다. revoke하면 그 장치의 세션을 지웁니다. 7일 동안 건드리지 않은 세션과, 어떤 참조도 없고 마지막으로 받은 지 7일이 지난 Blob은 정리합니다. 참조 테이블 목록은 `BLOB_REFERENCES` 한 곳입니다(Attachment, Artifact, Relation 끝; 뒤에 AnnotationLayer).
@@ -629,6 +641,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **E13. `isolate.run`:** Windows는 ctypes Job Object(`KILL_ON_JOB_CLOSE`, 메모리 상한), POSIX는 `setrlimit`입니다. stdout도 상한(기본 16 MiB)을 넘으면 트리를 죽입니다. 근거: 메모리 상한 256 MiB인 자식이 끝없이 쓰면 Hub RSS가 1.8 GiB까지 올랐습니다(재현). 세션·Job 밖으로 나간 프로세스는 죽이지 못합니다.
 - **E14. 초기 job:** `capture.commit` 트랜잭션은 `capture.ingest` job 하나만 등록하고, 그 handler가 트랜잭션 밖에서 #5·#8의 planner로 fan-out합니다(남의 코드 실패가 ACK를 깨지 않게).
   - planner마다 spec 검사(저장 경로와 같은 직렬화)를 그 planner 안에서 합니다. 예외를 냈거나, handler가 없는 job, 저장할 수 없는 job, Hub에 한 번도 없던 subject의 job을 낸 planner는 자기 job만 빠지고 ingest는 `PlanningFailed`로 다시 시도합니다(2026-11-27, "PR #31 1차"·"PR8 첫 할 일").
+    - "한 번도 없던 subject"는 행도 tombstone도 없는 엔터티이고, Blob이면 파일도 없고 그 Blob을 지운 purge 기록도 없는 것입니다. 그런 spec을 하나라도 낸 planner는 job 전부가 빠집니다(구현자 결정, PR #38 리뷰에서 받아들임, 2026-11-27). 참조 없는 Blob 정리는 기록을 남기지 않으므로 그렇게 지운 Blob도 여기에 듭니다.
   - 계획하는 동안 purge가 subject(tombstone이 남음)나 입력 Blob을 지운 spec은 버리고 warning으로 남깁니다(2026-11-27, "PR #37 2차"·"PR8 첫 할 일").
 
 **오케스트레이터 결정: host와 admin** (2026-11-26 "결정", 2026-11-27 "PR #32 1차·2차"·"PR6 첫 할 일")
@@ -653,15 +666,17 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - DB를 놓은 뒤 기록 전에 크래시하면 그 세대의 `backups` 행과 `backed_up_at`이 빠집니다. 다음 백업이 다시 찍고 데이터는 잃지 않으므로 받아들입니다.
   - 복원 안내는 "모든 장치를 다시 승인, 분실·revoke한 장치는 승인하지 말 것"과 "백업 뒤에 한 purge는 되돌려졌으니 다시 purge"를 출력합니다.
 - **E16. purge:** durable `purge_journal`과 `purge.register(name, fn)` 훅입니다. 행 삭제와 journal 행을 한 트랜잭션에 commit하고, 그 뒤 훅과 파일 삭제를 멱등으로 실행하며, 기동 때 끝나지 않은 것을 재개합니다(FTS는 별도 DB라 한 트랜잭션에 묶을 수 없음).
+  - 지워지는 Blob·Attachment·Artifact·Suggestion과 고른 fork Note를 끝으로 가진 Relation도 함께 지웁니다(2026-11-27, "PR #36 1차" 경계 메모·"PR7 첫 할 일").
   - 폐쇄는 실제로 지워질 content Blob만 따라가는 고정점입니다. 남는 계보와 바이트를 공유하는 Artifact에서 만든 것은 남습니다.
   - 지워지는 것을 subject로 가진 job과, 지워지는 Blob을 입력으로 가진 job은 취소합니다. `capture.ingest`는 취소하지 않습니다. 실행할 때 live 상태를 다시 읽고, Attachment 없는 Capture도 ingest 대상이기 때문입니다.
-  - purge 뒤에 오프라인 fork Note가 create로 오면 Hub가 `evidence_purged_at`을 찍습니다(hub 소유 열).
+  - fork Note의 표시는 hub 소유 계약 열 `evidence_purged_at`(purge 시각)입니다. 확인 화면에서 고른 fork Note는 휴지통 없이 tombstone이 됩니다. 수락으로 생긴 Item은 표시 없이 근거 Relation만 잃습니다(셋 다 구현자 판단, 2026-11-27 "PR #37 1차"에서 받아들임).
+  - purge 뒤에 오프라인 fork Note가 create로 오면 Hub가 `evidence_purged_at`을 찍습니다(2026-11-27, "PR #37 1차" 6, 오케스트레이터 결정).
 - **fsck:** 해시를 다시 계산하고 missing·corrupt·orphan Blob과 끝나지 않은 purge를 보고합니다. 잠그지 않으므로 Hub가 도는 동안에는 그 사이 저장·정리되는 Blob이 거짓 양성으로 보일 수 있습니다.
 
 **보존**
 - `applied_mutations`는 90일 보관합니다(E6). create·patch는 그보다 오래된 재전송도 CAS·내용 비교로 다시 판정되어 해가 없습니다. **delete·restore·Relation create는 CAS가 없어서 90일 넘은 재전송이 다시 적용됩니다.** 단일 사용자 Hub에서 90일 넘게 보내지 못한 Outbox는 드물어 받아들입니다(2026-11-27, "PR #30 1차").
 - **`backed_up_at`은 그 Blob을 처음 담은 세대가 끝날 때 한 번 찍습니다** (2026-11-27, "PR #37 1차", 구현자 결정 받아들임). 뒤 세대도 무엇이 가리키는 동안은 그 Blob을 담기 때문입니다.
-- 업로드 세션 7일, 참조 없는 Blob 7일, tombstone 무기한, 백업 세대는 드라이브마다 최근 N개(기본 5), `logs/hub.log`는 5 MiB씩 5개입니다.
+- 업로드 세션 7일, 참조 없는 Blob 7일, tombstone 무기한, 백업 세대는 드라이브마다 최근 N개(기본 5), `logs/hub.log`는 지금 파일과 이전 파일 5개(각 5 MiB, 최대 30 MiB)입니다.
 
 **클라이언트 규칙(#3·#16이 구현)**
 - `starts_at`·`due_at` patch에는 `all_day`를 함께 싣습니다(2026-11-27, "PR4 첫 할 일"). 싣지 않으면 그사이 바뀐 `all_day`를 CAS가 보지 못해, `from`이 다 맞는데 행이 깨지는 patch가 `conflict`가 아니라 `rejected{schema}`가 됩니다.

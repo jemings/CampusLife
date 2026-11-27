@@ -32,10 +32,11 @@ uv run campuslife-hub open
    - 기본 data root는 `%LOCALAPPDATA%\CampusLife`입니다. 다른 곳을 쓰려면 모든 명령에 `campuslife-hub --root D:\CampusLife <명령>`처럼 `--root`를 명령 앞에 주거나, 환경 변수 `CAMPUSLIFE_ROOT`를 둡니다.
    - 동기화 폴더(OneDrive·Dropbox) 아래와 `\\`로 시작하는 드라이브(네트워크 공유 등)는 거부합니다(D2, E23).
 4. `autostart register`는 이 사용자가 로그온할 때 Hub를 시작하는 Task Scheduler 작업 `CampusLife Hub`를 등록합니다(E21).
-   - 작업은 `.venv\Scripts\campuslife-hubw.exe --root <data root> serve`를 실행합니다. 콘솔 창이 없고, 출력은 `<data root>\logs\hub.log`에 남습니다(5 MiB씩 5개까지 돌려 씀).
+   - 작업은 `.venv\Scripts\campuslife-hubw.exe --root <data root> serve`를 실행합니다. 콘솔 창이 없으므로 Hub의 로그와, 기동을 거부한 이유(Store Python, 더 새 DB, 맞지 않는 SQLite, 이미 도는 Hub, 쓰고 있는 포트, 동기화 폴더 등)는 `<data root>\logs\hub.log`에 남습니다. 이 파일은 5 MiB가 차면 `hub.log.1`…`hub.log.5`로 밀려나 최대 6개(30 MiB)를 둡니다.
+   - 작업이 곧바로 끝났는데 `hub.log`에 이유가 없으면(로그 폴더를 쓸 수 없는 경우 등) 콘솔에서 같은 명령 `uv run campuslife-hub --root <data root> serve`를 실행해 이유를 봅니다.
    - 시간 제한 없음, 배터리 사용 중에도 시작·유지, 이미 돌고 있으면 새 시작은 무시합니다.
    - 등록 시점의 data root와, register에 준 serve 옵션(`--admin-port`, `--backup-keep`, `--backup-warn-days`)만 작업 인자에 들어갑니다. 바꾸려면 같은 명령을 다시 실행합니다(같은 이름의 작업을 교체). 이름은 `--name`으로 바꿀 수 있습니다.
-   - `uv run campuslife-hub autostart xml`은 등록할 작업 XML을 출력만 합니다.
+   - `uv run campuslife-hub autostart xml`은 등록할 작업 XML을 출력만 합니다(인코딩 선언 없음). `--out task.xml`을 주면 register가 schtasks에 넘기는 것과 같은 UTF-16 파일을 씁니다.
 5. `schtasks /Run`은 다음 로그온을 기다리지 않고 지금 시작합니다. 로그아웃 후 다시 로그인해도 됩니다. 기동에 몇 초가 걸리므로 `status`가 서빙하는 Hub가 없다고 하면 잠시 뒤 다시 실행합니다.
 6. `open`은 브라우저로 로컬 UI(127.0.0.1의 admin 포트, 기본 8731)를 1회용 로그인 링크로 엽니다. 이 포트는 `tailscale serve`에 노출하지 않습니다(D5). sync 포트(기본 8730)와 `tailscale serve` 설정은 #4, 장치 pairing은 #19가 맡습니다.
 
@@ -111,7 +112,7 @@ uv run campuslife-hub --root D:\CampusLife-restored restore --from E:\CampusLife
 
 - 비어 있거나 없는 data root에만 복원합니다. 기본으로 가장 최근에 끝난 세대를 고릅니다. 복원한 root를 계속 쓰려면 `campuslife-hub --root D:\CampusLife-restored autostart register`로 작업을 다시 등록합니다.
 - 복원하면 새 `epoch`를 발급합니다. 클라이언트는 `since=0`부터 다시 받고, Hub에 없는 Capture를 다시 올립니다(D3).
-- **모든 클라이언트 장치가 dormant가 되어 다시 승인해야 합니다.** 분실했거나 revoke한 장치는 승인하지 않습니다. 재승인은 #19의 흐름입니다.
+- **active였던 클라이언트 장치가 모두 dormant가 되어 다시 승인해야 합니다.** revoked 장치는 revoked로 남습니다. 분실했거나 revoke한 장치는 승인하지 않습니다. 재승인은 #19의 흐름입니다.
 - **백업 뒤에 한 purge는 복원으로 되돌려집니다.** 출력이 알려 주는 시각 뒤에 purge한 파일은 다시 purge합니다.
 - 세대의 Blob이 하나라도 드라이브에 없거나 손상됐으면 복원 전체를 거부합니다(부분 복원은 조용한 데이터 손실이라 그런 옵션은 없습니다). `--generation`으로 다른 세대를 고르거나 다른 백업 드라이브를 씁니다. 원래 Hub가 남아 있으면 `fsck`로 그 Blob을 확인하고 새 백업을 만듭니다.
 - 복원이 DB를 놓은 뒤 끝나기 전에 끊기면(전원 차단 등) 그 세대의 백업 기록과 `backed_up_at`이 빠집니다. 데이터는 잃지 않고, 다음 백업이 `backed_up_at`을 다시 찍습니다.
@@ -130,5 +131,5 @@ uv run campuslife-hub --root D:\CampusLife-restored restore --from E:\CampusLife
 | 끝나지 않은 업로드 세션 | 마지막으로 열거나 chunk를 받은 지 7일 |
 | Mutation 결과(`applied_mutations`) | 90일. 그보다 오래된 재전송은 create·patch는 다시 판정되어 해가 없고, delete·restore·Relation create는 다시 적용됨(수용) |
 | 백업 세대 | 드라이브마다 최근 N개(기본 5) |
-| 로그 `logs\hub.log` | 5 MiB씩 5개. 비밀 값과 강의 본문은 가림(E19) |
+| 로그 `logs\hub.log` | 지금 파일과 이전 파일 5개(`hub.log.1`…`.5`), 각 5 MiB, 최대 30 MiB. 비밀 값과 강의 본문은 가림(E19) |
 | `staging\`의 쓰다 만 파일 | 다음 기동 때 지움 |

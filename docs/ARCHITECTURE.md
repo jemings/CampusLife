@@ -142,7 +142,7 @@ Windows 파일시스템이 바이트의 원천이고, SQLite에는 메타데이�
     ├── blobs\ab\cd\<sha256>            # 원본·Artifact 본문·필기 payload, 읽기 전용
     ├── staging\                       # 해시를 확인하기 전 파일 (blobs와 같은 볼륨, 기동 때 잔여물 삭제)
     ├── uploads\<session uuid>\<index>  # 업로드 세션의 chunk (blobs와 같은 볼륨, 7일 지난 세션 정리)
-    ├── logs\hub.log                   # 5 MiB씩 5개, 비밀 값·강의 본문 가림 (E19)
+    ├── logs\hub.log                   # 지금 파일 + 이전 5개(각 5 MiB), 비밀 값·강의 본문 가림 (E19)
     ├── cache\                         # 이후(#11 등): FTS 인덱스, 썸네일, overlay 렌더링 — 백업 안 함
     └── exports\                       # 이후: 사람이 읽는 트리 복사본
 
@@ -156,7 +156,7 @@ Windows 파일시스템이 바이트의 원천이고, SQLite에는 메타데이�
 - purge는 Blob 단위입니다. 그 Blob의 Attachment, 파생 Artifact·Suggestion(전이 폐쇄), 그 끝을 가진 Relation, 인덱스·렌디션을 지우고, fork된 Note는 남겨 근거가 지워졌다고 표시합니다(U2). DB 삭제와 `purge_journal` 행을 한 트랜잭션에 commit한 뒤 훅과 파일 삭제를 실행하고, 끊기면 기동 때 마저 합니다(E16).
 - Artifact는 재실행 결과가 다를 수 있으므로 백업 대상입니다. 캐시는 FTS·썸네일·overlay뿐입니다.
 - 백업은 수동이고 암호화하지 않습니다(U1, U3). DB 스냅샷 → 참조 Blob 증분 복사 → 세대 manifest → `backed_up_at`(그 Blob을 처음 담은 세대에 한 번) 순서입니다. 백업은 marker가 없거나 다른 Hub의 폴더를 거부하고, 자기가 쓴 파일만 지웁니다.
-- 복원은 빈 data root에 하고 새 `epoch`를 발급하며, Hub 자신을 뺀 장치를 모두 dormant로 바꿉니다(D3, D21 U6).
+- 복원은 빈 data root에 하고 새 `epoch`를 발급하며, active인 client 장치를 모두 dormant로 바꿉니다. revoked 장치와 Hub 자신(`windows_hub`)은 그대로입니다(D3, D21 U6).
 - `hub fsck`로 해시와 고아·누락 Blob, 끝나지 않은 purge를 점검합니다.
 - 설치·업데이트·제거와 백업·복원 운영은 [`services/agent/README.md`](../services/agent/README.md)에 있습니다.
 
