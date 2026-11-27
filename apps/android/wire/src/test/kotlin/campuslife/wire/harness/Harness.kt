@@ -5,6 +5,7 @@ import campuslife.wire.textHash
 import campuslife.wire.wireJson
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.isDirectory
@@ -62,7 +63,7 @@ fun main(args: Array<String>) {
         System.err.println("usage: HarnessKt <fixture root> <output directory>")
         exitProcess(2)
     }
-    val report = runHarness(Path.of(args[0]), Path.of(args[1]))
+    val report = runHarness(Paths.get(args[0]), Paths.get(args[1]))
     report.problems.forEach(::println)
     println("${report.written} outputs written, ${report.forwardRead} forward fixtures read, ${report.vectorsRun} vectors run")
     exitProcess(if (report.forwardProblems.isEmpty() && report.vectorProblems.isEmpty()) 0 else 1)

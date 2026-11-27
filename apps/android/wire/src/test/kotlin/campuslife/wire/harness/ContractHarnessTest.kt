@@ -1,6 +1,6 @@
 package campuslife.wire.harness
 
-import java.nio.file.Path
+import java.nio.file.Paths
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -13,7 +13,7 @@ class ContractHarnessTest {
 
     @Test
     fun `every fixture decodes, every valid one encodes, and every vector agrees`() {
-        val report = runHarness(Path.of(System.getProperty("campuslife.contract.fixtures")), out.root.toPath())
+        val report = runHarness(Paths.get(System.getProperty("campuslife.contract.fixtures")), out.root.toPath())
 
         assertEquals("", report.problems.joinToString("\n"))
         assertTrue(report.written > 0 && report.forwardRead > 0 && report.vectorsRun > 0)
