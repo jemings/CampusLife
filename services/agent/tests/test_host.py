@@ -161,7 +161,9 @@ async def test_a_runner_that_keeps_ending_with_an_error_starts_again_only_after_
         await until(started_thrice)
         status = (await client.get("/api/status", auth=SIGNED)).json()
 
-    assert all(later - earlier >= 0.19 for earlier, later in zip(starts, starts[1:], strict=False))
+    # asyncio runs a timer up to one clock tick early, and Windows' clock ticks every 15.6 ms.
+    slack = 0.01 + 2 * time.get_clock_info("monotonic").resolution
+    assert all(later - earlier >= 0.2 - slack for earlier, later in zip(starts, starts[1:], strict=False))
     assert status["runner"]["restarts"] >= 3 and status["runner"]["last_error"] == "RuntimeError"
 
 
