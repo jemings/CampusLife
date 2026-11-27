@@ -2,13 +2,20 @@ name: hub
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   ubuntu:
+    needs: changes
+    if: needs.changes.outputs.hub == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:

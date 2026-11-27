@@ -2,6 +2,7 @@ name: contracts
 
 on:
   push:
+    branches: [main]
     paths:
       - "packages/api-contracts/**"
       - ".github/workflows/contracts.yml"
@@ -9,6 +10,10 @@ on:
     paths:
       - "packages/api-contracts/**"
       - ".github/workflows/contracts.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
