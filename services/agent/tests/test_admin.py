@@ -44,7 +44,7 @@ class Clock:
 
 
 @asynccontextmanager
-async def hub(tmp_path, *, routers=(), clock=None, raise_app_exceptions=True, stop=lambda: None):
+async def hub(tmp_path, *, routers=(), clock=None, raise_app_exceptions=True, stop=lambda: None, served_as=lambda app: app):
     """An admin app over a fresh Hub, and a client that talks to it as a browser on this machine would."""
     async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
         redactor = Redactor()
@@ -53,7 +53,7 @@ async def hub(tmp_path, *, routers=(), clock=None, raise_app_exceptions=True, st
         registry.handle("extract.text", EXTRACT, lambda job, context: None)
         admin = Admin(core, JobRunner(JobContext(core.db, core.blobs, registry)), auth, redactor, status=lambda: {"runner": {"restarts": 0}}, stop=stop)
         app = create_app(admin, port=PORT, routers=routers)
-        transport = httpx.ASGITransport(app=app, raise_app_exceptions=raise_app_exceptions)
+        transport = httpx.ASGITransport(app=served_as(app), raise_app_exceptions=raise_app_exceptions)
         async with httpx.AsyncClient(transport=transport, base_url=BASE) as client:
             yield client, admin
 
@@ -447,7 +447,8 @@ async def hello(client, nonce=None, *, headers=None):
 
 async def signature(client, method, path, body=b"", *, query="", token=TOKEN, address=ADDRESS):
     _, answer = await hello(client)
-    return {"authorization": signed_authorization(token, address, answer.json()["nonce"], method, path, query, body)}
+    target = f"{path}?{query}" if query else path
+    return {"authorization": signed_authorization(token, address, answer.json()["nonce"], method, target, body)}
 
 
 async def test_the_hub_proves_it_holds_the_token_to_a_client_that_proves_it_too(tmp_path):
@@ -547,6 +548,24 @@ async def test_a_client_that_signs_as_the_admin_auth_docstring_says_is_answered(
         ]
 
     assert [response.status_code for response in responses] == [200, 200, 404]
+
+
+def without_raw_path(app):
+    async def served(scope, receive, send):
+        await app({name: value for name, value in scope.items() if name != "raw_path"}, receive, send)
+
+    return served
+
+
+@pytest.mark.parametrize("served_as", [lambda app: app, without_raw_path], ids=["raw path given", "no raw path"])
+async def test_a_request_signed_for_a_percent_encoded_target_is_taken(tmp_path, served_as):
+    async with hub(tmp_path, served_as=served_as) as (client, _):
+        responses = [
+            await client.get("/api/st%61tus", params={"week": "4 notes"}, auth=SIGNED),
+            await client.post("/api/jobs/no%20such%20job%2541-%EA%B3%BC%EC%A0%9C/retry", auth=SIGNED),
+        ]
+
+    assert [response.status_code for response in responses] == [200, 404]
 
 
 async def test_hellos_from_a_program_without_the_token_do_not_push_out_the_nonce_a_client_waits_on(tmp_path, monkeypatch):

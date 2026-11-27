@@ -543,6 +543,22 @@ def test_a_program_that_relays_to_the_hub_from_the_port_admin_port_names_gets_no
         process.wait()
 
 
+def test_a_call_to_a_percent_encoded_path_is_signed_as_the_hub_reads_it(tmp_path):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    process = served(root)
+    try:
+        status = admin_client.call(Layout(root), "GET", "/api/st%61tus")
+        assert hub(root, "stop") == 0
+        assert process.wait(timeout=30) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+
+    assert status["data_root"] == str(root.resolve())
+
+
 def test_a_hub_that_takes_the_lock_the_moment_the_cli_lets_it_go_keeps_the_port_it_leaves(tmp_path, monkeypatch):
     root = tmp_path / "CampusLife"
     hub(root, "init")
