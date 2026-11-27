@@ -24,6 +24,11 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+async def change_seq(db):
+    (seq,) = await db.read(lambda snap: snap.execute("SELECT change_seq FROM hub_state").fetchone())
+    return seq
+
+
 async def test_a_text_file_is_identified_then_extracted_into_an_extraction_artifact(db, device, blob_store, tmp_path):
     hub = hub_with(db, blob_store, device, tmp_path)
     capture = await hub.capture(("노트.md", NOTES))
@@ -117,6 +122,17 @@ async def test_planning_again_queues_nothing_new(db, device, blob_store, tmp_pat
     assert await hub.jobs() == before
 
 
+async def test_planning_an_attachment_it_already_planned_writes_nothing(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path)
+    capture = await hub.capture(("a.md", NOTES))
+    await hub.settle()
+    before = await change_seq(db)
+
+    await db.write(lambda tx: hub.files.plan(tx, capture["attachments"][0]["id"]))
+
+    assert await change_seq(db) == before
+
+
 async def test_a_name_the_bytes_disagree_with_does_not_choose_the_reader(db, device, blob_store, tmp_path):
     hub = hub_with(db, blob_store, device, tmp_path)
     pdf = b"%PDF-1.7\n%%EOF\n"
@@ -198,6 +214,48 @@ async def test_a_purge_of_the_original_takes_its_identify_and_extraction_artifac
     assert set(purged.target.blobs) == {sha(NOTES), *(artifact["content_blob"] for artifact in made)}
     assert await hub.artifacts() == []
     assert await hub.media(sha(NOTES)) is None
+
+
+async def test_a_file_imported_again_after_its_purge_is_identified_and_extracted_again(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path)
+    await hub.capture(("a.md", NOTES))
+    await hub.settle()
+    await purge.purge_blob(db, blob_store, sha(NOTES), hooks=PurgeHooks())
+
+    again = await hub.capture(("a.md", NOTES))
+    await hub.settle()
+
+    assert (await hub.media(sha(NOTES))).media_type == "text/plain"
+    assert (await hub.attachment(again["attachments"][0]["id"]))["detected_mime"] == "text/markdown"
+    assert len(await hub.artifacts("extraction")) == 1
+    assert [job.state for job in await hub.jobs(IDENTIFY)] == [JobState.SUCCEEDED, JobState.SUCCEEDED]
+    assert [job.state for job in await hub.jobs("extract.text")] == [JobState.SUCCEEDED, JobState.SUCCEEDED]
+
+
+async def test_a_blob_stored_again_after_the_collection_took_it_is_identified_again(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path)
+    blob = await hub.store(NOTES)
+    first = await hub.enqueue(IDENTIFY, blob)
+    await hub.settle()
+    await blob_store.collect_garbage(hub.clock() + timedelta(days=30))
+
+    assert await hub.store(NOTES) == blob
+    second = await hub.enqueue(IDENTIFY, blob)
+    await hub.settle()
+
+    assert second.id != first.id
+    assert (await hub.job(second.id)).state is JobState.SUCCEEDED
+    assert (await hub.media(blob)).media_type == "text/plain"
+
+
+async def test_a_job_that_waits_for_a_blob_keeps_its_key_when_the_blob_goes(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path)
+    blob = await hub.store(NOTES)
+    waiting = await hub.enqueue(IDENTIFY, blob)
+    await blob_store.collect_garbage(hub.clock() + timedelta(days=30))
+
+    assert await blob_store.open_blob(blob) is None
+    assert (await hub.enqueue(IDENTIFY, blob)).id == waiting.id
 
 
 async def test_the_media_type_of_a_blob_goes_when_the_collection_of_unreferenced_blobs_takes_it(db, device, blob_store, tmp_path):
