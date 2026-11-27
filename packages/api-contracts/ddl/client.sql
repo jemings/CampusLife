@@ -2,9 +2,10 @@
 -- creates exactly these tables, columns, keys and indexes, and its tests compare the two; the iPad
 -- store (#16) follows the same file.
 --
--- Room declares column types, NOT NULL, primary keys, foreign keys and plain indexes only, so the
--- file stays inside that: no CHECK, STRICT, WITHOUT ROWID, partial index, trigger or view. The
--- allowed values of the state columns are listed here because no constraint can hold them.
+-- The file keeps to column types, NOT NULL, primary keys, foreign keys and plain indexes, which every
+-- client store declares alike and the PRAGMAs the Room comparison reads show: no CHECK, COLLATE,
+-- GENERATED, DEFERRABLE, ON CONFLICT, DESC, STRICT, WITHOUT ROWID, partial index, trigger or view.
+-- The allowed values of the state columns are listed here because no constraint can hold them.
 -- Times are epoch milliseconds (*_ms); JSON columns hold the text exactly as received or made.
 
 -- Where this device stands against its Hub, one row with id 0: epoch is the base epoch, set from
@@ -16,8 +17,9 @@ CREATE TABLE meta (
     cursor INTEGER NOT NULL
 );
 
--- The Hub's last state of every changes-feed row of a known entity; the Hub owns it and only the
--- feed writes it. data is the row JSON, rev the row's change_seq.
+-- The Hub's last state of every changes-feed row, of any entity: a version that does not read an
+-- entity keeps its rows for one that does. The Hub owns it and only the feed writes it. data is the
+-- row JSON as the Hub sent it, rev the row's change_seq.
 CREATE TABLE entity_cache (
     entity TEXT NOT NULL,
     id TEXT NOT NULL,
@@ -30,8 +32,9 @@ CREATE TABLE entity_cache (
 -- mutation/mutation JSON, sent unchanged on every resend. entity and entity_id name the row it
 -- writes (capture for capture.commit, suggestion for suggestion.*).
 -- state: held (a capture.commit whose Blobs are not all stored), pending (to send), acked (applied,
--- waiting for a pull that began after the ACK), pulling (applied, such a pull is running), settled
--- (the result is in entity_cache, or a conflict lost), rejected (needs attention).
+-- or a conflict with applied_fields, waiting for a pull that began after the ACK), pulling (such a
+-- pull is running), settled (the result is in entity_cache, or a conflict wrote nothing), rejected
+-- (needs attention: refused, or a Blob of a capture.commit is lost from this device).
 -- result is the mutation/result that ended the sending; acked_at_ms starts the retention of a sent
 -- Mutation (decision 7).
 CREATE TABLE mutation_outbox (
@@ -48,7 +51,7 @@ CREATE TABLE mutation_outbox (
 CREATE UNIQUE INDEX index_mutation_outbox_mutation_id ON mutation_outbox (mutation_id);
 CREATE INDEX index_mutation_outbox_entity_entity_id ON mutation_outbox (entity, entity_id);
 
--- One row per Blob file this device keeps, by sha256; the row goes when the local file goes.
+-- One row per Blob file this device keeps, by sha256; the row goes when the copy is found lost.
 -- state: waiting (to upload), uploading (a session is open), retry_wait (failed for now), stored.
 CREATE TABLE blob_transfer (
     sha256 TEXT NOT NULL PRIMARY KEY,
