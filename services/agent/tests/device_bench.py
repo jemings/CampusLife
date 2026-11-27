@@ -17,17 +17,25 @@ UNKNOWN_SECRET = "0000000000000000aaaaaaaaaaaaaaaa"
 
 
 class Clock:
-    """A wall clock that moves only when the test says."""
+    """A wall clock, and the monotonic clock beside it, that move only when the test says."""
 
     def __init__(self, at: datetime = START):
         self.at = at
+        self.monotonic = 0.0
 
     def __call__(self) -> datetime:
         return self.at
 
     def advance(self, **delta: float) -> datetime:
-        self.at += timedelta(**delta)
+        """Let time pass: both clocks move."""
+        step = timedelta(**delta)
+        self.at += step
+        self.monotonic += step.total_seconds()
         return self.at
+
+    def set_wall(self, at: datetime) -> None:
+        """Set the wall clock alone, as a user or a time sync does."""
+        self.at = at
 
 
 def request(secret: str, *, platform=ClientPlatform.ANDROID, name="Fold8", version="0.1.0") -> PairRequest:
@@ -39,8 +47,12 @@ class Bench:
     core: Core
     clock: Clock
     redactor: Redactor = field(default_factory=Redactor)
-    limiter: PairingLimiter = field(default_factory=PairingLimiter)
+    limiter: PairingLimiter | None = None
     dormant_after: timedelta = devices.DEFAULT_DORMANT_AFTER
+
+    def __post_init__(self):
+        if self.limiter is None:
+            self.limiter = PairingLimiter(clock=lambda: self.clock.monotonic)
 
     async def offer(self):
         return await devices.offer(self.core, now=self.clock(), public_url=PUBLIC_URL, redactor=self.redactor)

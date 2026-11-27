@@ -443,6 +443,15 @@ async def test_pairing_attempts_that_arrive_together_are_judged_one_at_a_time_so
         assert sorted(answer.retry_after is None for answer in answers) == [False] * 40 + [True] * 10
 
 
+async def test_setting_the_wall_clock_back_does_not_stretch_the_limit(tmp_path):
+    async with bench(tmp_path) as b:
+        for _ in range(10):
+            await b.pair(UNKNOWN_SECRET)
+        b.clock.set_wall(b.clock() - timedelta(hours=1))
+
+        assert await b.pair(UNKNOWN_SECRET) == Refusal(RefusalCode.UNAUTHORIZED, retry_after=600)
+
+
 async def test_failed_pairings_spread_over_more_than_ten_minutes_are_not_limited(tmp_path):
     async with bench(tmp_path) as b:
         for _ in range(30):
