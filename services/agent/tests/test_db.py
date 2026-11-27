@@ -226,7 +226,16 @@ def test_a_read_only_open_needs_the_file(tmp_path):
     assert not (tmp_path / "missing.sqlite3").exists()
 
 
-def test_the_writer_turns_secure_delete_on(layout, lock):
+def test_the_writer_turns_secure_delete_on_whatever_the_build_defaults_to(layout, lock, monkeypatch):
+    real = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        conn = real(*args, **kwargs)
+        conn.execute("PRAGMA secure_delete = OFF")
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+
     async def scenario():
         db = await opened(layout, lock)
         try:
