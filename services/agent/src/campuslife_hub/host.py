@@ -74,6 +74,8 @@ class HostConfig:
     """How long the sync listener keeps an idle connection open. tailscale serve reuses its connections to the Hub, and
     one the Hub closed under it fails the request serve sends on it with a 502 (#4 decision 6)."""
     devices: DeviceSettings = DeviceSettings()
+    search_every: timedelta = timedelta(seconds=2)
+    """How long a change waits at most, past the indexing before it, to be found by search (#11 decision 3)."""
 
 
 @dataclass(frozen=True)
@@ -192,6 +194,16 @@ async def _maintain(core: Core, stopping: asyncio.Event, every: timedelta, clock
             log.warning("left %s for a later clean-up: %s", leftover.path, leftover.reason)
 
 
+async def _index_for_search(core: Core, stopping: asyncio.Event, every: timedelta) -> None:
+    while True:
+        try:
+            await core.search.catch_up(core.db, core.blobs, stop=stopping)
+        except Exception:
+            log.exception("indexing for search failed; it runs again in %s", every)
+        if await _stopped_within(stopping, every):
+            return
+
+
 def _raise_if_any_ended(tasks: Sequence[asyncio.Task]) -> None:
     for task in tasks:
         if task.done():
@@ -239,6 +251,7 @@ async def serve(
         tasks += [
             asyncio.create_task(_keep_running(runner, stopping, record, config)),
             asyncio.create_task(_maintain(core, stopping, config.maintenance_every, clock, config.devices.dormant_after)),
+            asyncio.create_task(_index_for_search(core, stopping, config.search_every)),
         ]
         while not all(listener.started for listener in listeners):
             _raise_if_any_ended(tasks)

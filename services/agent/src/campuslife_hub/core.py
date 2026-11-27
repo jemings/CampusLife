@@ -10,6 +10,7 @@ it is the only way to the writer database and to migrations (E11).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 from collections.abc import AsyncIterator, Iterable
@@ -26,6 +27,9 @@ from .devices import DeviceId, ensure_hub_device
 from .identity import HubIdentity, ensure_identity, read_identity
 from .lock import HubLock
 from .mutations import forget_old_results
+from .search.index import SearchIndex
+
+SEARCH_HOOK = "search"
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +45,8 @@ class Core:
     blobs: BlobStore
     identity: HubIdentity
     hub_device: DeviceId
-    purge_hooks: purge.PurgeHooks = purge.HOOKS
+    search: SearchIndex
+    purge_hooks: purge.PurgeHooks
 
 
 @dataclass(frozen=True)
@@ -77,12 +82,13 @@ def safe_data_root(root: Path, sync_roots: Iterable[Path] | None = None) -> Path
 
 @asynccontextmanager
 async def open_core(
-    root: Path, *, create: bool, sync_roots: Iterable[Path] | None = None, purge_hooks: purge.PurgeHooks = purge.HOOKS
+    root: Path, *, create: bool, sync_roots: Iterable[Path] | None = None, purge_hooks: purge.PurgeHooks | None = None
 ) -> AsyncIterator[Core]:
     """Open the Hub at `root` under its hub.lock; with create, make it first. Making it twice changes nothing.
 
     Taking the lock removes the admin.port an earlier Hub left, so the CLI does not ask whatever holds that port
-    while this Hub opens. Opening finishes the purges a stopped Hub left unfinished (E16)."""
+    while this Hub opens. Opening finishes the purges a stopped Hub left unfinished (E16), the search index's part among
+    them: every Core's purge hooks, purge_hooks or new ones, forget the index (U2)."""
     layout = Layout(safe_data_root(root, sync_roots))
     if create:
         layout.root.mkdir(parents=True, exist_ok=True)
@@ -92,6 +98,9 @@ async def open_core(
         with suppress(FileNotFoundError):
             layout.admin_port.unlink()
         db = await Database.open(layout, lock=lock, create=create)
+        search = SearchIndex.open(layout)
+        hooks = purge.PurgeHooks() if purge_hooks is None else purge_hooks
+        hooks.register(SEARCH_HOOK, search.forget)
         try:
             identity, hub_device = await db.write(_issue_identity_and_hub_device)
             blobs = BlobStore(db, blobs_dir=layout.blobs, staging_dir=layout.staging, uploads_dir=layout.uploads)
@@ -102,7 +111,7 @@ async def open_core(
             recovered = await db.write(lambda tx: jobs.recover_after_restart(tx, now=now))
             if recovered:
                 log.warning("%d jobs were running when the Hub last stopped; they wait again or failed", recovered)
-            for finish in await purge.finish_unfinished(db, blobs, purge_hooks):
+            for finish in await purge.finish_unfinished(db, blobs, hooks):
                 kept += finish.kept
                 if finish.failed_hooks:
                     log.warning("purge %s is still unfinished: hooks %s failed", finish.journal_id, ", ".join(finish.failed_hooks))
@@ -110,8 +119,9 @@ async def open_core(
                     log.warning("purge %s is still unfinished: %s", finish.journal_id, purge.WAL_KEPT_REASON)
             for leftover in kept:
                 log.warning("left %s for a later clean-up: %s", leftover.path, leftover.reason)
-            yield Core(layout, db, blobs, identity, hub_device, purge_hooks)
+            yield Core(layout, db, blobs, identity, hub_device, search, hooks)
         finally:
+            await asyncio.to_thread(search.close)
             await db.close()
 
 
