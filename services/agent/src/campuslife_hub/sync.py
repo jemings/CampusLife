@@ -8,6 +8,7 @@ request model beside them (D17).
 - GET /v1/hub: the Hub's identity and the contract versions it speaks and accepts (E18).
 - GET /v1/changes: one page of the changes feed above a cursor (D3).
 - POST /v1/blobs/uploads, PUT …/chunks/{i}, POST …/finalize: resumable Blob uploads (sync_blobs).
+- GET /v1/blobs/{sha}: a Blob, whole or one byte range, tagged by its sha256 (sync_blobs).
 - POST /v1/mutations: a batch of 1 to 200 Mutations, applied in order by the Mutation applier (E12). The HTTP layer
   checks only the batch around them; the applier judges each Mutation and answers rejected{schema} inside the 200.
   A Device's batches apply one at a time, so a resent batch waits for the first and gets duplicate (#4 decision 7).
