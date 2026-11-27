@@ -41,7 +41,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import store
+from . import audit, store
+from .audit import AuditEvent
 from .blobs import BLOB_REFERENCES, READ_ONLY, BlobStore, copy_hashing, fsync_directory, with_lock_retry
 from .clock import instant
 from .core import Core, safe_data_root
@@ -385,30 +386,36 @@ def _restore_blob(source: Path, layout: Layout, sha256: str) -> None:
     os.chmod(final, READ_ONLY)
 
 
-def _reissue(database: Path, epoch: str) -> None:
+def _reissue(database: Path, epoch: str) -> list[str]:
     """Give the snapshot its new epoch and make its client devices dormant before it takes the database's place, so a
-    crash after that never serves the backup's epoch (D3) or a device revoked since the backup (D6)."""
+    crash after that never serves the backup's epoch (D3) or a device revoked since the backup (D6); the devices it
+    made dormant."""
     with closing(sqlite3.connect(database)) as copy, copy:
         copy.execute("UPDATE hub_state SET epoch = ?", (epoch,))
-        copy.execute("UPDATE devices SET state = 'dormant' WHERE platform != 'windows_hub' AND state = 'active'")
+        made_dormant = copy.execute("UPDATE devices SET state = 'dormant' WHERE platform != 'windows_hub' AND state = 'active' RETURNING id")
+        return sorted(device for (device,) in made_dormant)
 
 
-def _place(source: Path, name: str, manifest: dict, layout: Layout, epoch: str) -> None:
+def _place(source: Path, name: str, manifest: dict, layout: Layout, epoch: str) -> list[str]:
     snapshot = source / GENERATIONS / name / manifest["database"]["file"]
     layout.database.parent.mkdir(parents=True, exist_ok=True)
     partial = layout.database.with_name(layout.database.name + PARTIAL)
     try:
         if _copy(snapshot, partial) != manifest["database"]["sha256"]:
             raise RestoreRefused(f"the snapshot of generation {name} is damaged")
-        _reissue(partial, epoch)
+        made_dormant = _reissue(partial, epoch)
         for blob in manifest["blobs"]:
             _restore_blob(source, layout, blob["sha256"])
         _replace_durably(partial, layout.database)
+        return made_dormant
     finally:
         _remove(partial)
 
 
-def _after_restore(tx: Tx, manifest: dict, source: Path) -> tuple[KnownDevice, ...]:
+def _after_restore(tx: Tx, manifest: dict, source: Path, made_dormant: list[str]) -> tuple[KnownDevice, ...]:
+    now = _now()
+    for device in made_dormant:
+        audit.record(tx, AuditEvent.DORMANT, at=now, subject=device, details={"reason": "restore"})
     held = [blob["sha256"] for blob in manifest["blobs"]]
     tx.execute(
         "INSERT OR IGNORE INTO backups (generation, target, finished_at, blob_count, copied_count) VALUES (?, ?, ?, ?, ?)",
@@ -448,10 +455,10 @@ async def restore(source: Path, root: Path, *, generation: str | None = None, sy
         if not _holds_only_its_lock(layout.root, layout):
             raise RestoreRefused(f"{layout.root} is not empty; restore into an empty or new data root")
         try:
-            await asyncio.to_thread(_place, source, name, manifest, layout, epoch)
+            made_dormant = await asyncio.to_thread(_place, source, name, manifest, layout, epoch)
             db = await Database.open(layout, lock=lock, create=False)
             try:
-                devices = await db.write(lambda tx: _after_restore(tx, manifest, source))
+                devices = await db.write(lambda tx: _after_restore(tx, manifest, source, made_dormant))
             finally:
                 await db.close()
         except BaseException:
