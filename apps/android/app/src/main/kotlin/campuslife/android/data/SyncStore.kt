@@ -1,5 +1,6 @@
 package campuslife.android.data
 
+import campuslife.wire.ChangesPage
 import campuslife.wire.EntityName
 import campuslife.wire.MutationOutcome
 import campuslife.wire.MutationResult
@@ -28,6 +29,12 @@ class SyncStore(
         db.outbox().pending(max).map { Outgoing(it.mutationId, it.body) }
 
     fun onResults(results: List<MutationResult>) = db.inTransaction { results.forEach(::answer) }
+
+    /** Marks the start of a pull: Mutations applied before it leave the overlay when it finishes (decision 5). */
+    fun beginPull(): Unit = TODO()
+
+    /** Writes one changes page over entity_cache and moves the cursor; the last page finishes the pull. */
+    fun applyPage(page: ChangesPage): Unit = TODO()
 
     private fun answer(result: MutationResult) {
         val row = db.outbox().byMutationId(result.mutationId) ?: return
