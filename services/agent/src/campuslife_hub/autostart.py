@@ -77,8 +77,9 @@ def task_xml(task: LogonTask, *, declared: bool = True) -> str:
 
 
 def write_task(path: Path, task: LogonTask) -> None:
-    """The file Task Scheduler reads: UTF-16 with a byte order mark."""
-    path.write_text(task_xml(task), encoding="utf-16")
+    """The file Task Scheduler reads: little-endian UTF-16 after its byte order mark, with the LF line ends task_xml
+    has, so the same task gives the same bytes on every platform, untranslated by text mode."""
+    path.write_bytes(b"\xff\xfe" + task_xml(task).encode("utf-16-le"))
 
 
 def launcher() -> Path:
