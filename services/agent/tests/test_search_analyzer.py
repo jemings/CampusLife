@@ -1,7 +1,7 @@
 """The Korean analyzer and the query plan, searched through a real FTS5 table built here.
 
 Every document is synthetic. The table holds what the index will hold: the analyzed text in
-an FTS5 column under the analyzer's tokenizer, and the NFC original beside it for scans.
+an FTS5 column under the analyzer's tokenizer, and the folded original beside it for scans.
 """
 
 import sqlite3
@@ -29,7 +29,7 @@ DOCS = {
 
 
 class Index:
-    """An in-memory index shaped like the Hub's: analyzed text to match, the original to scan."""
+    """An in-memory index shaped like the Hub's: analyzed text to match, the folded original to scan."""
 
     def __init__(self, docs: dict[int, str], analyzer=HANGUL_BIGRAM):
         self.analyzer = analyzer
@@ -41,7 +41,7 @@ class Index:
 
     def add(self, doc_id: int, text: str) -> None:
         self.con.execute("INSERT INTO fts(rowid, body) VALUES (?, ?)", (doc_id, self.analyzer.analyze(text)))
-        self.con.execute("INSERT INTO original(id, text) VALUES (?, ?)", (doc_id, unicodedata.normalize("NFC", text)))
+        self.con.execute("INSERT INTO original(id, text) VALUES (?, ?)", (doc_id, self.analyzer.fold_original(text)))
 
     def search(self, query: str) -> list[int]:
         plan = plan_query(query, self.analyzer)
@@ -125,7 +125,7 @@ def operators():
             1: "과제 OR 그래프",
             2: "과제와 그래프",
             3: "그래프 NOT 과제",
-            4: "body: 과제",
+            4: "body:과제",
             5: '별표 * 와 따옴표 " 기호, 100% 완료 a_b',
         }
     )
@@ -137,8 +137,8 @@ def test_fts_operators_in_a_query_are_searched_as_text(operators):
     assert operators.search("body:과제") == [4]
     assert operators.search("과*") == []
     assert operators.search("NEAR(과제 그래프)") == []
-    assert operators.search("^그래프") == [1, 2, 3]
-    assert operators.search('"그래프 NOT 과제"') == [3]
+    assert operators.search("^그래프") == []
+    assert operators.search('"그래프 NOT 과제"') == []
 
 
 def test_a_term_of_only_punctuation_is_scanned_for_as_written(operators):
@@ -196,3 +196,66 @@ def test_the_length_limit_counts_a_decomposed_query_as_its_nfc_form(index):
 def test_a_query_with_nothing_to_search_for_has_no_plan():
     assert plan_query("", HANGUL_BIGRAM) is None
     assert plan_query(" \t\n\x00\u3000", HANGUL_BIGRAM) is None
+
+
+@pytest.fixture
+def symbols():
+    return Index(
+        {
+            1: "C언어 기초",
+            2: "C++ 프로그래밍",
+            3: "비타민 C",
+            4: "C# 과제",
+            5: "버전 3 5",
+            6: "버전 3.5 출시",
+            7: "과제와 그래프",
+            8: "과제* 표시",
+        }
+    )
+
+
+def test_a_term_with_punctuation_finds_only_text_that_holds_it_as_written(symbols):
+    assert symbols.search("C++") == [2]
+    assert symbols.search("c#") == [4]
+    assert symbols.search("3.5") == [6]
+    assert symbols.search("과제*") == [8]
+
+
+def test_a_term_of_letters_alone_is_matched_as_tokens(symbols):
+    assert symbols.search("C") == [1, 2, 3, 4]
+
+
+def test_a_number_is_a_token_not_a_substring():
+    assert Index({1: "2026년 학사일정", 2: "26일 마감"}).search("26") == [2]
+
+
+def test_a_scan_finds_a_letter_after_a_nul_in_the_original():
+    assert Index({1: "목록\x00힙"}).search("힙") == [1]
+
+
+def test_a_scan_folds_case_and_latin_diacritics_as_the_tokenizer_does():
+    cafe = Index({1: "CAFÉ힙 메뉴", 2: "카페 메뉴"})
+    assert cafe.search("cafe힙") == [1]
+    assert cafe.search("café") == [1]
+
+
+def test_the_match_and_the_scan_find_the_same_documents():
+    resumes = Index({1: "Résumé: 제출", 2: "resume: 양식", 3: "이력서"})
+    assert resumes.search("RESUME") == [1, 2]
+    assert resumes.search("RESUME:") == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "letters",
+    [
+        "\u314b\u314b\u314b",
+        "\u1100\u1101\u1102",
+        "\ua960\ua961\ua962",
+        "\ud7b0\ud7b1\ud7b2",
+        "\u3400\u3401\u3402",
+        "\U00020000\U00020001\U00020002",
+    ],
+    ids=["compatibility jamo", "jamo", "jamo extended-A", "jamo extended-B", "ideographs extension A", "ideographs SIP"],
+)
+def test_two_letters_inside_a_longer_run_are_found_in_every_hangul_and_cjk_block(letters):
+    assert Index({1: f"{letters} 끝", 2: "다른 글"}).search(letters[:2]) == [1]
