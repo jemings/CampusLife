@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import unicodedata
+from collections.abc import Mapping
 
 from campuslife_contracts import canonical_json, validate
 
@@ -38,8 +39,9 @@ def _nfc(value: object) -> object:
     return value
 
 
-def block_id(blob: str, extractor_id: str, extractor_version: str, ordinal: int) -> str:
-    return hashlib.sha256(canonical_json([blob, extractor_id, extractor_version, ordinal])).hexdigest()
+def block_id(blob: str, extractor: Mapping[str, object], ordinal: int) -> str:
+    """artifact/extraction rule block_id: the extractor's id, version and params name the reading."""
+    return hashlib.sha256(canonical_json([blob, extractor["id"], extractor["version"], extractor["params"], ordinal])).hexdigest()
 
 
 def _ref(raw: object, blob: str, at: str) -> dict:
@@ -64,7 +66,7 @@ def _block(raw: object, ordinal: int, blob: str, extractor: dict, limits: Limits
     if not isinstance(refs, list):
         raise Rejected(f"{at} has no refs list")
     block = {**raw, "refs": [_ref(ref, blob, f"{at} ref {index}") for index, ref in enumerate(refs)]}
-    return {"id": block_id(blob, extractor["id"], extractor["version"], ordinal), **block}
+    return {"id": block_id(blob, extractor, ordinal), **block}
 
 
 def _checked(schema_id: str, body: dict, limits: Limits) -> bytes:
@@ -78,7 +80,8 @@ def _checked(schema_id: str, body: dict, limits: Limits) -> bytes:
 
 
 def extraction(blob: str, extractor: dict, result: dict, limits: Limits) -> bytes:
-    """The stored bytes of the extraction body made from the child's ok or partial result."""
+    """The stored bytes of the extraction body made from the child's ok or partial result; extractor is {id, version,
+    params}, the params of the job."""
     blocks, warnings = result.get("blocks"), result.get("warnings", [])
     if not isinstance(blocks, list):
         raise Rejected("the result has no blocks list")
@@ -87,10 +90,11 @@ def extraction(blob: str, extractor: dict, result: dict, limits: Limits) -> byte
     total = sum(len(block["text"]) for block in blocks if isinstance(block, dict) and isinstance(block.get("text"), str))
     if total > limits.max_text_chars:
         raise TooLarge(f"the blocks hold {total} characters, more than {limits.max_text_chars}")
+    extractor = _nfc(dict(extractor))
     body = {
         "v": BODY_VERSION,
         "blob": blob,
-        "extractor": dict(extractor),
+        "extractor": extractor,
         "blocks": [_block(_nfc(raw), ordinal, blob, extractor, limits) for ordinal, raw in enumerate(blocks)],
     }
     if warnings:

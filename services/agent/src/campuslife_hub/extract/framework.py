@@ -136,7 +136,7 @@ class Files:
 
     async def extract(self, job: Job, context: JobContext) -> Finished:
         extractor = self.extractors[job.job_type]
-        named = {"id": extractor.id, "version": extractor.version}
+        named = {"id": extractor.id, "version": extractor.version, "params": dict(job.params)}
 
         def made(sha256: str, result: dict):
             stored = bodies.extraction(sha256, named, result, self.limits)
