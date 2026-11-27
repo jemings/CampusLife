@@ -11,6 +11,7 @@ it is the only way to the writer database and to migrations (E11).
 from __future__ import annotations
 
 import logging
+import shutil
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
@@ -96,6 +97,7 @@ async def open_core(
             blobs = BlobStore(db, blobs_dir=layout.blobs, staging_dir=layout.staging, uploads_dir=layout.uploads)
             now = datetime.now(UTC)
             kept = blobs.discard_staging_leftovers() + await blobs.expire_sessions(now) + await blobs.collect_garbage(now)
+            shutil.rmtree(layout.work, ignore_errors=True)
             await forget_old_results(db, now)
             recovered = await db.write(lambda tx: jobs.recover_after_restart(tx, now=now))
             if recovered:

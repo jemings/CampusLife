@@ -21,6 +21,7 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from . import jobs
 from .blobs import BlobStore
@@ -105,6 +106,13 @@ class JobContext:
     db: Database
     blobs: BlobStore
     registry: JobRegistry
+    work_root: Path | None = None
+    """Where a handler makes its job's directory (Layout.work); a handler that needs one fails without it."""
+
+    def work_dir(self, job: Job) -> Path:
+        if self.work_root is None:
+            raise RuntimeError(f"job {job.id} needs a work directory and the runner has none")
+        return self.work_root / job.id
 
 
 @dataclass
