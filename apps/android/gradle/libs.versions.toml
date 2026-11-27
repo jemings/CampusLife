@@ -8,7 +8,8 @@ minSdk = "31"
 compileSdk = "36"
 targetSdk = "36"
 
-# Kotlin 2.4.21 supports AGP 8.5.2–9.3.x and Gradle up to 9.7.
+# kotlinlang's table for Kotlin 2.4.20–2.4.21: AGP 8.5.2–9.3.1, Gradle 7.6.3–9.7.0.
+# AGP 9.3.3 and Gradle 9.7.1 are later patches of those lines, built in CI.
 agp = "9.3.3"
 kotlin = "2.4.21"
 ksp = "2.3.14"
