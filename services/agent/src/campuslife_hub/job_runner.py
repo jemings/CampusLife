@@ -26,7 +26,7 @@ from pathlib import Path
 from . import jobs
 from .blobs import BlobStore
 from .db import Database, Tx
-from .ingest import INGEST, INGEST_PIPELINE, CaptureView, enqueue_held, run_ingest
+from .ingest import INGEST, INGEST_PIPELINE, CaptureView, FileStatusOf, enqueue_held, run_ingest
 from .jobs import MAX_ATTEMPTS, Failed, Finished, Job, JobSpec, JobState, Pipeline
 
 log = logging.getLogger(__name__)
@@ -58,6 +58,7 @@ class JobRegistry:
         self._timeouts: dict[str, timedelta] = {}
         self._handlers: dict[str, tuple[Pipeline, Handler]] = {}
         self._planners: dict[str, Planner] = {}
+        self._statuses: dict[str, FileStatusOf] = {}
         self.handle(INGEST, INGEST_PIPELINE, run_ingest)
 
     def handle(self, job_type: str, pipeline: Pipeline, handler: Handler, *, timeout: timedelta = HANDLER_TIMEOUT) -> None:
@@ -86,15 +87,23 @@ class JobRegistry:
         self._entry(job_type)
         return self._timeouts[job_type]
 
-    def plan(self, name: str, planner: Planner) -> None:
+    def plan(self, name: str, planner: Planner, *, status: FileStatusOf | None = None) -> None:
+        """status, when given, tells the local UI where each Attachment the planner plans for stands."""
         if name in self._planners:
             raise ValueError(f"a planner named {name} is already registered")
         self._planners[name] = planner
+        if status is not None:
+            self._statuses[name] = status
 
     @property
     def planners(self) -> tuple[tuple[str, Planner], ...]:
         """In the order they were registered."""
         return tuple(self._planners.items())
+
+    @property
+    def statuses(self) -> tuple[tuple[str, FileStatusOf], ...]:
+        """The planners that report a FileStatus, in the order they were registered."""
+        return tuple(self._statuses.items())
 
     def enqueue(self, tx: Tx, spec: JobSpec, *, now: datetime | None = None) -> Job:
         """jobs.enqueue under the Pipeline registered for spec's job type."""
