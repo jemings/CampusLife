@@ -8,6 +8,8 @@ import subprocess
 import pytest
 
 from campuslife_hub import admin_client, cli, tailscale_check
+from campuslife_hub.admin_client import AdminRefused, HubDidNotAnswer
+from campuslife_hub.admin_token import AdminTokenUnusable
 from campuslife_hub.tailscale_check import TailscaleUnavailable, check, hub_url, judge
 
 NAME = "hub-laptop.tail1234.ts.net"
@@ -370,3 +372,37 @@ def test_a_public_url_given_is_compared_without_asking_the_hub(monkeypatch, caps
 
     assert cli.main(["tailscale-check", "--public-url", f"https://{NAME}"]) == 0
     assert f"public_url https://{NAME} (given)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [AdminTokenUnusable("the admin token file cannot be read"), HubDidNotAnswer("the Hub did not answer in time"), AdminRefused("refused")],
+)
+def test_a_hub_that_cannot_be_asked_is_one_line_and_the_exposure_is_still_checked(monkeypatch, capsys, failure):
+    run, _ = fake_tailscale(serve=serving(("/", "http://127.0.0.1:8731")))
+    monkeypatch.setattr(tailscale_check, "tailscale", run)
+
+    def failing(*arguments):
+        raise failure
+
+    monkeypatch.setattr(admin_client, "call", failing)
+
+    assert cli.main(["tailscale-check"]) == 1
+
+    printed = capsys.readouterr().out
+    assert any(ADMIN_MAPPED in line for line in printed.splitlines() if line.startswith("problem:"))
+    assert warnings_in(printed) == [f"warning: could not ask the running Hub: {failure}"]
+    assert "public_url - (not compared)" in printed
+
+
+def test_a_hub_that_cannot_be_asked_leaves_a_good_setup_ok(monkeypatch, capsys):
+    run, _ = fake_tailscale()
+    monkeypatch.setattr(tailscale_check, "tailscale", run)
+
+    def failing(*arguments):
+        raise AdminTokenUnusable("the admin token file cannot be read")
+
+    monkeypatch.setattr(admin_client, "call", failing)
+
+    assert cli.main(["tailscale-check"]) == 0
+    assert "ok:" in capsys.readouterr().out
