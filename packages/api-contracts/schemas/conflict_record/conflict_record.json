@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/conflict_record/conflict_record.json",
   "title": "ConflictRecord",
-  "description": "What one patch submitted and the Hub did not write, kept so nothing is lost (D18, D24). There is one record per Mutation and its id is that Mutation's mutation_id, so a resend never makes a second one. The Hub makes it for every key a conflict result names in conflicted_fields and for every key of a patch refused as rejected{deleted}, and reports its id in conflict_record_ids; a suggestion.accept refused that way makes none, as the Suggestion keeps the intent. A record is open while it carries set; resolving it (conflict.resolve, from any device) removes set and writes resolved, and exactly one of the two is present. A client treats a record as open exactly when set is present, so a later Hub can add another closed state as a member of its own (D20). The Hub writes every member and syncs the record as a changes row of entity conflict_record. Open, as the Hub sends it: clients ignore members they do not know.",
+  "description": "What one patch submitted and the Hub did not write, kept so nothing is lost (D18, D24). There is one record per Mutation and its id is that Mutation's mutation_id, so a resend never makes a second one. The Hub makes it for every key a conflict result names in conflicted_fields and for every key of a patch refused as rejected{deleted}, and reports its id in conflict_record_ids; a suggestion.accept refused that way makes none, as the Suggestion keeps the intent. A record is open while it carries set; resolving it (conflict.resolve, from any device) removes set and writes resolved, and exactly one of the two is present. A client treats a record as open exactly when set is present. Another way of closing a record is added as a member inside resolved (resolved.how, say), never as a third state without either, so an older client still tells open from closed (D20). The Hub writes every member and syncs the record as a changes row of entity conflict_record. Open, as the Hub sends it: clients ignore members they do not know.",
   "type": "object",
   "required": ["id", "entity_ref"],
   "properties": {
@@ -17,7 +17,7 @@
       "x-owner": "hub"
     },
     "resolved": {
-      "description": "When and by which conflict.resolve Mutation the record was resolved. Present once it is.",
+      "description": "When and by which conflict.resolve Mutation the record was resolved. Present once it is. A later Hub says more about how it was closed with members of its own here.",
       "type": "object",
       "required": ["at", "mutation_id"],
       "properties": {
