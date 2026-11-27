@@ -47,8 +47,27 @@ class TransferTableTest {
 
     @Test
     fun `an answer to a Mutation moves only a pending row`() {
-        val answers = listOf(OutboxEvent.APPLIED, OutboxEvent.CONFLICTED, OutboxEvent.REFUSED, OutboxEvent.BLOBS_MISSING, OutboxEvent.BLOBS_GONE)
+        val answers = listOf(
+            OutboxEvent.APPLIED,
+            OutboxEvent.CONFLICTED,
+            OutboxEvent.PARTLY_APPLIED,
+            OutboxEvent.REFUSED,
+            OutboxEvent.BLOBS_MISSING,
+            OutboxEvent.BLOBS_GONE,
+        )
         for (state in outboxStates - PENDING) for (event in answers) assertEquals("$state $event", state, state.after(event))
+    }
+
+    @Test
+    fun `a conflict in which the Hub wrote some keys waits for a pull as an applied Mutation does`() {
+        assertEquals(PENDING.after(OutboxEvent.APPLIED), PENDING.after(OutboxEvent.PARTLY_APPLIED))
+        assertEquals(SETTLED, PENDING.after(OutboxEvent.CONFLICTED))
+    }
+
+    @Test
+    fun `a held commit whose blob is lost needs attention`() {
+        assertEquals(REJECTED, HELD.after(OutboxEvent.BLOB_LOST))
+        for (state in outboxStates - HELD) assertEquals("$state", state, state.after(OutboxEvent.BLOB_LOST))
     }
 
     @Test

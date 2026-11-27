@@ -69,7 +69,7 @@ class CaptureTransferTest {
 
     @Test
     fun `a sealed capture is committed once every blob is stored`() {
-        val id = captures.open(Origin(OriginType.CAMERA), links = listOf(CaptureLink(CaptureLinkType.ABOUT, SESSION)))
+        val id = captures.open(Origin(OriginType.CAMERA), links = listOf(CaptureLink(CaptureLinkType.ABOUT, "item:$SESSION")))
         captures.addFile(id, ABC.byteInputStream(), photo)
         captures.addFile(id, NIST_448.byteInputStream(), photo.copy(role = AttachmentRole.FILE))
         captures.seal(id)
@@ -83,7 +83,7 @@ class CaptureTransferTest {
 
         assertEquals(id, commit.capture.id)
         assertEquals(Instant.parse("2026-03-02T01:00:00.123Z"), commit.capture.createdAt)
-        assertEquals(listOf(CaptureLink(CaptureLinkType.ABOUT, SESSION)), commit.capture.links)
+        assertEquals(listOf(CaptureLink(CaptureLinkType.ABOUT, "item:$SESSION")), commit.capture.links)
         assertEquals(listOf(ABC_SHA, NIST_448_SHA), commit.capture.attachments.map { it.blobSha256 })
         assertEquals(listOf(AttachmentRole.PHOTO, AttachmentRole.FILE), commit.capture.attachments.map { it.role })
         assertEquals(CaptureTransfer.UPLOADING, transferOf(id))
@@ -91,6 +91,16 @@ class CaptureTransferTest {
         sync.onResults(listOf(applied(commit.mutationId)))
 
         assertCommitted(id)
+    }
+
+    @Test
+    fun `a link names an item`() {
+        for (to in listOf(SESSION, "tag:$SESSION", "item:${SESSION.uppercase()}")) {
+            assertThrows(to, IllegalArgumentException::class.java) {
+                captures.open(Origin(OriginType.CAMERA), links = listOf(CaptureLink(CaptureLinkType.ABOUT, to)))
+            }
+        }
+        assertEquals(emptyList<CaptureOutbox.CaptureView>(), views())
     }
 
     @Test
@@ -151,6 +161,33 @@ class CaptureTransferTest {
         val attachments = commits().single().capture.attachments
         assertEquals(listOf("강의 자료.pdf", "notes.txt"), attachments.map { it.originalFilename })
         assertEquals(listOf(decomposed, null), attachments.map { it.originalFilenameRaw })
+    }
+
+    @Test
+    fun `the text of a capture goes out NFC`() {
+        fun decomposed(text: String) = Normalizer.normalize(text, Normalizer.Form.NFD)
+        val origin = Origin(
+            OriginType.SHARE,
+            uri = "content://campuslife.invalid/" + decomposed("공지"),
+            app = decomposed("학교 앱"),
+            publisher = decomposed("학생처"),
+            distributedBy = decomposed("학과 사무실"),
+        )
+        val id = captures.open(origin, url = "https://campuslife.invalid/" + decomposed("공지"))
+        captures.addFile(id, ABC.byteInputStream(), photo)
+        captures.seal(id)
+        storeEveryBlob()
+
+        val capture = commits().single().capture
+        val expected = Origin(
+            OriginType.SHARE,
+            uri = "content://campuslife.invalid/공지",
+            app = "학교 앱",
+            publisher = "학생처",
+            distributedBy = "학과 사무실",
+        )
+        assertEquals(expected, capture.origin)
+        assertEquals("https://campuslife.invalid/공지", capture.url)
     }
 
     @Test
@@ -284,6 +321,78 @@ class CaptureTransferTest {
 
         assertEquals(CaptureTransfer.NEEDS_ATTENTION, transferOf(id))
         assertEquals(emptyList<SyncStore.Outgoing>(), sync.nextBatch())
+        assertEquals(emptyList<SyncStore.Upload>(), sync.uploads())
+    }
+
+    @Test
+    fun `a held capture whose blob copy is gone needs attention`() {
+        val id = sealedCapture(ABC, NIST_448)
+        sync.onUpload(ABC_SHA, BlobEvent.HUB_HAS_BLOB)
+        File(blobDir, NIST_448_SHA).delete()
+
+        sync.onUpload(NIST_448_SHA, BlobEvent.COPY_LOST)
+
+        assertEquals(CaptureTransfer.NEEDS_ATTENTION, transferOf(id))
+        assertEquals(emptyList<SyncStore.Upload>(), sync.uploads())
+        assertEquals(emptyList<SyncStore.Outgoing>(), sync.nextBatch())
+    }
+
+    @Test
+    fun `a copy that no longer holds its bytes is dropped, and the same bytes added again upload`() {
+        val id = sealedCapture(ABC)
+        File(blobDir, ABC_SHA).writeText("abd")
+
+        sync.onUpload(ABC_SHA, BlobEvent.COPY_LOST)
+
+        assertEquals(CaptureTransfer.NEEDS_ATTENTION, transferOf(id))
+        val again = sealedCapture(ABC)
+        assertEquals(listOf(ABC_SHA to ABC), sync.uploads().map { it.sha256 to it.file.readText() })
+        storeEveryBlob()
+        assertEquals(listOf(again), commits().map { it.capture.id })
+    }
+
+    @Test
+    fun `a capture sealed after its blob copy was lost needs attention`() {
+        val id = captures.open(Origin(OriginType.CAMERA))
+        captures.addFile(id, ABC.byteInputStream(), photo)
+        File(blobDir, ABC_SHA).delete()
+        sync.onUpload(ABC_SHA, BlobEvent.COPY_LOST)
+
+        captures.seal(id)
+
+        assertEquals(CaptureTransfer.NEEDS_ATTENTION, transferOf(id))
+    }
+
+    @Test
+    fun `a stored blob stays stored whatever happens to the copy`() {
+        val id = sealedCapture(ABC)
+        storeEveryBlob()
+        File(blobDir, ABC_SHA).delete()
+
+        sync.onUpload(ABC_SHA, BlobEvent.COPY_LOST)
+
+        sync.onResults(listOf(applied(sync.nextBatch().single().mutationId)))
+        assertCommitted(id)
+    }
+
+    @Test
+    fun `a blob another capture still holds stays for it when one commit finds the copy gone`() {
+        val first = sealedCapture(ABC)
+        val second = captures.open(Origin(OriginType.CAMERA))
+        captures.addFile(second, ABC.byteInputStream(), photo)
+        storeEveryBlob()
+        val sent = sync.nextBatch().single()
+        File(blobDir, ABC_SHA).delete()
+
+        sync.onResults(listOf(MutationResult(sent.mutationId, MutationOutcome.RETRY, missingBlobs = listOf(ABC_SHA))))
+
+        assertEquals(CaptureTransfer.NEEDS_ATTENTION, transferOf(first))
+        assertEquals(listOf(ABC_SHA to TransferState.WAITING), sync.uploads().map { it.sha256 to it.state })
+
+        captures.seal(second)
+        sync.onUpload(ABC_SHA, BlobEvent.COPY_LOST)
+
+        assertEquals(CaptureTransfer.NEEDS_ATTENTION, transferOf(second))
         assertEquals(emptyList<SyncStore.Upload>(), sync.uploads())
     }
 

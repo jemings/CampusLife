@@ -170,6 +170,36 @@ class UserDataTest {
     }
 
     @Test
+    fun `a conflict keeps the keys the Hub wrote until the next pull and shows the Hub's row for the rest`() {
+        val id = cached(title = "A", fields = CourseFields(room = "1"))
+        items.patch(ref(id), mapOf("title" to JsonPrimitive("B"), "fields.room" to JsonPrimitive("2")))
+        val mutationId = sync.nextBatch().single().mutationId
+
+        sync.onResults(
+            listOf(
+                MutationResult(
+                    mutationId,
+                    MutationOutcome.CONFLICT,
+                    appliedFields = listOf("title"),
+                    conflictedFields = listOf("fields.room"),
+                ),
+            ),
+        )
+
+        val shown = shown().single()
+        assertEquals(Triple("B", CourseFields(room = "1"), false), Triple(shown.title, shown.typedFields(), shown.pending))
+
+        items.patch(ref(id), mapOf("title" to JsonPrimitive("C")))
+        assertEquals(mapOf("title" to SetEntry(Seen.Value(JsonPrimitive("B")), JsonPrimitive("C"))), (sent().single() as Patch).set)
+        answer(MutationOutcome.APPLIED)
+
+        pull(item(id, title = "D", fields = CourseFields(room = "3")))
+
+        val pulled = shown().single()
+        assertEquals("D" to CourseFields(room = "3"), pulled.title to pulled.typedFields())
+    }
+
+    @Test
     fun `a rejected patch comes off what is shown`() {
         val id = cached(title = "A")
         items.patch(ref(id), mapOf("title" to JsonPrimitive("B")))
@@ -288,8 +318,9 @@ class UserDataTest {
     }
 
     @Test
-    fun `the feed skips entities it does not know, removes tombstones and moves the cursor`() {
+    fun `the feed keeps the rows of entities this version does not read, removes tombstones and moves the cursor`() {
         val id = cached(title = "A")
+        val record = JsonObject(mapOf("id" to JsonPrimitive(RECORD), "note" to JsonPrimitive("2.50")))
 
         sync.beginPull()
         sync.applyPage(
@@ -297,7 +328,7 @@ class UserDataTest {
                 hubId = HUB,
                 epoch = EPOCH,
                 changes = listOf(
-                    Change(EntityName("widget"), "w1", 41, false, JsonObject(emptyMap())),
+                    Change(EntityName("conflict_record"), RECORD, 41, false, record),
                     Change(EntityName.ITEM, id, 42, true),
                 ),
                 nextSince = 42,
@@ -307,6 +338,18 @@ class UserDataTest {
 
         assertEquals(emptyList<UserData.ItemView>(), shown())
         assertEquals(42L, db.syncMeta().get()?.cursor)
+        assertEquals(CachedRow("conflict_record", RECORD, 41, record.toString()), db.cache().get("conflict_record", RECORD))
+    }
+
+    @Test
+    fun `a number JSON cannot write is refused and nothing goes out`() {
+        val id = cached(title = "A")
+        for (number in listOf(Double.NaN, Double.POSITIVE_INFINITY)) {
+            assertThrows(IllegalArgumentException::class.java) { items.patch(ref(id), mapOf("fields.credits" to JsonPrimitive(number))) }
+            val fields = JsonObject(mapOf("credits" to JsonPrimitive(number)))
+            assertThrows(IllegalArgumentException::class.java) { items.create(ItemData(kind = ItemKind.COURSE, title = "B", fields = fields)) }
+        }
+        assertEquals(emptyList<Mutation>(), sent())
     }
 
     @Test
@@ -372,5 +415,6 @@ class UserDataTest {
         const val HUB = "c56a4180-65aa-42ec-a945-5fd21dec0538"
         const val EPOCH = "e4eaaaf2-d142-41ff-9e1f-2b3c4d5e6f70"
         const val CREDITS = "2.50000000000000000001"
+        const val RECORD = "5f0c2b1a-8d3e-4f6a-9b7c-2e1d0a9f8b7c"
     }
 }
