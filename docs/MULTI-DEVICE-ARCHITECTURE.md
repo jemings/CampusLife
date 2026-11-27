@@ -104,7 +104,7 @@ WorkManager나 iOS는 "Hub가 켜졌다"는 것을 알 수 없습니다. 그래�
 ## 4. 장치 등록과 수명 (D6)
 
 1. Windows 로컬 웹 UI에서 "장치 추가"를 누르면 QR이 뜹니다. QR에는 pairing offer `{hub_url, hub_id, 128-bit secret}`(계약 `device/pairing_offer`, D23)이 담기고, 유효 5분·1회용입니다.
-   - 수동 코드는 같은 secret을 hex 4자리씩 8묶음으로 보여 줍니다. 이때 `hub_url`은 직접 입력하고, `hub_id`는 pair 응답의 `CampusLife-Hub-Id`에서 얻습니다.
+   - 수동 코드는 같은 secret을 소문자 hex 4자 묶음 여덟으로 `-`로 이어 보여 줍니다. 클라이언트는 입력에서 공백과 `-`를 빼고 소문자로 바꿔 보냅니다. 이때 `hub_url`은 직접 입력하고, `hub_id`는 pair 응답의 `CampusLife-Hub-Id`에서 얻습니다.
 2. Fold8 또는 iPad가 QR을 스캔하고 `POST /v1/pair`를 보냅니다.
 3. Hub가 `{device_id, token}`을 한 번만 돌려줍니다. Hub는 토큰의 SHA-256만 저장합니다.
 

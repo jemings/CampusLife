@@ -757,10 +757,11 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **결정** (오케스트레이터 결정, 2026-11-27, 사용자가 결정을 위임)
 - **pairing offer (#19 결정 1):** QR에 담기는 JSON은 `device/pairing_offer {hub_url, hub_id, secret}`(열린 모양)입니다.
   - `hub_url`은 경로 없는 https origin입니다. `secret`과 `hub_id`는 pair 요청의 secret과 `GET /v1/hub`의 hub_id를 `$ref`합니다.
-  - 수동 코드는 같은 secret을 hex 4자리씩 8묶음으로 보여 줍니다. `hub_url`은 따로 입력받고, `hub_id`는 pair 응답의 `CampusLife-Hub-Id`에서 얻습니다.
+  - `hub_url`의 호스트는 소문자(MagicDNS 이름), 포트는 1–65535, 길이는 267자 이하(`https://` 8 + DNS 이름 253 + `:65535` 6)입니다(2026-11-27, PR #45 리뷰). Hub는 `:443`을 쓰지 않고, 클라이언트는 `hub_url`이 아니라 `hub_id`로 Hub를 가립니다. 버린 안: `:443` 거부는 정당한 같은 origin을 계약 밖으로 만듭니다.
+  - 수동 코드는 secret만 담습니다. Hub는 소문자 hex 4자 묶음 여덟을 `-`로 잇고, 클라이언트는 입력에서 공백과 `-`를 빼고 소문자로 바꿔 보냅니다(2026-11-27, PR #45 리뷰). `hub_url`은 따로 입력받고, `hub_id`는 pair 응답의 `CampusLife-Hub-Id`에서 얻습니다.
   - 근거: Hub가 쓰고 Kotlin·Swift가 읽는 wire라 D17을 따릅니다.
   - 버린 안: `campuslife://` URI는 스키마로 적을 수 없습니다. 단점은 OS 카메라 앱의 딥링크가 없다는 것입니다.
-- **`app_version` (#19 결정 1):** `device_name`과 같은 한 줄 규칙(제어문자, 줄·문단 구분자, 양방향 서식 문자 금지)과 길이 상한 64를 겁니다. 두 필드가 pair 요청의 `$defs/one_line` 하나를 가리킵니다. 첫 배포 전이라 깨는 변경을 허용합니다(E21).
+- **`app_version` (#19 결정 1):** `device_name`과 같은 한 줄 규칙(제어문자, 줄·문단 구분자, 양방향 서식 문자 금지)과 길이 상한 64를 겁니다. 두 필드와 heartbeat의 `last_error`가 pair 요청의 `$defs/one_line` 하나를 가리킵니다. 첫 배포 전이라 깨는 변경을 허용합니다(E21).
 - **반복 재발급 (#19 결정 2):** `POST /v1/devices/me/token`을 다시 요청하면 또 다른 새 토큰을 내고, 아직 쓰이지 않은 앞의 새 토큰은 그때 무효가 됩니다.
   - 이전(지금) 토큰은 그대로 새 토큰의 첫 인증 성공 때 폐기됩니다.
   - 이렇게 끝난 토큰은 그 뒤 401 `unauthorized`이고 `device_revoked`가 아닙니다. Device를 revoke한 것이 아니기 때문입니다.
