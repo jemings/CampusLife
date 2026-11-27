@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shlex
 import signal
 import socket
 import sqlite3
@@ -19,12 +20,13 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
-from campuslife_hub import admin_client, admin_token, backup, devices, host
+from campuslife_hub import admin_client, admin_token, backup, devices, host, mutations, tailscale_check
 from campuslife_hub.admin_auth import hub_proof
 from campuslife_hub.cli import main
+from campuslife_hub.clock import instant
 from campuslife_hub.core import open_core
 from campuslife_hub.data_root import Layout
-from campuslife_hub.devices import DeviceSettings
+from campuslife_hub.devices import ClientPlatform, DeviceSettings, DeviceState, PairingLimiter, PairRequest
 from campuslife_hub.host import Hosted
 from campuslife_hub.lock import HubLock
 from campuslife_hub.redaction import Redactor
@@ -253,11 +255,12 @@ def test_ls_refuses_a_root_inside_a_sync_folder_it_detects_itself(tmp_path, caps
     assert "sync folder" in capsys.readouterr().err
 
 
-def served(root):
+def served(root, *options):
     """A `campuslife-hub serve` process on root, its output going to a file, once its admin listener has left its port."""
     with open(root.parent / "serve.out", "wb") as output:
         process = subprocess.Popen(
-            [sys.executable, "-m", "campuslife_hub.cli", "--root", str(root), "serve", "--admin-port", "0", "--sync-port", "0"], stdout=output, stderr=output,
+            [sys.executable, "-m", "campuslife_hub.cli", "--root", str(root), "serve", "--admin-port", "0", "--sync-port", "0", *options],
+            stdout=output, stderr=output,
         )
     deadline = time.monotonic() + 30
     while not (root / "admin.port").exists():
@@ -921,7 +924,7 @@ def test_backup_restore_and_fsck_from_the_cli(tmp_path, capsys):
     assert "blobs 1 copied 1" in made
     assert checked.strip() == "no findings"
     assert f"restored generation {generation}" in said
-    assert "Every device must be approved again; do not approve a device that was lost or revoked." in said
+    assert "approve" not in said and "revoke" not in said
     assert "purge those files again" in said
     assert "week4.txt" in capsys.readouterr().out
 
@@ -994,3 +997,218 @@ def test_backup_and_restore_say_why_they_refuse(tmp_path, capsys, command, code,
     assert exit_code(root, *[part.format(drive=drive, root=root) for part in command]) == code
 
     assert said in capsys.readouterr().err
+
+
+PUBLIC_URL = "https://campus-laptop.tail0a1b2c.ts.net"
+
+
+async def paired_in(root, *names):
+    """Devices paired on root's Hub, its database opened here as no Hub serves it."""
+    async with open_core(root, create=False, sync_roots=[]) as core:
+        redactor, made = Redactor(), []
+        for name in names:
+            offer = await devices.offer(core, now=datetime.now(UTC), public_url=PUBLIC_URL, redactor=redactor)
+            request = PairRequest(offer.secret, ClientPlatform.ANDROID, name, "0.1.0")
+            made.append(await devices.pair(core, request, now=datetime.now(UTC), limiter=PairingLimiter(), redactor=redactor))
+    return made
+
+
+async def states_in(root, *paired):
+    async with open_core(root, create=False, sync_roots=[]) as core:
+        return [(await core.db.read(lambda snap: devices.device(snap, device.device_id))).state for device in paired]
+
+
+async def test_with_no_hub_serving_devices_approve_and_revoke_take_the_lock_themselves(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    await asyncio.to_thread(hub, root, "init")
+    phone, tablet = await paired_in(root, "Fold8", "iPad")
+    seen = datetime.now(UTC) + timedelta(hours=2)
+    refused = seen + timedelta(days=91)
+    async with open_core(root, create=False, sync_roots=[]) as core:
+        assert await devices.authenticate(core, tablet.token, now=seen, redactor=Redactor()) == tablet.device_id
+        assert (await devices.authenticate(core, tablet.token, now=refused, redactor=Redactor())).code == "device_dormant"
+    await devices_revoked_first(root, phone)
+    capsys.readouterr()
+
+    assert await asyncio.to_thread(hub, root, "devices") == 0
+    listed = capsys.readouterr().out
+    assert await asyncio.to_thread(hub, root, "approve", tablet.device_id) == 0
+    approved = capsys.readouterr().out
+    assert await asyncio.to_thread(hub, root, "devices") == 0
+    none_dormant = capsys.readouterr().out
+
+    lines = {line.split()[0]: line for line in listed.splitlines() if line[:1].isalnum() and not line.startswith("dormant")}
+    assert lines[phone.device_id].split()[1:3] == ["android", "revoked"] and lines[phone.device_id].endswith("Fold8")
+    assert lines[tablet.device_id].split()[1:3] == ["android", "dormant"] and lines[tablet.device_id].endswith("iPad")
+    assert "approve only a device you have in hand" in listed and "approve only" not in none_dormant
+    assert approved == (
+        f"approved {tablet.device_id} (android iPad, last seen {instant(seen)}, last refused {instant(refused)}): "
+        "it syncs again with the token it holds\n"
+    )
+    assert await states_in(root, phone, tablet) == [DeviceState.REVOKED, DeviceState.ACTIVE]
+
+
+def test_the_cli_says_when_a_revoke_or_an_approve_changed_nothing(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    assert hub(root, "init") == 0
+    [phone] = asyncio.run(paired_in(root, "Fold8"))
+    capsys.readouterr()
+
+    assert hub(root, "approve", phone.device_id) == 0
+    assert capsys.readouterr().out == f"{phone.device_id} is active already\n"
+    assert hub(root, "revoke", phone.device_id) == 0
+    capsys.readouterr()
+    assert hub(root, "revoke", phone.device_id) == 0
+    assert capsys.readouterr().out == f"{phone.device_id} was revoked already\n"
+
+
+async def devices_revoked_first(root, device):
+    assert await asyncio.to_thread(hub, root, "revoke", device.device_id) == 0
+    assert await asyncio.to_thread(hub, root, "revoke", device.device_id) == 0
+
+
+@pytest.mark.parametrize(
+    ("command", "said"),
+    [
+        (["approve", "0f8fad5b-d9cb-469f-a165-70867728950e"], "knows no device"),
+        (["revoke", "0f8fad5b-d9cb-469f-a165-70867728950e"], "knows no device"),
+        (["approve", "{revoked}"], "pair it again"),
+        (["revoke", "{hub}"], "Hub's own device"),
+    ],
+)
+async def test_devices_the_cli_cannot_change_are_refused_in_words_a_person_reads(tmp_path, capsys, command, said):
+    root = tmp_path / "CampusLife"
+    await asyncio.to_thread(hub, root, "init")
+    [phone] = await paired_in(root, "Fold8")
+    async with open_core(root, create=False, sync_roots=[]) as core:
+        await devices.revoke(core, phone.device_id, now=datetime.now(UTC))
+        hub_device = core.hub_device
+    capsys.readouterr()
+
+    assert await asyncio.to_thread(hub, root, *[part.format(revoked=phone.device_id, hub=hub_device) for part in command]) == 1
+
+    shown = capsys.readouterr().err
+    assert said in shown and "Traceback" not in shown
+
+
+def test_after_a_restore_the_hub_serving_approves_the_device_in_hand_and_revokes_the_lost_one_from_the_cli(tmp_path, capsys):
+    root, restored, drive = tmp_path / "CampusLife", tmp_path / "Restored", tmp_path / "drive"
+    hub(root, "init")
+    phone, lost = asyncio.run(paired_in(root, "Fold8", "잃어버린 휴대폰"))
+    tag = {"mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301", "op": "create", "entity": "tag",
+           "id": "0f8fad5b-d9cb-469f-a165-70867728950e", "data": {"name": "시험", "color": "#ff8800"}}
+    asyncio.run(applied_on(root, tag))
+    assert hub(root, "backup", "--to", str(drive)) == 0
+    assert hub(restored, "restore", "--from", str(drive)) == 0
+    said = capsys.readouterr().out
+    assert f"device {phone.device_id} android Fold8 paired " in said and f"device {lost.device_id} android 잃어버린 휴대폰 paired " in said
+
+    process = served(restored)
+    try:
+        assert hub(restored, "devices") == 0
+        listed = capsys.readouterr().out
+        assert hub(restored, "approve", phone.device_id) == 0
+        approved = capsys.readouterr().out
+        assert hub(restored, "revoke", lost.device_id) == 0
+        capsys.readouterr()
+        sync_port = int(until_logged(restored.parent / "serve.out", r"serving the sync listener on http://127\.0\.0\.1:(\d+)"))
+        synced, refused = sync_get(sync_port, phone.token), sync_get(sync_port, lost.token)
+        assert hub(restored, "stop") == 0
+        assert process.wait(timeout=30) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+
+    assert listed.count(" dormant ") == 2
+    assert approved.startswith(f"approved {phone.device_id} (android Fold8, last seen never, last refused never): ")
+    assert synced[0] == 200 and tag["id"] in {change["id"] for change in synced[1]["changes"]}
+    assert (refused[0], refused[1]["code"]) == (401, "device_revoked")
+
+
+def test_the_commands_a_restore_names_change_the_devices_of_the_root_it_restored_into(tmp_path, capsys, monkeypatch):
+    original, restored, drive = tmp_path / "CampusLife", tmp_path / "Restored copy", tmp_path / "drive"
+    hub(original, "init")
+    phone, lost = asyncio.run(paired_in(original, "Fold8", "lost phone"))
+    assert hub(original, "backup", "--to", str(drive)) == 0
+    assert hub(restored, "restore", "--from", str(drive)) == 0
+    said = capsys.readouterr().out
+    monkeypatch.setenv("CAMPUSLIFE_ROOT", str(original))
+
+    def named(verb, device):
+        [command] = [part for line in said.splitlines() for part in line.split("`")[1::2] if f" {verb} <id>" in part]
+        return shlex.split(command.replace("<id>", device.device_id))
+
+    approve, revoke = named("approve", phone), named("revoke", lost)
+    assert approve[0] == revoke[0] == "campuslife-hub"
+    assert main(approve[1:]) == 0 and main(revoke[1:]) == 0
+
+    assert asyncio.run(states_in(restored, phone, lost)) == [DeviceState.ACTIVE, DeviceState.REVOKED]
+    assert asyncio.run(states_in(original, phone, lost)) == [DeviceState.ACTIVE, DeviceState.ACTIVE]
+
+
+async def applied_on(root, mutation):
+    async with open_core(root, create=False, sync_roots=[]) as core:
+        await mutations.apply(core.db, [mutation], core.hub_device)
+
+
+def sync_get(port, token):
+    """GET /v1/changes?since=0 on the sync listener with token: the status and the JSON body."""
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    try:
+        connection.request("GET", "/v1/changes?since=0", headers={"CampusLife-Contract": "1", "Authorization": f"Bearer {token}"})
+        answer = connection.getresponse()
+        return answer.status, json.loads(answer.read())
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("command", ["revoke", "approve"])
+@pytest.mark.parametrize("given", ["0f8fad5b", "0F8FAD5B-D9CB-469F-A165-70867728950E", "../api/stop"])
+def test_a_device_named_by_anything_but_its_whole_id_is_refused_before_the_hub_is_asked(tmp_path, capsys, command, given):
+    assert exit_code(tmp_path / "CampusLife", command, given) == 2
+
+    assert f"argument ID: {given!r} is not a device id" in capsys.readouterr().err
+
+
+def test_status_and_tailscale_check_read_the_public_url_the_hub_serves_with(tmp_path, capsys, monkeypatch):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    status = {"BackendState": "Running", "Self": {"DNSName": "campus-laptop.tail0a1b2c.ts.net."}}
+    tailscale_serve = {"TCP": {"443": {"HTTPS": True}}, "Web": {"campus-laptop.tail0a1b2c.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8730"}}}}}
+    answers = {("serve", "status", "--json"): tailscale_serve, ("status", "--json"): status}
+    monkeypatch.setattr(tailscale_check, "tailscale", lambda arguments: json.dumps(answers[tuple(arguments)]))
+    process = served(root, "--public-url", "https://old-laptop.tail0a1b2c.ts.net")
+    try:
+        assert hub(root, "status") == 0
+        reported = capsys.readouterr().out
+        assert hub(root, "tailscale-check") == 0
+        checked = capsys.readouterr().out
+        assert hub(root, "stop") == 0
+        assert process.wait(timeout=30) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+
+    assert "public_url https://old-laptop.tail0a1b2c.ts.net" in reported
+    assert "public_url https://old-laptop.tail0a1b2c.ts.net (the serving Hub's)" in checked
+    assert "warning:" in checked and "https://campus-laptop.tail0a1b2c.ts.net" in checked
+
+
+def test_tailscale_check_changes_no_data_in_the_root_it_asks_about(tmp_path, monkeypatch):
+    """It may take and leave hub.lock while it looks for a serving Hub; nothing else in the root changes."""
+    root = tmp_path / "CampusLife"
+    assert hub(root, "init") == 0
+    status = {"BackendState": "Running", "Self": {"DNSName": "campus-laptop.tail0a1b2c.ts.net."}}
+    tailscale_serve = {"TCP": {"443": {"HTTPS": True}}, "Web": {"campus-laptop.tail0a1b2c.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8730"}}}}}
+    answers = {("serve", "status", "--json"): tailscale_serve, ("status", "--json"): status}
+    monkeypatch.setattr(tailscale_check, "tailscale", lambda arguments: json.dumps(answers[tuple(arguments)]))
+
+    def held():
+        return {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file() and path.name != "hub.lock"}
+
+    before = held()
+    assert hub(root, "tailscale-check") == 0
+
+    assert held() == before

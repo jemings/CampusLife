@@ -25,12 +25,14 @@ from html import escape
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from . import backup, jobs, purge
+from . import backup, device_admin, jobs, purge
 from .admin_auth import HELLO_PATH, LISTENER_SCOPE_KEY, SESSION_COOKIE, SESSION_LIFETIME, AdminAuth, AdminGuard, session_cookie
+from .admin_page import page
 from .backup import BackupRefused, BackupSettings
 from .core import Core
+from .devices import DeviceSettings
 from .job_runner import JobRunner
 from .jobs import Job, JobState, NoSuchJob, NotRetryable
 from .listing import latest_captures
@@ -80,27 +82,12 @@ class Admin:
     stop: Callable[[], None] = field(default=lambda: None)
     """Ask the host to stop, as a signal would."""
     backup_settings: BackupSettings = BackupSettings()
+    device_settings: DeviceSettings = DeviceSettings()
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
 
 
 def _admin(request: Request) -> Admin:
     return request.app.state.admin
-
-
-def _page(title: str, body: str, *, status: int = 200, signed_in: bool = True) -> HTMLResponse:
-    nav = (
-        '<nav><a href="/">Captures</a><a href="/import">Import</a><a href="/jobs">Jobs</a><a href="/backup">Backup</a>'
-        '<form method="post" action="/logout"><button>Log out</button></form></nav>'
-        if signed_in
-        else ""
-    )
-    return HTMLResponse(
-        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f'<title>{escape(title)} · CampusLife Hub</title><link rel="stylesheet" href="/static/admin.css"></head>'
-        f"<body>{nav}<main><h1>{escape(title)}</h1>{body}</main></body></html>",
-        status_code=status,
-    )
 
 
 @router.get("/static/admin.css")
@@ -136,7 +123,7 @@ async def captures_page(request: Request) -> Response:
         rows.append(f"<tr><td>{escape(capture.created_at)}</td><td>{escape(capture.origin_type)}</td><td>{files or '-'}</td></tr>")
     notice = f'<p class="notice">Imported as Capture <code>{escape(imported)}</code>.</p>' if imported else ""
     table = "<table><tr><th>Taken</th><th>From</th><th>Files</th></tr>" + "".join(rows) + "</table>" if rows else "<p>No Captures yet.</p>"
-    return _page("Captures", await _backup_warning(admin) + notice + table)
+    return page("Captures", await _backup_warning(admin) + notice + table)
 
 
 @router.get("/attachments/{attachment_id}/original")
@@ -144,11 +131,11 @@ async def original(request: Request, attachment_id: str) -> Response:
     core = _admin(request).core
     row = await core.db.read(lambda snap: snap.execute("SELECT data FROM attachments WHERE id = ?", (attachment_id,)).fetchone())
     if row is None:
-        return _page("Not found", "<p>No such Attachment.</p>", status=404)
+        return page("Not found", "<p>No such Attachment.</p>", status=404)
     attachment = json.loads(row[0])
     path = core.blobs.path_of(attachment["blob_sha256"])
     if not path.is_file():
-        return _page("Missing", "<p>The original is missing from the Blob store.</p>", status=404)
+        return page("Missing", "<p>The original is missing from the Blob store.</p>", status=404)
     return FileResponse(
         path,
         media_type="application/octet-stream",
@@ -160,7 +147,7 @@ async def original(request: Request, attachment_id: str) -> Response:
 @router.get("/import")
 async def import_page() -> Response:
     options = '<option value="">the course or global default</option>' + "".join(f"<option>{policy}</option>" for policy in CLOUD_POLICIES)
-    return _page(
+    return page(
         "Import",
         '<form method="post" action="/import" enctype="multipart/form-data">'
         '<p><input class="drop" type="file" name="files" multiple required aria-label="Drop files here or choose them"></p>'
@@ -170,7 +157,7 @@ async def import_page() -> Response:
 
 
 def _refused(title: str, reason: str) -> Response:
-    return _page(title, f"<p>{escape(reason)}</p>", status=400)
+    return page(title, f"<p>{escape(reason)}</p>", status=400)
 
 
 @router.post("/import")
@@ -215,9 +202,9 @@ async def jobs_page(request: Request) -> Response:
     admin = _admin(request)
     latest = await admin.core.db.read(lambda snap: jobs.latest(snap, PAGE_ROWS))
     if not latest:
-        return _page("Jobs", "<p>No jobs yet.</p>")
+        return page("Jobs", "<p>No jobs yet.</p>")
     head = "<tr><th>Type</th><th>State</th><th>Attempts</th><th>Subject</th><th>Outcome</th><th>Error</th><th>Changed</th><th></th></tr>"
-    return _page("Jobs", "<table>" + head + "".join(_job_row(job, admin.redactor) for job in latest) + "</table>")
+    return page("Jobs", "<table>" + head + "".join(_job_row(job, admin.redactor) for job in latest) + "</table>")
 
 
 async def _retry(admin: Admin, job_id: str) -> Job:
@@ -235,9 +222,9 @@ def _job_change(change: Callable[[Admin, str], object], *, api: bool) -> Callabl
         try:
             job = await change(_admin(request), job_id)
         except NoSuchJob:
-            return JSONResponse({"error": "no such job"}, status_code=404) if api else _page("Not found", "<p>No such job.</p>", status=404)
+            return JSONResponse({"error": "no such job"}, status_code=404) if api else page("Not found", "<p>No such job.</p>", status=404)
         except NotRetryable as error:
-            return JSONResponse({"error": str(error)}, status_code=409) if api else _page("Not retried", f"<p>{escape(str(error))}</p>", status=409)
+            return JSONResponse({"error": str(error)}, status_code=409) if api else page("Not retried", f"<p>{escape(str(error))}</p>", status=409)
         return JSONResponse({"id": job.id, "state": job.state}) if api else RedirectResponse("/jobs", status_code=303)
 
     return endpoint
@@ -252,7 +239,7 @@ async def backup_page(request: Request) -> Response:
         if last is not None
         else ""
     )
-    return _page(
+    return page(
         "Backup",
         await _backup_warning(admin) + done
         + '<form method="post" action="/backup"><p><label>Folder on the backup drive '
@@ -285,7 +272,7 @@ async def backup_form(request: Request) -> Response:
         made = await backup.back_up(admin.core, Path(target), keep=admin.backup_settings.keep)
     except BACKUP_FAILURES as error:
         return _refused("Backup failed", str(error))
-    return _page("Backed up", _generation_report(made))
+    return page("Backed up", _generation_report(made))
 
 
 def _purge_plan_page(plan: PurgePlan, keep: int) -> Response:
@@ -307,7 +294,7 @@ def _purge_plan_page(plan: PurgePlan, keep: int) -> Response:
             "<fieldset><legend>Delete these Notes too?</legend><p>They were forked from what goes. "
             f"Those not chosen stay, marked as having lost their evidence.</p><ul>{boxes}</ul></fieldset>"
         )
-    return _page(
+    return page(
         "Purge",
         f"<p>Purging removes this file at once, without the trash, with everything made from it:</p><ul>{gone}</ul>"
         f'<form method="post" action="/blobs/{escape(plan.blob)}/purge">{notes}'
@@ -330,7 +317,7 @@ async def purge_page(request: Request, blob: str) -> Response:
     admin = _admin(request)
     plan = await _plan(admin, blob)
     if plan is None:
-        return _page("Not found", "<p>The Hub holds nothing of that Blob.</p>", status=404)
+        return page("Not found", "<p>The Hub holds nothing of that Blob.</p>", status=404)
     return _purge_plan_page(plan, admin.backup_settings.keep)
 
 
@@ -338,7 +325,7 @@ async def purge_page(request: Request, blob: str) -> Response:
 async def purge_form(request: Request, blob: str) -> Response:
     admin = _admin(request)
     if await _plan(admin, blob) is None:
-        return _page("Not found", "<p>The Hub holds nothing of that Blob.</p>", status=404)
+        return page("Not found", "<p>The Hub holds nothing of that Blob.</p>", status=404)
     chosen = [str(note) for note in (await request.form()).getlist("delete_note")]
     try:
         purged = await purge.purge_blob(admin.core.db, admin.core.blobs, blob, delete_notes=chosen, hooks=admin.core.purge_hooks)
@@ -354,7 +341,7 @@ async def purge_form(request: Request, blob: str) -> Response:
         if not purged.finished
         else ""
     )
-    return _page(
+    return page(
         "Purged",
         f"<p>Removed {len(target.attachments)} Attachments, {len(target.artifacts)} Artifacts, {len(target.suggestions)} Suggestions, "
         f"{len(target.relations)} Relations and {len(target.items)} Notes.</p>"
@@ -368,7 +355,7 @@ async def login(request: Request) -> Response:
     code = request.query_params.get("code")
     session = _admin(request).auth.start_session(code) if code else None
     if session is None:
-        return _page(
+        return page(
             "Log in",
             "<p>This login link is used or expired. Run <code>campuslife-hub open</code> for a new one.</p>",
             status=401,
@@ -384,7 +371,7 @@ async def logout(request: Request) -> Response:
     session = session_cookie(request.headers)
     if session is not None:
         _admin(request).auth.end_session(session)
-    response = _page("Logged out", "<p>Run <code>campuslife-hub open</code> to log in again.</p>", signed_in=False)
+    response = page("Logged out", "<p>Run <code>campuslife-hub open</code> to log in again.</p>", signed_in=False)
     response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="strict")
     return response
 
@@ -471,6 +458,7 @@ async def api_status(request: Request) -> Response:
                 "warn_after_days": settings.warn_after.days,
                 "keep": settings.keep,
             },
+            "devices": {"public_url": admin.device_settings.public_url, "dormant_after_days": admin.device_settings.dormant_after.days},
             **admin.status(),
         }
     )
@@ -488,9 +476,10 @@ for action, change in (("retry", _retry), ("cancel", _cancel)):
 
 
 def create_app(admin: Admin, *, port: int, routers: Sequence[APIRouter] = ()) -> AdminGuard:
-    """The admin app for the listener on 127.0.0.1:port; routers are added behind the same guard (#19)."""
+    """The admin app for the listener on 127.0.0.1:port, its device routes included; routers are added behind the same
+    guard."""
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None, telemetry=NO_TELEMETRY)
-    for added in (router, *routers):
+    for added in (router, device_admin.router, *routers):
         app.include_router(added)
     app.state.admin = admin
     return AdminGuard(app, admin.auth, port)

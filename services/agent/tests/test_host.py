@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import secrets
 import socket
 import sqlite3
@@ -601,6 +602,73 @@ async def test_a_paired_devices_token_opens_nothing_on_the_admin_listener(tmp_pa
         answers = [await client.get("/api/status", headers=device), await client.post("/api/login", headers=device), await client.post("/api/stop", headers=device)]
 
     assert [answer.status_code for answer in answers] == [401, 401, 401]
+
+
+def bearer(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def paired_through_the_local_ui(client, sync, listening):
+    """A device paired as a person adds one: a login link, the page's manual code, then POST /v1/pair on the sync port."""
+    origin = {"origin": f"http://127.0.0.1:{listening.admin[1]}"}
+    login = (await client.post("/api/login", auth=SIGNED)).json()["url"]
+    assert (await client.get(login)).status_code == 303
+    offered = await client.post("/devices/pairing-offer", headers=origin)
+    code = re.search(r"<code>([0-9a-f]{4}(?:-[0-9a-f]{4}){7})</code>", offered.text).group(1)
+    body = {"secret": code.replace("-", ""), "platform": "android", "device_name": "Fold8", "app_version": "0.1.0"}
+    return (await sync.post("/v1/pair", json=body)).json()
+
+
+SERVED_WITH_A_PUBLIC_URL = {"devices": DeviceSettings(public_url="https://campus-laptop.tail0a1b2c.ts.net")}
+
+
+async def test_a_device_added_in_the_local_ui_pairs_on_the_sync_listener_and_syncs(tmp_path):
+    async with serving(tmp_path, sync_app=sync_devices.sync_app, config=SERVED_WITH_A_PUBLIC_URL) as (core, client, listening, *_):
+        async with sync_client_at(listening) as sync:
+            paired = await paired_through_the_local_ui(client, sync, listening)
+            synced = await sync.get("/v1/changes", params={"since": "0"}, headers=bearer(paired["token"]))
+            listed = (await client.get("/api/devices", auth=SIGNED)).json()["devices"]
+
+    assert synced.status_code == 200
+    assert [(device["id"], device["state"]) for device in listed] == [(paired["device_id"], "active")]
+
+
+async def test_a_device_revoked_through_the_admin_api_is_refused_on_its_next_request_and_no_other_is(tmp_path):
+    async with serving(tmp_path, sync_app=sync_devices.sync_app, config=SERVED_WITH_A_PUBLIC_URL) as (core, client, listening, *_):
+        async with sync_client_at(listening) as sync:
+            lost = await paired_through_the_local_ui(client, sync, listening)
+            kept = await paired_through_the_local_ui(client, sync, listening)
+            assert (await sync.post("/v1/mutations", json=tag_batch(), headers=bearer(lost["token"]))).status_code == 200
+
+            revoked = await client.post(f"/api/devices/{lost['device_id']}/revoke", auth=SIGNED)
+            refused = await sync.get("/v1/changes", params={"since": "0"}, headers=bearer(lost["token"]))
+            others = await sync.get("/v1/changes", params={"since": "0"}, headers=bearer(kept["token"]))
+
+    assert revoked.json()["changed"] is True
+    assert (refused.status_code, refused.json()["code"]) == (401, "device_revoked")
+    assert others.status_code == 200 and len([change for change in others.json()["changes"] if change["entity"] == "tag"]) == 1
+
+
+async def test_a_dormant_device_approved_through_the_admin_api_syncs_on_from_its_cursor_and_stays_active(tmp_path):
+    async with serving(tmp_path, sync_app=sync_devices.sync_app, config=SERVED_WITH_A_PUBLIC_URL) as (core, client, listening, *_):
+        async with sync_client_at(listening) as sync:
+            phone = await paired_through_the_local_ui(client, sync, listening)
+            assert (await sync.post("/v1/mutations", json=tag_batch(), headers=bearer(phone["token"]))).status_code == 200
+            cursor = (await sync.get("/v1/changes", params={"since": "0"}, headers=bearer(phone["token"]))).json()["next_since"]
+            assert await devices.mark_dormant(core, now=datetime.now(UTC) + timedelta(days=91)) == [phone["device_id"]]
+            dormant = await sync.get("/v1/changes", params={"since": str(cursor)}, headers=bearer(phone["token"]))
+            later = tag_batch()
+            await mutations.apply(core.db, later["mutations"], core.hub_device)
+
+            approved = await client.post(f"/api/devices/{phone['device_id']}/approve", auth=SIGNED)
+            resumed = await sync.get("/v1/changes", params={"since": str(cursor)}, headers=bearer(phone["token"]))
+            assert await devices.mark_dormant(core, now=datetime.now(UTC)) == []
+            again = await sync.get("/v1/hub", headers=bearer(phone["token"]))
+
+    assert (dormant.status_code, dormant.json()["code"]) == (401, "device_dormant")
+    assert approved.json() == {"id": phone["device_id"], "state": "active", "changed": True}
+    assert [change["id"] for change in resumed.json()["changes"]] == [later["mutations"][0]["id"]]
+    assert again.status_code == 200
 
 
 def held_by_the_database(core, texts):

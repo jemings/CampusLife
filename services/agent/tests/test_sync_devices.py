@@ -6,11 +6,11 @@ import hashlib
 import json
 import unicodedata
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from conftest import contract_fixture
-from device_bench import UNKNOWN_SECRET, bench
+from device_bench import UNKNOWN_SECRET, Clock, bench
 from sync_client import CONTRACT, Waking, client_of
 
 from campuslife_hub import audit, devices, mutations, sync_devices
@@ -337,16 +337,21 @@ async def test_a_heartbeat_the_contract_refuses_is_400_and_keeps_nothing(tmp_pat
 @pytest.mark.parametrize(
     ("method", "path"),
     [
+        ("GET", "/api/devices"), ("POST", "/api/devices/{device}/revoke"), ("POST", "/api/devices/{device}/approve"),
+        ("GET", "/devices"), ("POST", "/devices/pairing-offer"), ("GET", "/devices/{device}/revoke"), ("POST", "/devices/{device}/revoke"),
+        ("GET", "/devices/{device}/approve"), ("POST", "/devices/{device}/approve"),
         ("GET", "/v1/devices"), ("POST", "/v1/devices/pairing-offer"), ("POST", "/v1/devices/{device}/revoke"),
         ("POST", "/v1/devices/{device}/approve"), ("GET", "/api/status"), ("POST", "/api/login"), ("GET", "/"),
     ],
 )
-async def test_the_sync_port_has_no_way_to_manage_devices(tmp_path, method, path):
-    """Offering secrets, revoking, approving and the rest of the admin API live on the admin listener only, never
-    behind tailscale serve: a paired Device's token reaches none of them."""
-    async with bench(tmp_path) as b, b.sync() as client:
-        paired = await paired_over(client, b)
-        answer = await client.request(method, path.format(device=paired["device_id"]), headers=bearer(paired["token"]))
+async def test_the_sync_app_serve_runs_has_no_way_to_manage_devices(tmp_path, method, path):
+    """Offering secrets, listing, revoking and approving devices and the rest of the admin API live on the admin
+    listener only, never behind tailscale serve: on the sync app serve runs, a paired Device's token reaches none of
+    the admin listener's device paths, nor a /v1 look-alike."""
+    async with bench(tmp_path, clock=Clock(datetime.now(UTC))) as b:
+        async with client_of(sync_devices.sync_app(Hosted(b.core, Waking(), b.redactor)), CONTRACT) as client:
+            paired = await paired_over(client, b)
+            answer = await client.request(method, path.format(device=paired["device_id"]), headers=bearer(paired["token"]))
 
     assert (answer.status_code, answer.json()["code"]) == (404, "not_found")
 

@@ -222,7 +222,7 @@ async def serve(
     stopping = asyncio.Event()
     admin = Admin(
         core, runner, AdminAuth(admin_token, redactor, clock=clock), redactor, status=record.report, stop=stop.set,
-        backup_settings=config.backup, clock=clock,
+        backup_settings=config.backup, device_settings=config.devices, clock=clock,
     )
     sockets = [_bind(config.admin_port)]
     tasks: list[asyncio.Task] = []

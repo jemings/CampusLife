@@ -462,17 +462,24 @@ async def heartbeat(core: Core, device: str, status: Mapping[str, object], *, no
     await core.db.write(partial(_heartbeat, device=device, status=status, now=now))
 
 
-def device(runner: Tx | Snapshot, device_id: str) -> DeviceRecord | None:
-    row = runner.execute(
-        "SELECT id, platform, device_name, app_version, state, created_at, last_seen_at, last_rejected_at, last_status, last_status_at"
-        " FROM devices WHERE id = ?",
-        (device_id,),
-    ).fetchone()
-    if row is None:
-        return None
+_RECORD_COLUMNS = "id, platform, device_name, app_version, state, created_at, last_seen_at, last_rejected_at, last_status, last_status_at"
+
+
+def _record(row: tuple) -> DeviceRecord:
     device_id, platform, name, app_version, state, created_at, last_seen_at, last_rejected_at, last_status, last_status_at = row
     status = None if last_status is None else json.loads(last_status)
     return DeviceRecord(DeviceId(device_id), platform, name, app_version, DeviceState(state), created_at, last_seen_at, last_rejected_at, status, last_status_at)
+
+
+def device(runner: Tx | Snapshot, device_id: str) -> DeviceRecord | None:
+    row = runner.execute(f"SELECT {_RECORD_COLUMNS} FROM devices WHERE id = ?", (device_id,)).fetchone()
+    return None if row is None else _record(row)
+
+
+def client_devices(runner: Tx | Snapshot) -> list[DeviceRecord]:
+    """Every paired Device, revoked ones included, oldest first; the Hub's own row is not one."""
+    rows = runner.execute(f"SELECT {_RECORD_COLUMNS} FROM devices WHERE platform != ? ORDER BY created_at, id", (HUB_PLATFORM,))
+    return [_record(row) for row in rows]
 
 
 def ensure_hub_device(tx: Tx) -> DeviceId:
