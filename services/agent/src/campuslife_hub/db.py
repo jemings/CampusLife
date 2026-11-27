@@ -26,6 +26,7 @@ from .sqlite_probe import probe as probe_sqlite
 from .sqlite_probe import secure_delete_problems
 
 BUSY_TIMEOUT_MS = 5000
+CHECKPOINT_BUSY_TIMEOUT_MS = 250
 START_THE_HUB = "run `campuslife-hub init` or start the Hub"
 
 
@@ -117,6 +118,16 @@ def _open_reader(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _truncate_wal(conn: sqlite3.Connection) -> bool:
+    """Wait only briefly for readers: a retry exists, and the wait blocks every other write."""
+    conn.execute(f"PRAGMA busy_timeout = {CHECKPOINT_BUSY_TIMEOUT_MS}")
+    try:
+        (busy, _, _) = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    finally:
+        conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    return not busy
+
+
 def _run_write[T](conn: sqlite3.Connection, fn: Callable[[Tx], T]) -> T:
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -194,9 +205,7 @@ class Database(ReadOnlyDatabase):
     async def truncate_wal(self) -> bool:
         """Checkpoint the WAL into the database file and empty it, so bytes of deleted rows leave it; False when a
         reader kept it from emptying."""
-        conn = self._write_conn
-        (busy, _, _) = await asyncio.get_running_loop().run_in_executor(self._writer, lambda: conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone())
-        return not busy
+        return await asyncio.get_running_loop().run_in_executor(self._writer, _truncate_wal, self._write_conn)
 
     async def close(self) -> None:
         await super().close()

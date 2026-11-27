@@ -37,6 +37,7 @@ from .store import Entity, EntityRef
 
 log = logging.getLogger(__name__)
 
+WAL_KEPT_REASON = "the write-ahead log could not be emptied (another connection is reading)"
 UNFINISHED_JOBS = (JobState.PENDING.value, JobState.RETRY_WAIT.value, JobState.RUNNING.value)
 
 

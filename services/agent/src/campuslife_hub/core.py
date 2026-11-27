@@ -106,6 +106,8 @@ async def open_core(
                 kept += finish.kept
                 if finish.failed_hooks:
                     log.warning("purge %s is still unfinished: hooks %s failed", finish.journal_id, ", ".join(finish.failed_hooks))
+                if finish.wal_kept:
+                    log.warning("purge %s is still unfinished: %s", finish.journal_id, purge.WAL_KEPT_REASON)
             for leftover in kept:
                 log.warning("left %s for a later clean-up: %s", leftover.path, leftover.reason)
             yield Core(layout, db, blobs, identity, hub_device, purge_hooks)
