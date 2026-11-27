@@ -27,7 +27,7 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from . import backup, device_admin, jobs, purge
+from . import backup, conflict_records, device_admin, jobs, purge
 from .admin_auth import HELLO_PATH, LISTENER_SCOPE_KEY, SESSION_COOKIE, SESSION_LIFETIME, AdminAuth, AdminGuard, session_cookie
 from .admin_page import page
 from .backup import BackupRefused, BackupSettings
@@ -445,6 +445,7 @@ async def api_backup(request: Request) -> Response:
 async def api_status(request: Request) -> Response:
     admin = _admin(request)
     counts = await admin.core.db.read(jobs.counts)
+    open_conflicts = await admin.core.db.read(conflict_records.open_count)
     last = await admin.core.db.read(backup.last_backup)
     settings = admin.backup_settings
     return JSONResponse(
@@ -459,6 +460,7 @@ async def api_status(request: Request) -> Response:
                 "keep": settings.keep,
             },
             "devices": {"public_url": admin.device_settings.public_url, "dormant_after_days": admin.device_settings.dormant_after.days},
+            "conflicts": {"open": open_conflicts},
             **admin.status(),
         }
     )

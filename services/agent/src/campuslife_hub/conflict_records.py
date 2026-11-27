@@ -1,4 +1,4 @@
-"""ConflictRecords (D18, D24 decisions 1 and 2): what a patch submitted and the Hub did not write.
+"""ConflictRecords (D18, D24 decisions 1, 2 and 6): what a patch submitted and the Hub did not write.
 
 One record per Mutation, its id the Mutation's mutation_id, holding the submitted changes of the keys that were not
 written as the patch's set sent them. Open while it carries set, resolved once it carries resolved instead. Every write
@@ -43,3 +43,8 @@ def purge_with(tx: Tx, targets: Iterable[EntityRef]) -> None:
     """A purge of an entity takes its records with it, open or not: the user chose to destroy it (D24 decision 2)."""
     for record in _of(tx, (f"{target.entity.value}:{target.id}" for target in targets)):
         store.write(tx, EntityRef(Entity.CONFLICT_RECORD, record["id"]), None)
+
+
+def open_count(runner: Tx | Snapshot) -> int:
+    (count,) = runner.execute("SELECT count(*) FROM conflict_records WHERE json_type(data, '$.set') IS NOT NULL").fetchone()
+    return count
