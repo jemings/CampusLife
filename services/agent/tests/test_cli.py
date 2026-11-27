@@ -588,7 +588,9 @@ def test_serve_takes_the_public_url_and_the_dormant_period_for_devices(tmp_path,
         "https://campus-laptop.tail0a1b2c.ts.net/hub",
         "http://campus-laptop.tail0a1b2c.ts.net",
         "https://Campus-Laptop.tail0a1b2c.ts.net",
+        "https://" + "a" * 260,
     ],
+    ids=["a trailing slash", "a path", "http", "an uppercase host", "268 characters"],
 )
 def test_a_public_url_that_is_not_a_hub_url_is_refused_in_words_a_person_reads(tmp_path, capsys, command, url):
     """The same check for both, so tailscale-check compares what serve would hand out (device/pairing_offer hub_url)."""

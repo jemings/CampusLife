@@ -4,6 +4,7 @@ gets has passed sync_contract.check against openapi/sync.yaml."""
 
 import json
 import unicodedata
+from datetime import timedelta
 
 import pytest
 from conftest import contract_fixture
@@ -143,6 +144,16 @@ async def test_a_revoked_devices_token_is_401_device_revoked_and_no_other_device
 
         assert (refused.status_code, refused.json()["code"]) == (401, "device_revoked")
         assert (await changes_with(client, kept["token"])).status_code == 200
+
+
+async def test_the_dormant_period_the_hub_was_given_decides_when_a_token_is_dormant(tmp_path):
+    async with bench(tmp_path, dormant_after=timedelta(days=30)) as b, b.sync() as client:
+        paired = await paired_over(client, b)
+        b.clock.advance(days=31)
+
+        refused = await changes_with(client, paired["token"])
+
+    assert (refused.status_code, refused.json()["code"]) == (401, "device_dormant")
 
 
 async def test_a_dormant_devices_token_is_401_device_dormant_until_it_is_approved(tmp_path):
