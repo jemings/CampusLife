@@ -318,6 +318,19 @@ def test_without_a_console_a_refused_restore_leaves_the_root_empty(tmp_path):
     assert not root.exists(), sorted(str(p.relative_to(root)) for p in root.rglob("*"))
 
 
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="chmod 000 keeps out only a POSIX user other than root")
+def test_without_a_console_a_root_the_cli_may_not_look_into_still_ends_with_1(tmp_path, monkeypatch):
+    shut = tmp_path / "shut"
+    shut.mkdir()
+    shut.chmod(0)
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    try:
+        assert main(["--root", str(shut / "CampusLife"), "stop"]) == 1
+    finally:
+        shut.chmod(0o700)
+
+
 def test_with_a_console_the_reason_serve_refused_shows_once_and_is_in_the_log(tmp_path, capsys):
     root = tmp_path / "CampusLife"
     hub(root, "init")
