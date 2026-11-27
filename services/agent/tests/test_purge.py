@@ -4,12 +4,13 @@ import logging
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from test_capture_commit import apply, blob_store, commit, device, feed, new_id, store_bytes
 from waiting import until
 
-from campuslife_hub import artifacts, jobs, purge
+from campuslife_hub import artifacts, jobs, mutations, purge
 from campuslife_hub.artifacts import InvalidArtifact
 from campuslife_hub.blobs import has_blob
 from campuslife_hub.core import open_core
@@ -185,10 +186,42 @@ async def test_a_fork_note_created_after_the_purge_of_its_artifact_arrives_marke
     assert "evidence_purged_at" not in items[kept_id]
 
 
+async def test_a_purge_takes_the_conflict_records_of_what_it_purges_and_leaves_the_others(db, device, blob_store, tmp_path):
+    """D24 decision 2: purging is the user destroying the entity, so what was kept for it goes too."""
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    policy = {"mutation_id": new_id(), "op": "patch", "entity": "attachment", "id": lecture_.pdf_attachment,
+              "set": {"cloud_policy": {"from": "blocked", "to": "cloud_allowed"}}}
+    other = {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": COURSE, "set": {"title": {"from": "알고리즘", "to": "자료구조 2"}}}
+    await apply(db, device, policy, other)
+
+    await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())
+
+    changes = await feed(db)
+    assert ("conflict_record", policy["mutation_id"]) in tombstones(changes)
+    assert other["mutation_id"] in live(changes, "conflict_record")
+
+
+async def test_a_patch_resent_after_its_record_was_purged_keeps_nothing_again(db, device, blob_store, tmp_path):
+    """A resend judged again after ninety days finds the entity purged; what the user destroyed is not kept again."""
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    policy = {"mutation_id": new_id(), "op": "patch", "entity": "attachment", "id": lecture_.pdf_attachment,
+              "set": {"cloud_policy": {"from": "blocked", "to": "cloud_allowed"}}}
+    await apply(db, device, policy)
+    await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())
+    before = await feed(db)
+    await mutations.forget_old_results(db, datetime.now(UTC) + timedelta(days=91))
+
+    [again] = await apply(db, device, policy)
+
+    assert {name: value for name, value in again.items() if name != "mutation_id"} == {"result": "rejected", "reason": "deleted"}
+    assert await feed(db) == before
+
+
 async def test_fork_notes_the_user_chose_go_with_the_purge(db, device, blob_store, tmp_path):
     lecture_ = await lecture(db, device, blob_store, tmp_path)
     stale = {"from_hash": None, "to": "다른 장치에서 쓴 글"}
-    await apply(db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": stale}})
+    kept = {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": stale}}
+    assert (await apply(db, device, kept))[0]["conflict_record_ids"] == [kept["mutation_id"]]
 
     purged = await purge.purge_blob(db, blob_store, lecture_.pdf, delete_notes=[lecture_.note], hooks=PurgeHooks())
 
@@ -197,7 +230,7 @@ async def test_fork_notes_the_user_chose_go_with_the_purge(db, device, blob_stor
     assert [row for row in live(changes, "relation").values() if mentions(row, lecture_.note)] == []
     assert purged.target.items == (lecture_.note,)
     assert purged.marked == ()
-    assert await db.read(lambda snap: snap.execute("SELECT count(*) FROM conflict_stash WHERE entity_id = ?", (lecture_.note,)).fetchone()) == (0,)
+    assert ("conflict_record", kept["mutation_id"]) in tombstones(changes)
 
 
 async def test_a_note_the_purge_does_not_reach_cannot_be_chosen_and_nothing_is_purged(db, device, blob_store, tmp_path):
