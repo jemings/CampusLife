@@ -1,6 +1,5 @@
 package campuslife.wire.harness
 
-import campuslife.wire.AssignmentFields
 import campuslife.wire.Attachment
 import campuslife.wire.Capture
 import campuslife.wire.CaptureCommit
@@ -9,16 +8,14 @@ import campuslife.wire.ChangesPage
 import campuslife.wire.ChangesQuery
 import campuslife.wire.CloudPolicy
 import campuslife.wire.CommitAttachment
-import campuslife.wire.CourseFields
 import campuslife.wire.CreateItem
 import campuslife.wire.DeviceStatus
 import campuslife.wire.ErrorBody
-import campuslife.wire.ExamFields
 import campuslife.wire.FeedRow
 import campuslife.wire.HubInfo
 import campuslife.wire.InstantSerializer
 import campuslife.wire.Item
-import campuslife.wire.LectureSessionFields
+import campuslife.wire.ItemFields
 import campuslife.wire.LocalDay
 import campuslife.wire.LocalTimeRule
 import campuslife.wire.Mutation
@@ -26,7 +23,6 @@ import campuslife.wire.MutationBatch
 import campuslife.wire.MutationResult
 import campuslife.wire.MutationResults
 import campuslife.wire.MutationSerializer
-import campuslife.wire.NoteFields
 import campuslife.wire.Origin
 import campuslife.wire.PairRequest
 import campuslife.wire.PairResponse
@@ -35,8 +31,6 @@ import campuslife.wire.Platform
 import campuslife.wire.Relation
 import campuslife.wire.StoredBlob
 import campuslife.wire.Tag
-import campuslife.wire.TaskFields
-import campuslife.wire.TermFields
 import campuslife.wire.Timeline
 import campuslife.wire.UploadRequest
 import campuslife.wire.UploadSession
@@ -95,13 +89,6 @@ private val typed: Map<String, Codec<*>> = mapOf(
     "device/pairing_offer" to Codec(PairingOffer.serializer()),
     "device/platform" to Codec(Platform.serializer()),
     "device/status" to Codec(DeviceStatus.serializer()),
-    "item/fields/assignment" to Codec(AssignmentFields.serializer()),
-    "item/fields/course" to Codec(CourseFields.serializer()),
-    "item/fields/exam" to Codec(ExamFields.serializer()),
-    "item/fields/lecture_session" to Codec(LectureSessionFields.serializer()),
-    "item/fields/note" to Codec(NoteFields.serializer()),
-    "item/fields/task" to Codec(TaskFields.serializer()),
-    "item/fields/term" to Codec(TermFields.serializer()),
     "item/item" to Codec(Item.serializer(), ::typedItem),
     "mutation/batch_request" to Codec(MutationBatch.serializer()) { it.copy(mutations = it.mutations.map(::typedMutation)) },
     "mutation/batch_response" to Codec(MutationResults.serializer()),
@@ -112,7 +99,12 @@ private val typed: Map<String, Codec<*>> = mapOf(
     "sync/changes_query" to Codec(ChangesQuery.serializer()),
     "sync/hub" to Codec(HubInfo.serializer()),
     "tag/tag" to Codec(Tag.serializer()),
-)
+) + itemFieldsCodecs()
+
+/** item/fields/<kind> for each kind [ItemFields] reads, so a fields schema without a Kotlin model has no codec. */
+private fun itemFieldsCodecs(): Map<String, Codec<*>> = ItemFields.knownKinds.associate { kind ->
+    "item/fields/${kind.value}" to Codec(JsonObject.serializer()) { ItemFields.read(kind, it).toJson() }
+}
 
 private fun typedItem(item: Item): Item = item.copy(fields = item.typedFields().toJson())
 

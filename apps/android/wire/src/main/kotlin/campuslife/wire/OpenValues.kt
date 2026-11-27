@@ -17,6 +17,10 @@ value class ItemKind(val value: String) {
         val EXAM = ItemKind("exam")
         val TASK = ItemKind("task")
         val NOTE = ItemKind("note")
+        val EVENT = ItemKind("event")
+        val ANNOUNCEMENT = ItemKind("announcement")
+        val OPPORTUNITY = ItemKind("opportunity")
+        val ORGANIZATION = ItemKind("organization")
     }
 }
 
