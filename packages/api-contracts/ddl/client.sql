@@ -36,7 +36,7 @@ CREATE TABLE entity_cache (
 -- Mutation (decision 7).
 CREATE TABLE mutation_outbox (
     seq INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    mutation_id TEXT NOT NULL COLLATE NOCASE,
+    mutation_id TEXT NOT NULL,
     op TEXT NOT NULL,
     entity TEXT NOT NULL,
     entity_id TEXT NOT NULL,
@@ -46,7 +46,7 @@ CREATE TABLE mutation_outbox (
     acked_at_ms INTEGER
 );
 CREATE UNIQUE INDEX index_mutation_outbox_mutation_id ON mutation_outbox (mutation_id);
-CREATE INDEX index_mutation_outbox_entity_entity_id ON mutation_outbox (entity, entity_id DESC);
+CREATE INDEX index_mutation_outbox_entity_entity_id ON mutation_outbox (entity, entity_id);
 
 -- One row per Blob file this device keeps, by sha256; the row goes when the local file goes.
 -- state: waiting (to upload), uploading (a session is open), retry_wait (failed for now), stored.
