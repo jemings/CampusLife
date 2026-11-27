@@ -32,6 +32,19 @@ android {
     }
 }
 
+ksp {
+    arg("room.schemaLocation", layout.projectDirectory.dir("schemas").asFile.path)
+}
+
+val referenceDdl = layout.projectDirectory.file("../../../packages/api-contracts/ddl/client.sql")
+
+tasks.withType<Test>().configureEach {
+    inputs.file(referenceDdl)
+        .withPropertyName("referenceDdl")
+        .withPathSensitivity(PathSensitivity.NONE)
+    systemProperty("campuslife.contract.ddl", referenceDdl.asFile.canonicalPath)
+}
+
 dependencies {
     implementation(project(":wire"))
 
