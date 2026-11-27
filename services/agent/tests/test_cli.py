@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shlex
 import signal
 import socket
 import sqlite3
@@ -922,8 +923,7 @@ def test_backup_restore_and_fsck_from_the_cli(tmp_path, capsys):
     assert "blobs 1 copied 1" in made
     assert checked.strip() == "no findings"
     assert f"restored generation {generation}" in said
-    assert "Every device must be approved again with `campuslife-hub approve <id>`" in said
-    assert "Do not approve a device that was lost; revoke it with `campuslife-hub revoke <id>`." in said
+    assert "approve" not in said and "revoke" not in said
     assert "purge those files again" in said
     assert "week4.txt" in capsys.readouterr().out
 
@@ -1101,6 +1101,27 @@ def test_after_a_restore_the_hub_serving_approves_the_device_in_hand_and_revokes
     assert listed.count(" dormant ") == 2
     assert synced[0] == 200 and tag["id"] in {change["id"] for change in synced[1]["changes"]}
     assert (refused[0], refused[1]["code"]) == (401, "device_revoked")
+
+
+def test_the_commands_a_restore_names_change_the_devices_of_the_root_it_restored_into(tmp_path, capsys, monkeypatch):
+    original, restored, drive = tmp_path / "CampusLife", tmp_path / "Restored copy", tmp_path / "drive"
+    hub(original, "init")
+    phone, lost = asyncio.run(paired_in(original, "Fold8", "lost phone"))
+    assert hub(original, "backup", "--to", str(drive)) == 0
+    assert hub(restored, "restore", "--from", str(drive)) == 0
+    said = capsys.readouterr().out
+    monkeypatch.setenv("CAMPUSLIFE_ROOT", str(original))
+
+    def named(verb, device):
+        [command] = [part for line in said.splitlines() for part in line.split("`")[1::2] if f" {verb} <id>" in part]
+        return shlex.split(command.replace("<id>", device.device_id))
+
+    approve, revoke = named("approve", phone), named("revoke", lost)
+    assert approve[0] == revoke[0] == "campuslife-hub"
+    assert main(approve[1:]) == 0 and main(revoke[1:]) == 0
+
+    assert asyncio.run(states_in(restored, phone, lost)) == [DeviceState.ACTIVE, DeviceState.REVOKED]
+    assert asyncio.run(states_in(original, phone, lost)) == [DeviceState.ACTIVE, DeviceState.ACTIVE]
 
 
 async def applied_on(root, mutation):
