@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from sync_client import CONTRACT, Waking
+from sync_client import CONTRACT, Waking, epoch_of
 from sync_contract import checked
 
 from campuslife_hub import devices
@@ -89,12 +89,13 @@ class Bench:
     @asynccontextmanager
     async def sync(self):
         """A client of the sync app as serve makes it, on this bench's Hub, clock and limiter. It sends no bearer
-        token of its own, and every response it gets has passed sync_contract.check."""
+        token of its own, sends the Hub's epoch, and every response it gets has passed sync_contract.check."""
         hosted = Hosted(self.core, Waking(), self.redactor, DeviceSettings(dormant_after=self.dormant_after))
         device_sync = DeviceSync(hosted, clock=self.clock, limiter=self.limiter)
         app = create_sync_app(hosted, device_sync.authenticate, [device_sync.router])
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://hub.tailnet.test", headers=CONTRACT, event_hooks={"response": [checked]}
+            transport=httpx.ASGITransport(app=app), base_url="http://hub.tailnet.test", headers={**CONTRACT, **epoch_of(self.core)},
+            event_hooks={"response": [checked]},
         ) as client:
             yield client
 

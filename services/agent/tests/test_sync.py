@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response
 from sync_client import TOKEN, request_with, syncing
 
-from campuslife_hub import jobs
+from campuslife_hub import backup, jobs, mutations
 from campuslife_hub.devices import Refusal, RefusalCode
 
 async def test_get_hub_reports_the_identity_and_the_contract_versions_with_the_hub_headers(tmp_path):
@@ -34,7 +34,7 @@ OPERATIONS = [
     ("POST", "/v1/devices/me/status"), ("POST", "/v1/devices/me/token"),
 ]
 ADMIN_PATHS = [("GET", "/api/status"), ("POST", "/api/login"), ("GET", "/login"), ("GET", "/"), ("GET", "/jobs")]
-STATUS = {"app_version": "0.1.0", "pending_upload_count": 0, "pending_mutation_count": 0, "open_conflict_count": 0}
+STATUS = {"app_version": "0.1.0", "pending_upload_count": 0, "pending_mutation_count": 0, "rejected_mutation_count": 0}
 
 
 def status_router(seen):
@@ -382,3 +382,97 @@ async def test_a_trailing_slash_is_a_contract_error_not_a_redirect(tmp_path):
     async with syncing(tmp_path) as (core, client, phone, runner):
         answers = [await client.get("/v1/hub/"), await client.get("/v1/changes/?since=0"), await client.post("/v1/mutations/", json={"mutations": []})]
     assert [(answer.status_code, answer.json()["code"]) for answer in answers] == [(404, "not_found")] * 3
+
+
+def unread(body: bytes, pulled: list):
+    """A request body that notes in pulled whether the Hub ever asked for it."""
+
+    async def stream():
+        pulled.append(len(body))
+        yield body
+
+    return stream()
+
+
+async def test_e6_after_a_restore_a_pull_or_push_of_the_old_epoch_gets_409_unread_and_changes_nothing(tmp_path):
+    """D24 decision 4. Before it, the restored Hub answered since=<old cursor> with no rows and next_since unchanged, and
+    applied what the old epoch's client pushed against state the client had never seen."""
+    drive = tmp_path / "drive"
+    async with syncing(tmp_path / "original") as (core, client, phone, runner):
+        before, after = [tag("백업 전"), tag("또 백업 전")], [tag("백업 뒤")]
+        assert (await client.post("/v1/mutations", json={"mutations": before})).status_code == 200
+        await backup.back_up(core, drive)
+        assert (await client.post("/v1/mutations", json={"mutations": after})).status_code == 200
+        cursor = (await client.get("/v1/changes", params={"since": "0"})).json()["next_since"]
+        old_epoch = core.identity.epoch
+    await backup.restore(drive, tmp_path / "restored" / "root", sync_roots=[])
+
+    async with syncing(tmp_path / "restored", phone=phone) as (restored, client, _, _):
+        later = [tag("복원 뒤 하나"), tag("복원 뒤 둘")]
+        await mutations.apply(restored.db, later, restored.hub_device)
+        stale = {"CampusLife-Epoch": old_epoch}
+        pulled = []
+        stale_pull = await client.get("/v1/changes", params={"since": str(cursor)}, headers=stale)
+        stale_push = await client.post(
+            "/v1/mutations", content=unread(json.dumps({"mutations": after}).encode(), pulled), headers={**stale, "Content-Type": "application/json"}
+        )
+        new_epoch = stale_pull.json()["details"]["epoch"]
+        fresh = await client.get("/v1/changes", params={"since": "0"}, headers={"CampusLife-Epoch": new_epoch})
+        resent = await client.post("/v1/mutations", json={"mutations": before + after}, headers={"CampusLife-Epoch": new_epoch})
+
+    for refused in (stale_pull, stale_push):
+        assert (refused.status_code, refused.json()["code"]) == (409, "epoch_changed")
+        assert refused.json()["details"] == {"epoch": restored.identity.epoch}
+    assert new_epoch != old_epoch
+    assert pulled == []
+    assert sorted(change["id"] for change in fresh.json()["changes"]) == sorted(m["id"] for m in before + later)
+    assert [result["result"] for result in resent.json()["results"]] == ["duplicate", "duplicate", "applied"]
+
+
+EPOCH_BOUND = [("GET", "/v1/changes?since=0"), ("POST", "/v1/mutations")]
+
+
+async def test_the_feed_and_the_writes_refuse_a_missing_repeated_or_malformed_base_epoch_as_invalid_request(tmp_path):
+    async with syncing(tmp_path) as (core, client, phone, runner):
+        epoch = core.identity.epoch
+        answers = [
+            await client.send(request_with(client, method, path, {"campuslife-epoch": sent}))
+            for method, path in EPOCH_BOUND
+            for sent in ([], [epoch, epoch], [epoch.upper()], ["8"], [""])
+        ]
+
+    assert [(answer.status_code, answer.json()["code"]) for answer in answers] == [(400, "invalid_request")] * len(answers)
+    assert all("CampusLife-Epoch" in answer.json()["message"] for answer in answers)
+
+
+def without_epoch(request):
+    del request.headers["CampusLife-Epoch"]
+    return request
+
+
+async def test_no_other_operation_reads_the_base_epoch(tmp_path):
+    seen = []
+    async with syncing(tmp_path, routers=[status_router(seen)]) as (core, client, phone, runner):
+        other = {"CampusLife-Epoch": str(uuid.uuid4())}
+        answers = [
+            await client.get("/v1/hub", headers=other),
+            await client.post("/v1/devices/me/status", json=STATUS, headers=other),
+            await client.send(without_epoch(client.build_request("POST", "/v1/devices/me/status", json=STATUS))),
+            await client.post("/v1/blobs/uploads", json={"sha256": SHA, "size": 3}, headers=other),
+        ]
+
+    assert [answer.status_code for answer in answers] == [200, 204, 204, 201]
+
+
+async def test_the_base_epoch_is_judged_after_the_token_and_the_contract_version(tmp_path):
+    from campuslife_hub.sync_envelope import ContractVersions
+
+    async with syncing(tmp_path, versions=ContractVersions(current=3, minimum=2)) as (core, client, phone, runner):
+        stale = {"CampusLife-Epoch": str(uuid.uuid4()), "CampusLife-Contract": "2"}
+        unknown = await client.get("/v1/changes?since=0", headers={**stale, "Authorization": "Bearer someone-else"})
+        too_old = await client.post("/v1/mutations", json={"mutations": [tag()]}, headers={**stale, "CampusLife-Contract": "1"})
+        changed = await client.post("/v1/mutations", json={"mutations": [tag()]}, headers=stale)
+
+    assert (unknown.status_code, unknown.json()["code"]) == (401, "unauthorized")
+    assert (too_old.status_code, too_old.json()["code"]) == (400, "contract_too_old")
+    assert (changed.status_code, changed.json()["code"]) == (409, "epoch_changed")

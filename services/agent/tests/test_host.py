@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 from conftest import SignedAs
+from sync_client import epoch_of
 from sync_contract import checked
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
@@ -486,9 +487,10 @@ def tag_batch():
 
 
 @asynccontextmanager
-async def sync_client(listening):
+async def sync_client(listening, core):
     async with httpx.AsyncClient(
-        base_url=f"http://127.0.0.1:{listening.sync[1]}", headers=SYNC_HEADERS, trust_env=False, event_hooks={"response": [checked]}
+        base_url=f"http://127.0.0.1:{listening.sync[1]}", headers={**SYNC_HEADERS, **epoch_of(core)}, trust_env=False,
+        event_hooks={"response": [checked]},
     ) as client:
         yield client
 
@@ -507,7 +509,7 @@ async def read_response(reader):
 
 async def test_a_sync_app_whose_authenticator_refuses_every_token_answers_401_with_the_hub_headers(tmp_path):
     async with serving(tmp_path, sync_app=lambda hosted: create_sync_app(hosted, refuse_every_bearer)) as (core, client, listening, stop, served):
-        async with sync_client(listening) as sync:
+        async with sync_client(listening, core) as sync:
             answers = [await sync.get("/v1/hub"), await sync.post("/v1/mutations", json=tag_batch()), await sync.get("/api/status")]
         assert (await client.get("/api/status", auth=SIGNED)).status_code == 200
 
@@ -526,9 +528,7 @@ async def test_tokens_paired_and_reissued_over_the_sync_listener_reach_neither_h
     root.setLevel(logging.DEBUG)
     try:
         async with serving(tmp_path, redactor=redactor, sync_app=sync_devices.sync_app) as (core, client, listening, *_):
-            async with httpx.AsyncClient(
-                base_url=f"http://127.0.0.1:{listening.sync[1]}", headers={"CampusLife-Contract": "1"}, trust_env=False, event_hooks={"response": [checked]}
-            ) as sync:
+            async with sync_client_at(listening, core) as sync:
 
                 async def paired():
                     offer = await devices.offer(core, now=datetime.now(UTC), public_url="https://campus-laptop.tail0a1b2c.ts.net", redactor=redactor)
@@ -559,7 +559,7 @@ async def test_a_token_issued_before_a_restart_is_masked_in_hub_log_once_it_auth
     first = Redactor()
     async with serving(tmp_path, redactor=first, sync_app=sync_devices.sync_app) as (core, client, listening, *_):
         offer = await devices.offer(core, now=datetime.now(UTC), public_url="https://campus-laptop.tail0a1b2c.ts.net", redactor=first)
-        async with sync_client_at(listening) as sync:
+        async with sync_client_at(listening, core) as sync:
             body = {"secret": offer.secret, "platform": "android", "device_name": "Fold8", "app_version": "0.1.0"}
             token = (await sync.post("/v1/pair", json=body)).json()["token"]
 
@@ -572,7 +572,7 @@ async def test_a_token_issued_before_a_restart_is_masked_in_hub_log_once_it_auth
     root.setLevel(logging.DEBUG)
     try:
         async with serving(tmp_path, redactor=restarted, sync_app=sync_devices.sync_app) as (core, client, listening, *_):
-            async with sync_client_at(listening) as sync:
+            async with sync_client_at(listening, core) as sync:
                 answer = await sync.get("/v1/hub", headers={"Authorization": f"Bearer {token}"})
             logging.getLogger("campuslife_hub.test").warning("received %s", token)
     finally:
@@ -584,10 +584,11 @@ async def test_a_token_issued_before_a_restart_is_masked_in_hub_log_once_it_auth
     assert token not in log_file.read_text(encoding="utf-8")
 
 
-def sync_client_at(listening):
-    """A client of the sync listener sending no token of its own, every response checked against sync.yaml."""
+def sync_client_at(listening, core):
+    """A client of the sync listener sending no token of its own and core's epoch, every response checked against sync.yaml."""
     return httpx.AsyncClient(
-        base_url=f"http://127.0.0.1:{listening.sync[1]}", headers={"CampusLife-Contract": "1"}, trust_env=False, event_hooks={"response": [checked]}
+        base_url=f"http://127.0.0.1:{listening.sync[1]}", headers={"CampusLife-Contract": "1", **epoch_of(core)}, trust_env=False,
+        event_hooks={"response": [checked]},
     )
 
 
@@ -626,7 +627,7 @@ SERVED_WITH_A_PUBLIC_URL = {"devices": DeviceSettings(public_url="https://campus
 
 async def test_a_device_added_in_the_local_ui_pairs_on_the_sync_listener_and_syncs(tmp_path):
     async with serving(tmp_path, sync_app=sync_devices.sync_app, config=SERVED_WITH_A_PUBLIC_URL) as (core, client, listening, *_):
-        async with sync_client_at(listening) as sync:
+        async with sync_client_at(listening, core) as sync:
             paired = await paired_through_the_local_ui(client, sync, listening)
             synced = await sync.get("/v1/changes", params={"since": "0"}, headers=bearer(paired["token"]))
             listed = (await client.get("/api/devices", auth=SIGNED)).json()["devices"]
@@ -637,7 +638,7 @@ async def test_a_device_added_in_the_local_ui_pairs_on_the_sync_listener_and_syn
 
 async def test_a_device_revoked_through_the_admin_api_is_refused_on_its_next_request_and_no_other_is(tmp_path):
     async with serving(tmp_path, sync_app=sync_devices.sync_app, config=SERVED_WITH_A_PUBLIC_URL) as (core, client, listening, *_):
-        async with sync_client_at(listening) as sync:
+        async with sync_client_at(listening, core) as sync:
             lost = await paired_through_the_local_ui(client, sync, listening)
             kept = await paired_through_the_local_ui(client, sync, listening)
             assert (await sync.post("/v1/mutations", json=tag_batch(), headers=bearer(lost["token"]))).status_code == 200
@@ -653,7 +654,7 @@ async def test_a_device_revoked_through_the_admin_api_is_refused_on_its_next_req
 
 async def test_a_dormant_device_approved_through_the_admin_api_syncs_on_from_its_cursor_and_stays_active(tmp_path):
     async with serving(tmp_path, sync_app=sync_devices.sync_app, config=SERVED_WITH_A_PUBLIC_URL) as (core, client, listening, *_):
-        async with sync_client_at(listening) as sync:
+        async with sync_client_at(listening, core) as sync:
             phone = await paired_through_the_local_ui(client, sync, listening)
             assert (await sync.post("/v1/mutations", json=tag_batch(), headers=bearer(phone["token"]))).status_code == 200
             cursor = (await sync.get("/v1/changes", params={"since": "0"}, headers=bearer(phone["token"]))).json()["next_since"]
@@ -687,7 +688,7 @@ async def test_a_chunked_body_reaches_the_sync_app_whole(tmp_path):
             yield body[start:start + 7]
 
     async with serving(tmp_path, sync_app=sync_admitting_the_hub_device) as (core, client, listening, stop, served):
-        async with sync_client(listening) as sync:
+        async with sync_client(listening, core) as sync:
             answer = await sync.post("/v1/mutations", content=pieces(), headers={"Content-Type": "application/json"})
             stored = await tags(sync)
 
@@ -706,13 +707,13 @@ async def test_a_body_cut_off_midway_applies_nothing_logs_no_failure_and_the_lis
         sent = half if framing == "content-length" else f"{len(half):x}\r\n".encode() + half + b"\r\n"
         writer.write(
             f"POST /v1/mutations HTTP/1.1\r\nHost: 127.0.0.1\r\nCampusLife-Contract: 1\r\nAuthorization: Bearer {SYNC_TOKEN}\r\n"
-            f"Content-Type: application/json\r\n{framed}\r\n\r\n".encode() + sent
+            f"CampusLife-Epoch: {core.identity.epoch}\r\nContent-Type: application/json\r\n{framed}\r\n\r\n".encode() + sent
         )
         await writer.drain()
         await asyncio.sleep(0.2)
         writer.close()
         await asyncio.sleep(0.3)
-        async with sync_client(listening) as sync:
+        async with sync_client(listening, core) as sync:
             assert await tags(sync) == []
             assert (await sync.post("/v1/mutations", json=tag_batch())).json()["results"][0]["result"] == "applied"
 
@@ -752,7 +753,7 @@ async def raw_request(reader, writer, head: str, body: bytes = b""):
 
 async def test_an_upload_cut_off_mid_chunk_is_finished_over_another_connection(tmp_path):
     async with serving(tmp_path, sync_app=sync_admitting_the_hub_device) as (core, client, listening, stop, served):
-        async with sync_client(listening) as sync:
+        async with sync_client(listening, core) as sync:
             assert (await sync.post("/v1/blobs/uploads", json={"sha256": UPLOADED_SHA, "size": len(UPLOADED)})).status_code == 201
         reader, writer = await asyncio.open_connection("127.0.0.1", listening.sync[1])
         writer.write(
@@ -763,7 +764,7 @@ async def test_an_upload_cut_off_mid_chunk_is_finished_over_another_connection(t
         await asyncio.sleep(0.2)
         writer.close()
         await asyncio.sleep(0.3)
-        async with sync_client(listening) as sync:
+        async with sync_client(listening, core) as sync:
             resumed = await sync.post("/v1/blobs/uploads", json={"sha256": UPLOADED_SHA, "size": len(UPLOADED)})
             sent = await sync.put(f"/v1/blobs/uploads/{UPLOADED_SHA}/chunks/0", content=UPLOADED)
             finalized = await sync.post(f"/v1/blobs/uploads/{UPLOADED_SHA}/finalize")
@@ -787,7 +788,7 @@ async def test_a_chunk_refused_before_its_body_is_answered_at_once_and_the_conne
     """The refusal comes before the client sends the body; the server then reads and drops that body, so the same
     connection takes the next request (#4 decision 5)."""
     async with serving(tmp_path, sync_app=sync_admitting_the_hub_device) as (core, client, listening, stop, served):
-        async with sync_client(listening) as sync:
+        async with sync_client(listening, core) as sync:
             await sync.post("/v1/blobs/uploads", json={"sha256": UPLOADED_SHA, "size": len(UPLOADED)})
         reader, writer = await asyncio.open_connection("127.0.0.1", listening.sync[1])
         head = (
@@ -803,6 +804,29 @@ async def test_a_chunk_refused_before_its_body_is_answered_at_once_and_the_conne
     assert refused.split()[1] == status
     assert after.split()[1] == b"200"
     assert json.loads(body)["hub_id"] == core.identity.hub_id
+
+
+async def test_a_push_of_another_epoch_is_answered_409_before_its_body_and_the_connection_goes_on(tmp_path):
+    """D24 decision 4: the Hub judges the base epoch before it reads the body, so nothing of the batch is applied."""
+    body = json.dumps(tag_batch()).encode()
+    async with serving(tmp_path, sync_app=sync_admitting_the_hub_device) as (core, client, listening, stop, served):
+        reader, writer = await asyncio.open_connection("127.0.0.1", listening.sync[1])
+        head = (
+            f"POST /v1/mutations HTTP/1.1\r\nHost: 127.0.0.1\r\nCampusLife-Contract: 1\r\nAuthorization: Bearer {SYNC_TOKEN}\r\n"
+            f"CampusLife-Epoch: {uuid.uuid4()}\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n"
+        )
+        refused, answer = await raw_request(reader, writer, head)
+        writer.write(body)
+        after, _ = await raw_request(reader, writer, "GET /v1/hub HTTP/1.1\r\nHost: 127.0.0.1\r\nCampusLife-Contract: 1\r\n"
+                                     f"Authorization: Bearer {SYNC_TOKEN}\r\n\r\n")
+        writer.close()
+        async with sync_client(listening, core) as sync:
+            stored = await tags(sync)
+
+    assert refused.split()[1] == b"409"
+    assert (json.loads(answer)["code"], json.loads(answer)["details"]) == ("epoch_changed", {"epoch": core.identity.epoch})
+    assert after.split()[1] == b"200"
+    assert stored == []
 
 
 DOWNLOADED = bytes(range(256)) * 32768
@@ -822,7 +846,7 @@ async def test_a_download_cut_off_mid_body_resumes_by_range_over_another_connect
         head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 10)
         reached = await asyncio.wait_for(reader.readexactly(100_000), 10)
         writer.close()
-        async with sync_client(listening) as sync:
+        async with sync_client(listening, core) as sync:
             rest = await sync.get(f"/v1/blobs/{DOWNLOADED_SHA}", headers={"Range": f"bytes={len(reached)}-"})
         finished = (await purge.purge_blob(core.db, core.blobs, DOWNLOADED_SHA, hooks=purge.PurgeHooks())).finished
         for _ in range(50):

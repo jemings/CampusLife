@@ -54,10 +54,10 @@ class Codec<T>(private val serializer: KSerializer<T>, private val view: (T) -> 
     fun roundTrip(text: String): String = wireJson.encodeToString(serializer, read(text))
 }
 
-/** A shape the app passes along without reading it (#3 decision 3): Artifacts, Suggestions, Locators, headers. */
+/** A shape the app passes along without reading it (#3 decision 3): Artifacts, Suggestions, Locators, ConflictRecords, headers. */
 private val kept = Codec(JsonObject.serializer())
 
-private val keptGroups = setOf("artifact", "suggestion", "locator")
+private val keptGroups = setOf("artifact", "suggestion", "locator", "conflict_record")
 
 /** The model for a schema_id: a typed one, or [kept] for the shapes decision 3 leaves unread; anything else has none. */
 fun codecFor(schemaId: String): Codec<*> =

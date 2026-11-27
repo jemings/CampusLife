@@ -24,6 +24,15 @@ info:
     Error bodies are `common/error`, whose code is open: a client treats a code
     it does not know as a plain failure.
 
+    GET /v1/changes and POST /v1/mutations also send CampusLife-Epoch: the Hub
+    epoch the client's cache, cursor and kept Mutations belong to, taken from
+    its first GET /v1/hub and changed only when it handles 409 epoch_changed
+    (D24). A Hub restored from a backup has another epoch, so it answers both
+    with 409 epoch_changed before it reads the body: a cursor of the old epoch
+    would skip rows and a Mutation judged against it would be recorded against
+    the wrong state. The CampusLife-Epoch of a response is for diagnosis; a
+    client does not compare it.
+
     Any operation can answer 500 internal_error, with the Hub headers. A
     response without CampusLife-Hub-Id, such as the 502 tailscale serve sends
     while the Hub is down, means the Hub was not reached: back off and try
@@ -306,6 +315,7 @@ paths:
         drops that entry and sends the rest again.
       parameters:
         - $ref: "#/components/parameters/Contract"
+        - $ref: "#/components/parameters/BaseEpoch"
       requestBody:
         required: true
         content:
@@ -328,12 +338,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/EpochChanged"
   /v1/changes:
     get:
       operationId: getChanges
       summary: Rows changed since a cursor (D3).
       parameters:
         - $ref: "#/components/parameters/Contract"
+        - $ref: "#/components/parameters/BaseEpoch"
         - name: since
           in: query
           required: true
@@ -359,6 +372,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/EpochChanged"
   /v1/hub:
     get:
       operationId: getHub
@@ -451,6 +466,13 @@ components:
       required: true
       schema:
         $ref: "../schemas/sync/request_headers.json#/properties/CampusLife-Contract"
+    BaseEpoch:
+      name: CampusLife-Epoch
+      in: header
+      required: true
+      description: The Hub epoch the client's cache, cursor and kept Mutations belong to (D24).
+      schema:
+        $ref: "../schemas/sync/request_headers.json#/properties/CampusLife-Epoch"
     Sha:
       name: sha
       in: path
@@ -516,6 +538,24 @@ components:
             $ref: "../schemas/common/error.json"
     Unauthorized:
       description: unauthorized, device_revoked or device_dormant.
+      headers:
+        CampusLife-Hub-Id:
+          $ref: "#/components/headers/HubId"
+        CampusLife-Epoch:
+          $ref: "#/components/headers/Epoch"
+      content:
+        application/json:
+          schema:
+            $ref: "../schemas/common/error.json"
+    EpochChanged:
+      description: >-
+        epoch_changed, with the Hub's epoch as details.epoch: the request's
+        CampusLife-Epoch is not the Hub's, as after a restore. The Hub answers
+        before it reads the body and applies nothing. The client then, in one
+        local transaction, empties its cache, sets its cursor to 0, takes
+        details.epoch as its CampusLife-Epoch and puts the Mutations it kept
+        back ahead of the unsent ones in their first order; it pulls from
+        since=0 and sends them all again (D24).
       headers:
         CampusLife-Hub-Id:
           $ref: "#/components/headers/HubId"

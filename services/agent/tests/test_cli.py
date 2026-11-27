@@ -1102,6 +1102,7 @@ def test_after_a_restore_the_hub_serving_approves_the_device_in_hand_and_revokes
     root, restored, drive = tmp_path / "CampusLife", tmp_path / "Restored", tmp_path / "drive"
     hub(root, "init")
     phone, lost = asyncio.run(paired_in(root, "Fold8", "잃어버린 휴대폰"))
+    paired_epoch = asyncio.run(epoch_in(root))
     tag = {"mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301", "op": "create", "entity": "tag",
            "id": "0f8fad5b-d9cb-469f-a165-70867728950e", "data": {"name": "시험", "color": "#ff8800"}}
     asyncio.run(applied_on(root, tag))
@@ -1119,7 +1120,8 @@ def test_after_a_restore_the_hub_serving_approves_the_device_in_hand_and_revokes
         assert hub(restored, "revoke", lost.device_id) == 0
         capsys.readouterr()
         sync_port = int(until_logged(restored.parent / "serve.out", r"serving the sync listener on http://127\.0\.0\.1:(\d+)"))
-        synced, refused = sync_get(sync_port, phone.token), sync_get(sync_port, lost.token)
+        changed, refused = sync_get(sync_port, phone.token, paired_epoch), sync_get(sync_port, lost.token, paired_epoch)
+        synced = sync_get(sync_port, phone.token, changed[1]["details"]["epoch"])
         assert hub(restored, "stop") == 0
         assert process.wait(timeout=30) == 0
     finally:
@@ -1129,7 +1131,9 @@ def test_after_a_restore_the_hub_serving_approves_the_device_in_hand_and_revokes
 
     assert listed.count(" dormant ") == 2
     assert approved.startswith(f"approved {phone.device_id} (android Fold8, last seen never, last refused never): ")
+    assert (changed[0], changed[1]["code"]) == (409, "epoch_changed")
     assert synced[0] == 200 and tag["id"] in {change["id"] for change in synced[1]["changes"]}
+    assert synced[1]["epoch"] == changed[1]["details"]["epoch"] != paired_epoch
     assert (refused[0], refused[1]["code"]) == (401, "device_revoked")
 
 
@@ -1159,11 +1163,17 @@ async def applied_on(root, mutation):
         await mutations.apply(core.db, [mutation], core.hub_device)
 
 
-def sync_get(port, token):
-    """GET /v1/changes?since=0 on the sync listener with token: the status and the JSON body."""
+async def epoch_in(root):
+    async with open_core(root, create=False, sync_roots=[]) as core:
+        return core.identity.epoch
+
+
+def sync_get(port, token, epoch):
+    """GET /v1/changes?since=0 on the sync listener with token and base epoch: the status and the JSON body."""
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
     try:
-        connection.request("GET", "/v1/changes?since=0", headers={"CampusLife-Contract": "1", "Authorization": f"Bearer {token}"})
+        headers = {"CampusLife-Contract": "1", "Authorization": f"Bearer {token}", "CampusLife-Epoch": epoch}
+        connection.request("GET", "/v1/changes?since=0", headers=headers)
         answer = connection.getresponse()
         return answer.status, json.loads(answer.read())
     finally:

@@ -40,7 +40,7 @@ async def test_the_api_lists_client_devices_oldest_first_without_the_hub_itself(
         clock.now += timedelta(minutes=1)
         tablet = await paired(admin, "iPad", ClientPlatform.IPADOS)
         await devices.heartbeat(admin.core, tablet.device_id, {"app_version": "0.2.0", "pending_upload_count": 3, "pending_mutation_count": 0,
-                                                               "open_conflict_count": 0}, now=clock())
+                                                               "rejected_mutation_count": 0}, now=clock())
 
         listed = (await client.get("/api/devices", auth=SIGNED)).json()["devices"]
 
@@ -140,6 +140,19 @@ async def test_the_device_page_shows_each_name_escaped_beside_the_start_of_its_i
     assert '<a href="/devices">Devices</a>' in shown
 
 
+async def test_the_device_page_shows_the_counts_a_device_last_reported(tmp_path):
+    """rejected_mutation_count is the client's rejected list (D24 decision 6); open ConflictRecords are the Hub's to count."""
+    async with hub(tmp_path, **WITH_URL) as (client, admin):
+        await log_in(client)
+        phone = await paired(admin)
+        status = {"app_version": "0.1.0", "pending_upload_count": 3, "pending_mutation_count": 2, "rejected_mutation_count": 1}
+        await devices.heartbeat(admin.core, phone.device_id, status, now=admin.clock())
+        shown = (await client.get("/devices")).text
+
+    assert "3 uploads and 2 changes waiting, 1 refused" in shown
+    assert "conflict" not in shown
+
+
 async def test_what_a_device_reports_about_itself_is_escaped_on_the_device_page(tmp_path):
     """app_version and last_error come from the device, and the one-line rule lets <, > and & through."""
     async with hub(tmp_path, **WITH_URL) as (client, admin):
@@ -148,7 +161,7 @@ async def test_what_a_device_reports_about_itself_is_escaped_on_the_device_page(
         request = PairRequest(offer.secret, ClientPlatform.ANDROID, "Fold8", "<img src=x>")
         phone = await devices.pair(admin.core, request, now=admin.clock(), limiter=PairingLimiter(), redactor=admin.redactor)
         shown_paired = (await client.get("/devices")).text
-        status = {"app_version": "<i>v</i>", "pending_upload_count": 0, "pending_mutation_count": 0, "open_conflict_count": 0, "last_error": "<b>boom</b>"}
+        status = {"app_version": "<i>v</i>", "pending_upload_count": 0, "pending_mutation_count": 0, "rejected_mutation_count": 0, "last_error": "<b>boom</b>"}
         await devices.heartbeat(admin.core, phone.device_id, status, now=admin.clock())
         shown = (await client.get("/devices")).text
 
