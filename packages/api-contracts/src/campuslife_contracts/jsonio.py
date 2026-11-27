@@ -54,8 +54,24 @@ def _finite_float(text: str) -> float:
     return number
 
 
+class FractionalSpelling(Decimal):
+    """A number the text wrote with a fraction or an exponent (`1.0`, `1E0`, `2.5`).
+
+    Decimal cannot tell `1` from `1E0`, so exact_numbers readings keep the spelling.
+    """
+
+    text: str
+
+    def __new__(cls, text: str):
+        number = super().__new__(cls, text)
+        number.text = text
+        return number
+
+
 def loads_strict(text: str, *, exact_numbers: bool = False) -> object:
     """Parse JSON text; with exact_numbers every number becomes a Decimal.
+
+    A number written with a fraction or an exponent is a FractionalSpelling.
 
     Rejects duplicate members, NaN/Infinity, escapes of lone surrogates (JSON
     syntax but not Unicode text) and, without exact_numbers, numbers a double
@@ -64,7 +80,7 @@ def loads_strict(text: str, *, exact_numbers: bool = False) -> object:
     try:
         value = json.loads(
             text,
-            parse_float=Decimal if exact_numbers else _finite_float,
+            parse_float=FractionalSpelling if exact_numbers else _finite_float,
             parse_int=Decimal if exact_numbers else None,
             parse_constant=_reject_constant,
             object_pairs_hook=_unique_members,
