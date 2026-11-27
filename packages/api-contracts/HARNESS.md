@@ -94,6 +94,16 @@ uv run campuslife-contracts compare fixtures/valid <out>
 - identify 본문(`artifact/identify`)은 Blob 바이트가 보여 주는 형식(`media_type`, 바이트로 더 가를 수 없으면 `text/plain` 같은 계열)과 판별기 `identifier`만 담고 `blocks`는 비어 있습니다. 파일 이름·신고 MIME으로 좁힌 값은 Attachment마다 Hub가 계산해 `detected_mime`에 씁니다. 이름과 바이트가 어긋난다는 사실은 저장하지 않습니다.
 - extraction `warnings[].code`는 읽지 못했거나 일부만 읽은 이유입니다(`no_text_layer`, `limit_reached`, `replaced_characters`). 처리 결과(`outcome_code`)는 ProcessingJob이 가지며 본문에 싣지 않습니다(D1).
 
+## ConflictRecord
+
+ConflictRecord(`conflict_record/conflict_record`)는 patch가 제출했지만 Hub가 쓰지 않은 값을 보존하는 Hub 소유 엔터티이고, 변경 피드에 `entity: conflict_record` 행으로 옵니다(D18, D24). 하네스는 다른 Hub 송신 모양처럼 왕복하고 forward를 디코드합니다.
+
+- Mutation 하나에 기록 하나이고 `id`는 그 Mutation의 `mutation_id`입니다. 결과의 `conflict_record_ids`가 이 id를 가리킵니다.
+- `entity_ref`는 patch가 가리킨 엔터티(`item:<id>` 등)입니다.
+- 열린 기록은 `set`(제출한 change를 patch의 set 모양 그대로)을, 해소된 기록은 `set` 대신 `resolved {at, mutation_id}`를 가집니다. 스키마는 둘 중 정확히 하나를 요구합니다. **클라이언트는 `set`이 있을 때만 열린 기록으로 봅니다.** 기록을 닫는 새 방식은 `resolved` 안의 멤버(예: `resolved.how`)로 더하고, 둘 다 없는 제3의 상태로는 더하지 않습니다. 그래서 옛 클라이언트도 열림과 해소를 그대로 가립니다(forward `resolved_unknown_member`).
+- `set`의 키는 같은 계약의 열 이름이라 Suggestion `patch_item`의 `set`처럼 열려 있지 않습니다(`tests/test_open_closed.py`의 `FREE_FORM_IN_FEED`). 각 change 객체와 `resolved`는 열려 있습니다.
+- 기록의 tombstone(`deleted: true`)은 기록이 대상 엔터티와 함께 지워졌다는 뜻이고, 해소할 것이 남지 않습니다.
+
 ## HTTP 표면 (OpenAPI)
 
 `openapi/sync.yaml`(OpenAPI 3.1)이 sync 포트의 경로, 상태 코드, 미디어 타입, 인증(Bearer), 헤더를 적습니다. 본문·쿼리·경로 파라미터·헤더의 모양은 모두 `schemas/`의 JSON Schema를 `$ref`하며 이 문서에 따로 정의하지 않습니다(D17). 검사는 `uv run openapi-spec-validator openapi/sync.yaml`과 pytest(`tests/test_openapi.py`)입니다.
@@ -113,6 +123,10 @@ uv run campuslife-contracts compare fixtures/valid <out>
 - 업로드 세션의 키는 (이 Device, sha256)입니다(E19). 같은 sha256으로 열린 세션에 다른 `size`를 보내면 400 `invalid_request`이고, revoke하면 그 Device의 열린 세션이 폐기됩니다(D6). 이미 저장된 Blob의 finalize는 세션이 없어도 200입니다(D7).
 - 업로드 chunk 번호는 0부터이고, chunk i는 바이트 `[i*chunk_size, min((i+1)*chunk_size, size))`입니다. chunk는 ceil(size/chunk_size)개이고 `received`의 값은 모두 그보다 작습니다(규칙 `chunk_index`). 크기 0인 Blob은 chunk가 없고 바로 finalize합니다(E19). 경로의 `{i}`는 정수 파라미터라서 스키마는 `07` 같은 선행 0 표기를 거르지 않습니다. 클라이언트는 `7`처럼 선행 0 없이 쓰고, Hub는 그 밖의 표기를 400 `invalid_request`로 거절합니다.
 - chunk 본문은 정확히 그 chunk의 길이입니다. Hub는 본문을 읽기 전에 거절할 수 있으면(401, 404, 다른 `Content-Length` 등) 본문을 기다리지 않고 바로 답하고, 남은 본문은 서버가 읽어 버리므로 연결은 계속 쓸 수 있습니다. `Expect: 100-continue`로 보낸 요청이 그렇게 거절되면 클라이언트는 그 연결에 선언한 본문을 마저 보내거나 연결을 닫습니다. 본문 없이 같은 연결에 다음 요청을 보내면 Hub는 그것을 본문의 일부로 읽습니다. 그래서 선언한 길이가 그 요청보다 길면(8 MiB chunk라면 대개 그렇습니다) 응답 없이 keep-alive가 끝날 때까지 기다리다 연결이 닫히고, 짧으면 계약 밖 400 `text/plain` 뒤에 닫힙니다.
+- `GET /v1/changes`와 `POST /v1/mutations`는 요청 헤더 `CampusLife-Epoch`(`sync/request_headers`)를 꼭 싣습니다. 값은 클라이언트의 캐시·cursor·보관 Mutation이 속한 Hub epoch(기준 epoch)이고, 처음 `GET /v1/hub`에서 정하며 409 `epoch_changed`를 처리할 때만 바꿉니다. pairing·재pairing·401은 기준 epoch을 바꾸지 않습니다. 없거나 두 번 오거나 형식이 틀리면 400 `invalid_request`, Hub의 epoch과 다르면(복원·이전 뒤) Hub가 **본문을 읽기 전에** 409 `epoch_changed`이고 아무것도 적용하지 않습니다. 다른 operation은 이 헤더를 읽지 않습니다(D24).
+  - 409 본문의 `details.epoch`가 Hub의 epoch입니다. 클라이언트는 로컬 트랜잭션 하나로 캐시를 비우고, cursor를 0으로, 기준 epoch을 `details.epoch`로 바꾸고, 보관한 Mutation을 미전송 Mutation 앞에 처음 순서대로 되돌린 뒤 `since=0`부터 받고 모두 다시 보냅니다. 복원된 Hub에 이미 있던 것은 `duplicate`, 잃은 것만 다시 판정됩니다. 몇 번 되풀이해도 같은 끝 상태입니다.
+  - 응답의 `CampusLife-Epoch` 헤더는 진단용이고 클라이언트가 비교하지 않습니다.
+  - 클라이언트는 Hub가 결과를 돌려준(ACK) Mutation을 `SENT_RETENTION_DAYS`(60, `campuslife_contracts.SENT_RETENTION_DAYS`)일 동안 보관합니다. Hub가 Mutation 결과를 기억하는 90일보다 짧아서, 보관 중인 Mutation의 첫 결과는 Hub에 남아 있습니다. `capture.commit`은 그 원본을 보관하는 동안 보관합니다.
 - 쿼리 값(`sync/changes_query`)과 헤더 값은 도착한 그대로의 문자열로 검사합니다. 숫자 문자열(`since`, `Range`, `Content-Range`)의 숫자는 int64 범위 안이고(규칙 `int64_text`: `9223372036854775807`까지), 바이트 범위는 first ≤ last이며 `Content-Range`의 last는 크기보다 작습니다(규칙 `byte_range`). 416은 `Content-Range: bytes */<size>`(`blob/range_not_satisfiable_headers`)를 싣습니다.
 
 ## HTTP 헤더 이름

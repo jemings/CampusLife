@@ -1,6 +1,6 @@
 [
   {
-    "path": "/open_conflict_count",
+    "path": "/rejected_mutation_count",
     "keyword": "type"
   }
 ]

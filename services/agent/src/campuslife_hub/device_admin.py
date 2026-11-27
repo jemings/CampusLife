@@ -94,7 +94,7 @@ def _reported(device: DeviceRecord) -> str:
         return "-"
     counts = (
         f"{escape(str(status.get('pending_upload_count')))} uploads and {escape(str(status.get('pending_mutation_count')))} changes waiting, "
-        f"{escape(str(status.get('open_conflict_count')))} conflicts"
+        f"{escape(str(status.get('rejected_mutation_count')))} refused"
     )
     error = f"<br>{escape(str(status['last_error']))}" if status.get("last_error") else ""
     return f"{escape(device.last_status_at or '')}: {counts}{error}"

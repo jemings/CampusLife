@@ -69,6 +69,7 @@ OWNERS = {
          "input_hashes", "content_blob", "created_at"], HUB),
     "suggestion/suggestion": dict.fromkeys(
         ["id", "source_artifact_id", "action", "proposed", "evidence", "fingerprint", "state", "conflicts_with"], HUB),
+    "conflict_record/conflict_record": dict.fromkeys(["id", "entity_ref", "set", "resolved"], HUB),
     "capture/attachment": {
         "id": "client", "capture_id": "hub", "blob_sha256": "hub", "role": "client", "seq": "client",
         "original_filename": "client", "original_filename_raw": "client", "declared_mime": "client",

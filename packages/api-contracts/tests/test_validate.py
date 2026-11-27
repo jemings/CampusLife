@@ -139,13 +139,16 @@ def test_error_code_catalogue_is_exactly_the_contract_list():
     catalogue = [
         "invalid_request", "not_canonical", "id_reuse", "hash_mismatch", "chunk_mismatch", "incomplete",
         "unauthorized", "device_revoked", "device_dormant", "not_found", "contract_too_old", "hub_storage_full",
-        "internal_error",
+        "internal_error", "epoch_changed",
     ]
     schema = json.loads((contract_root() / "schemas/common/error.json").read_text(encoding="utf-8"))
     assert schema["properties"]["code"]["examples"] == catalogue
     assert schema["properties"]["code"]["x-open"] is True
     for code in catalogue:
-        details = {"details": {"missing_chunks": [0]}} if code == "incomplete" else {}
+        details = {
+            "incomplete": {"details": {"missing_chunks": [0]}},
+            "epoch_changed": {"details": {"epoch": "e4eaaaf2-d142-41ff-9e1f-2b3c4d5e6f70"}},
+        }.get(code, {})
         assert validate("common/error", {"code": code, "message": "m", **details}) == []
 
 

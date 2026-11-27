@@ -2,9 +2,9 @@
 
 import httpx
 import pytest
-from sync_contract import ANY_CONTRACT, PUBLIC, check
+from sync_contract import ANY_CONTRACT, EPOCH_BOUND, PUBLIC, check
 
-from campuslife_hub.sync_envelope import ANY_CONTRACT_OPERATIONS, PUBLIC_OPERATIONS
+from campuslife_hub.sync_envelope import ANY_CONTRACT_OPERATIONS, EPOCH_OPERATIONS, PUBLIC_OPERATIONS
 
 HUB = {"CampusLife-Hub-Id": "c56a4180-65aa-42ec-a945-5fd21dec0538", "CampusLife-Epoch": "e4eaaaf2-d142-41ff-9e1f-2b3c4d5e6f70"}
 HUB_BODY = {"hub_id": HUB["CampusLife-Hub-Id"], "epoch": HUB["CampusLife-Epoch"], "contract_version": 1, "min_contract_version": 1}
@@ -55,6 +55,7 @@ def test_a_response_the_document_does_not_allow_fails(response):
         check(response)
 
 
-def test_the_envelope_s_public_and_any_version_operations_are_the_document_s():
+def test_the_envelope_s_public_any_version_and_epoch_bound_operations_are_the_document_s():
     assert PUBLIC_OPERATIONS == PUBLIC
     assert ANY_CONTRACT_OPERATIONS == ANY_CONTRACT
+    assert EPOCH_OPERATIONS == EPOCH_BOUND

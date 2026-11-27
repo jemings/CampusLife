@@ -32,6 +32,7 @@ OPEN = {
     "blob/upload_session", "blob/stored", "blob/download_request_headers", "blob/download_response_headers",
     "blob/range_not_satisfiable_headers",
     "locator/locator", "artifact/artifact", "artifact/body", "artifact/extraction", "artifact/identify", "suggestion/suggestion",
+    "conflict_record/conflict_record",
     *(schema_id for schema_id in CONTRACT.schema_ids if schema_id.startswith("item/fields/")),
 }
 
@@ -210,8 +211,20 @@ def test_a_proposal_names_the_members_of_the_input_it_mirrors():
     assert names(SUGGESTION["proposed_change"]) == names(MUTATION["change"])
 
 
+def test_a_conflict_record_keeps_a_change_as_the_patch_sent_it():
+    """D24 decision 1: the record inlines the submitted set entries, an open copy of the closed input."""
+    record = schema("conflict_record/conflict_record")
+    assert record["properties"]["set"]["propertyNames"] == {"$ref": "../mutation/mutation.json#/$defs/set_key"}
+    assert names(record["$defs"]["submitted_change"]) == names(MUTATION["change"])
+    assert "additionalProperties" not in record["$defs"]["submitted_change"]
+
+
 CLOSED_VALUE_TYPES = ("common/local_date", "common/local_time_rule")
-FREE_FORM_IN_FEED = {("suggestion/suggestion", ("proposed", "set"))}
+FREE_FORM_IN_FEED = {
+    ("suggestion/suggestion", ("proposed", "set")),
+    ("conflict_record/conflict_record", ("set",)),
+    ("sync/changes_page", ("changes", "data", "set")),
+}
 HASHED = {("artifact/extraction", ("extractor", "params"))}
 """Open objects a rule hashes: a member added there is another value, which the block ids follow (rule block_id)."""
 OPEN_SAMPLES = [
@@ -261,6 +274,10 @@ def test_the_open_samples_reach_the_nested_feed_shapes():
         ("capture/capture", ("origin",)),
         ("capture/timeline", ("anchors",)),
         ("item/item", ("fields",)),
+        ("conflict_record/conflict_record", ("set", "body")),
+        ("conflict_record/conflict_record", ("resolved",)),
+        ("sync/changes_page", ("changes", "data", "set", "body")),
+        ("sync/changes_page", ("changes", "data", "resolved")),
     } <= shapes
 
 
