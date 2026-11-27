@@ -1,4 +1,5 @@
 import unicodedata
+from pathlib import Path
 
 import pytest
 
@@ -141,3 +142,73 @@ def test_cli_rejects_a_missing_expected_directory(tmp_path, capsys):
     with pytest.raises(SystemExit) as exit_info:
         main(["compare", str(tmp_path / "nope"), str(tmp_path)])
     assert exit_info.value.code == 2
+
+
+SPELLING_SCHEMA = {
+    "common/x": {
+        "type": "object",
+        "properties": {
+            "seq": {"type": "integer"},
+            "credits": {"type": "number"},
+            "list": {"type": "array", "items": {"type": "integer"}},
+        },
+    }
+}
+
+
+@pytest.mark.parametrize("spelling", ["0.0", "1E0", "1.0e0", "-0.0", "1e2", "10E-1"])
+def test_integer_place_written_with_fraction_or_exponent_is_a_mismatch(dirs, make_contract, spelling):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", '{"seq": 1, "list": [1]}')
+    write(actual, "common/x/case.json", '{"seq": 1, "list": [1]}'.replace('"seq": 1', f'"seq": {spelling}'))
+    found = [str(m) for m in compare_dirs(expected, actual, make_contract(SPELLING_SCHEMA))]
+    assert any(line.startswith("common/x/case.json#/seq:") for line in found)
+
+
+def test_integer_spelling_is_judged_inside_arrays(dirs, make_contract):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", '{"list": [1, 2]}')
+    write(actual, "common/x/case.json", '{"list": [1, 2.0]}')
+    found = [str(m) for m in compare_dirs(expected, actual, make_contract(SPELLING_SCHEMA))]
+    assert found and found[0].startswith("common/x/case.json#/list/1:")
+
+
+def test_number_place_keeps_every_spelling_of_its_value(dirs, make_contract):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", '{"seq": 1, "credits": 2.5}')
+    write(actual, "common/x/case.json", '{"seq": 1, "credits": 2.50e0}')
+    assert compare_dirs(expected, actual, make_contract(SPELLING_SCHEMA)) == []
+
+
+def test_integer_spelled_output_still_passes(dirs, make_contract):
+    expected, actual = dirs
+    write(expected, "common/x/case.json", '{"seq": 1, "credits": 2}')
+    write(actual, "common/x/case.json", '{"credits": 2.0, "seq": 1}')
+    assert compare_dirs(expected, actual, make_contract(SPELLING_SCHEMA)) == []
+
+
+@pytest.mark.parametrize(
+    ("path", "old", "new"),
+    [
+        ("capture/attachment/audio_segment_row.json", '"seq": 0', '"seq": 0.0'),
+        ("item/item/course.json", '"rev": 17', '"rev": 17E0'),
+        ("item/item/course.json", '"rev": 17', '"rev": 1.7e1'),
+    ],
+    ids=["seq-0.0", "rev-17E0", "rev-1.7e1"],
+)
+def test_cli_fails_a_golden_copy_with_an_integer_written_as_a_fraction(tmp_path, path, old, new):
+    golden = Path(__file__).parent.parent / "fixtures" / "valid"
+    text = (golden / path).read_text(encoding="utf-8")
+    assert old in text
+    out = tmp_path / "out"
+    for source in golden.rglob("*.json"):
+        target = out / source.relative_to(golden)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+    (out / path).write_text(text.replace(old, new, 1), encoding="utf-8")
+    assert main(["compare", str(golden), str(out)]) == 1
+
+
+def test_cli_passes_the_golden_fixtures_against_themselves():
+    golden = Path(__file__).parent.parent / "fixtures" / "valid"
+    assert main(["compare", str(golden), str(golden)]) == 0
