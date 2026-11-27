@@ -48,8 +48,9 @@ def _element(parent: ET.Element, tag: str, text: str | None = None, **attributes
     return child
 
 
-def task_xml(task: LogonTask) -> str:
-    """The Task Scheduler task (schema 1.2) for task, declared as the UTF-16 `register` writes it in."""
+def task_xml(task: LogonTask, *, declared: bool = True) -> str:
+    """The Task Scheduler task (schema 1.2) for task, declared as the UTF-16 write_task writes it in; undeclared, for
+    text whose encoding is not known here, such as what a console shows or a shell redirects."""
     root = ET.Element("Task", {"version": "1.2", "xmlns": TASK_NAMESPACE})
     _element(_element(root, "RegistrationInfo"), "Description", "Starts the CampusLife Hub when you log on (campuslife-hub autostart).")
     trigger = _element(_element(root, "Triggers"), "LogonTrigger")
@@ -71,7 +72,13 @@ def task_xml(task: LogonTask) -> str:
     _element(run, "Arguments", subprocess.list2cmdline(task.arguments))
     _element(run, "WorkingDirectory", task.working_directory)
     ET.indent(root)
-    return '<?xml version="1.0" encoding="UTF-16"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
+    document = ET.tostring(root, encoding="unicode") + "\n"
+    return '<?xml version="1.0" encoding="UTF-16"?>\n' + document if declared else document
+
+
+def write_task(path: Path, task: LogonTask) -> None:
+    """The file Task Scheduler reads: UTF-16 with a byte order mark."""
+    path.write_text(task_xml(task), encoding="utf-16")
 
 
 def launcher() -> Path:
@@ -122,7 +129,7 @@ def register(task: LogonTask, name: str = TASK_NAME) -> None:
         raise AutostartFailed(f"no {task.launcher}; run `uv sync --frozen` in services/agent")
     with tempfile.TemporaryDirectory() as folder:
         written = Path(folder) / "task.xml"
-        written.write_text(task_xml(task), encoding="utf-16")
+        write_task(written, task)
         _schtasks("/Create", "/TN", name, "/XML", str(written), "/F")
 
 

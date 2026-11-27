@@ -64,6 +64,13 @@ def _at_least_one(text: str) -> int:
     return value
 
 
+def _port(text: str) -> int:
+    value = int(text)
+    if not 0 <= value <= 65535:
+        raise argparse.ArgumentTypeError("a port is 0 to 65535")
+    return value
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="campuslife-hub", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", type=Path, help=f"data root (default: ${ROOT_ENV}, else the platform default)")
@@ -88,8 +95,9 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("ls", help="list Captures")
     starting = commands.add_parser("autostart", help="start the Hub at logon through Windows Task Scheduler")
     actions = starting.add_subparsers(dest="action", required=True)
-    for action, said in (("xml", "print the task register adds"), ("register", "add the task for this user, or replace it")):
-        _serve_options(_task_name(actions.add_parser(action, help=said)), defaults=False)
+    showing = _serve_options(actions.add_parser("xml", help="print the task register adds"), defaults=False)
+    showing.add_argument("--out", type=Path, metavar="FILE", help="write it to FILE in the UTF-16 Task Scheduler reads, instead of printing it")
+    _serve_options(_task_name(actions.add_parser("register", help="add the task for this user, or replace it")), defaults=False)
     _task_name(actions.add_parser("unregister", help="remove the task"))
     return parser
 
@@ -97,7 +105,7 @@ def _parser() -> argparse.ArgumentParser:
 def _serve_options(parser: argparse.ArgumentParser, *, defaults: bool) -> argparse.ArgumentParser:
     """serve's options; without defaults, for a task that passes on to serve only the options given."""
     parser.add_argument(
-        "--admin-port", type=int, default=DEFAULT_ADMIN_PORT if defaults else None,
+        "--admin-port", type=_port, default=DEFAULT_ADMIN_PORT if defaults else None,
         help=f"port of the admin listener on 127.0.0.1 (default {DEFAULT_ADMIN_PORT})",
     )
     parser.add_argument(
@@ -245,8 +253,11 @@ def _logon_task(root: Path, arguments: argparse.Namespace) -> LogonTask:
 
 def _autostart(root: Path, arguments: argparse.Namespace) -> None:
     match arguments.action:
+        case "xml" if arguments.out is not None:
+            autostart.write_task(arguments.out, _logon_task(root, arguments))
+            print(f"wrote {arguments.out}")
         case "xml":
-            print(autostart.task_xml(_logon_task(root, arguments)), end="")
+            print(autostart.task_xml(_logon_task(root, arguments), declared=False), end="")
         case "register":
             task = _logon_task(root, arguments)
             autostart.register(task, arguments.name)
