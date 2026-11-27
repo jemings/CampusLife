@@ -92,7 +92,12 @@ PAIR_FAILURE_WINDOW = timedelta(minutes=10)
 TOUCH_EVERY = timedelta(hours=1)
 """last_seen_at and last_rejected_at are written only once they are older than this, so most requests only read."""
 
+TAILSCALE_USER_MAX_CHARS = 256
+
 _TOKEN = json.loads((contract_root() / "schemas" / "device" / "pair_response.json").read_text(encoding="utf-8"))["$defs"]["token"]
+_ONE_LINE = json.loads((contract_root() / "schemas" / "device" / "pair_request.json").read_text(encoding="utf-8"))["$defs"]["one_line"]["pattern"]
+_NOT_ONE_LINE = re.compile("[" + _ONE_LINE.removeprefix("^[^").removesuffix("]*$") + "]")
+"""A character the contract's one_line text refuses."""
 
 
 class NoPublicUrl(Exception):
@@ -247,11 +252,12 @@ async def pair(
     """Pair a new Device with an offered secret, used once before its offer expires.
 
     A secret used before is refused and revokes the Device it paired (D6), since one of the two holders is not the
-    user's. `tailscale_user` is the Tailscale-User-Login the request came with: the audit log keeps it, nothing trusts it.
+    user's. `tailscale_user` is the Tailscale-User-Login the request came with: the audit log keeps it, on one line and
+    cut to TAILSCALE_USER_MAX_CHARS, and nothing trusts it.
     """
     ClientPlatform(request.platform)
     token = _new_token()
-    seen_as = {} if tailscale_user is None else {"tailscale_user": tailscale_user}
+    seen_as = {} if tailscale_user is None else {"tailscale_user": _NOT_ONE_LINE.sub("\ufffd", tailscale_user[:TAILSCALE_USER_MAX_CHARS])}
     async with limiter.turn:
         retry_after = limiter.retry_after()
         if retry_after is not None:
