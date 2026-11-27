@@ -227,6 +227,8 @@ FREE_FORM_IN_FEED = {
 }
 HASHED = {("artifact/extraction", ("extractor", "params"))}
 """Open objects a rule hashes: a member added there is another value, which the block ids follow (rule block_id)."""
+KEYED_BY_CELL = {(schema_id, ("payload", "formulas")) for schema_id in ("artifact/body", "artifact/extraction")}
+"""A table_row's formulas map names cells, not members: a new name is another cell, not a newer Hub's member."""
 OPEN_SAMPLES = [
     (f"{c.schema_id}/{c.name}", c.schema_id, read_strict(c.path))
     for c in CASES if c.kind is FixtureKind.VALID and c.schema_id in OPEN
@@ -240,9 +242,12 @@ def node_at(sample, at):
 
 
 def closed_inside(schema_id, sample, at):
-    """A closed value type (D20), a map whose names are columns, or an object a rule hashes, inside an open shape."""
+    """A closed value type (D20), a map whose names are columns or cells, or an object a rule hashes, inside an open
+    shape."""
     names_only = tuple(part for part in at if isinstance(part, str))
-    if any(names_only[-len(path):] == path and schema_id == owner for owner, path in FREE_FORM_IN_FEED | HASHED):
+    if any(
+        names_only[-len(path):] == path and schema_id == owner for owner, path in FREE_FORM_IN_FEED | HASHED | KEYED_BY_CELL
+    ):
         return True
     return any(CONTRACT.validate(value_type, node_at(sample, at)) == [] for value_type in CLOSED_VALUE_TYPES)
 
@@ -304,6 +309,24 @@ def test_an_open_union_names_its_known_branches_as_examples(schema_id, name):
     document = schema(schema_id)
     known = document["$defs"]["known"]
     assert document["properties"][name]["examples"] == known["properties"][name]["enum"] == list(known["discriminator"]["mapping"])
+
+
+KNOWN_BLOCK_TYPES = ["heading", "paragraph", "page", "table", "table_row", "table_header", "notes"]
+"""#6 fixes the document extractors' vocabulary before #7 and #13 add theirs (D20: the examples are the known values)."""
+KNOWN_WARNING_CODES = ["no_text_layer", "limit_reached", "replaced_characters", "objects_skipped"]
+
+
+def test_the_known_block_types_and_warning_codes_are_the_ones_listed_here():
+    block = schema("artifact/body")["$defs"]["block"]["properties"]["block_type"]
+    warning = schema("artifact/extraction")["$defs"]["warning"]["properties"]["code"]
+    assert (block["examples"], warning["examples"]) == (KNOWN_BLOCK_TYPES, KNOWN_WARNING_CODES)
+
+
+def test_the_block_types_with_a_payload_shape_are_known_ones():
+    body = schema("artifact/body")["$defs"]
+    shaped = {branch["if"]["$ref"].rsplit("/", 1)[1] for branch in body["payload_of_type"]["allOf"]}
+    assert shaped == set(body["block_type_is"]) == {"heading", "table_row"}
+    assert shaped <= set(KNOWN_BLOCK_TYPES)
 
 
 KNOWN_RELATION_TYPES = ["about", "supersedes", "rendition_of", "evidence", "tagged", "conflicts_with"]

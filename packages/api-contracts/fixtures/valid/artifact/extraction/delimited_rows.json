@@ -1,0 +1,50 @@
+{
+  "v": 1,
+  "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "extractor": {
+    "id": "delimited",
+    "version": "1",
+    "params": {}
+  },
+  "blocks": [
+    {
+      "id": "175b463d3e65c7ae3820485279e4d9e4a99ea5602991823389de7fd3a86ff2e6",
+      "block_type": "table_header",
+      "text": "학번\t이름\t점수",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "sheet_range",
+          "a1": "A1:C1"
+        }
+      ]
+    },
+    {
+      "id": "a394bc17d22a414cf12b65fabe39b34f499722f9a6ebd3493ca94cebe945803d",
+      "block_type": "table_row",
+      "text": "20260001\t홍길동\t90",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "sheet_range",
+          "a1": "A2:C2"
+        }
+      ]
+    },
+    {
+      "id": "dcee0d8316f253672bcacc3fd32bdf46358e13607ac3219c0d088b85e25aaef4",
+      "block_type": "table_row",
+      "text": "20260002\t김철수\t85",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "sheet_range",
+          "a1": "A3:C3"
+        }
+      ]
+    }
+  ]
+}
