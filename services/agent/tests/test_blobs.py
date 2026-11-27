@@ -12,7 +12,7 @@ import pytest
 from conftest import contract_fixture
 
 from campuslife_hub import mutations, store
-from campuslife_hub.blobs import BlobStore, FileOps, KeptLeftover, StoredBlob, has_blob, is_sharing_violation, with_lock_retry
+from campuslife_hub.blobs import BlobStore, FileOps, InvalidUpload, KeptLeftover, StoredBlob, has_blob, is_sharing_violation, with_lock_retry
 from campuslife_hub.devices import ensure_hub_device
 from campuslife_hub.store import Entity, EntityRef
 
@@ -82,6 +82,12 @@ async def test_opening_a_blob_the_hub_does_not_store_or_whose_file_is_gone_gives
 
     assert await blob_store.open_blob(ABC_SHA256) is None
     assert await blob_store.open_blob(EMPTY_SHA256) is None
+
+
+@pytest.mark.parametrize("named", ["../../database/campuslife.sqlite3", ABC_SHA256.upper(), ABC_SHA256[:-1]])
+async def test_opening_by_a_name_that_is_not_a_sha256_is_refused_before_any_path_is_made(blob_store, named):
+    with pytest.raises(InvalidUpload):
+        await blob_store.open_blob(named)
 
 
 async def test_a_missing_source_leaves_nothing_behind(tmp_path, blob_store):
