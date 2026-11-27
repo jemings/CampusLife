@@ -1,8 +1,12 @@
 package campuslife.wire
 
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonUnquotedLiteral
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -36,5 +40,26 @@ class ExactNumbersTest {
         val json = wireJson.parseToJsonElement(text)
 
         assertEquals(text, wireJson.encodeToString(JsonElement.serializer(), json.withExactNumbers()))
+    }
+
+    @Test
+    fun `a value JSON has no number for is refused`() {
+        val values = listOf(
+            JsonPrimitive(Double.NaN),
+            JsonPrimitive(Double.POSITIVE_INFINITY),
+            JsonPrimitive(Float.NEGATIVE_INFINITY),
+            JsonUnquotedLiteral("1."),
+            JsonUnquotedLiteral("01"),
+        )
+        for (value in values) {
+            assertThrows(value.content, IllegalArgumentException::class.java) { JsonArray(listOf(value)).withExactNumbers() }
+        }
+    }
+
+    @Test
+    fun `every JSON number form is kept`() {
+        val text = """[-0,0.5,-1.25e-3,1E+20,6.02e23]"""
+
+        assertEquals(text, wireJson.encodeToString(JsonElement.serializer(), wireJson.parseToJsonElement(text).withExactNumbers()))
     }
 }
