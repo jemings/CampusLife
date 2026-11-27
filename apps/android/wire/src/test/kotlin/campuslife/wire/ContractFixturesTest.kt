@@ -6,14 +6,15 @@ import org.junit.Test
 
 class ContractFixturesTest {
     @Test
-    fun `the build hands the tests the contract package's fixture tree`() {
+    fun `the contract fixture root arrives as a system property`() {
         val root = File(
             checkNotNull(System.getProperty("campuslife.contract.fixtures")) {
                 "the build sets campuslife.contract.fixtures"
             },
         )
         for (kind in listOf("valid", "forward", "invalid", "policy", "text_hash")) {
-            assertTrue("$root/$kind is a directory", root.resolve(kind).isDirectory)
+            val dir = root.resolve(kind)
+            assertTrue("$dir holds at least one file", dir.walk().any { it.isFile })
         }
     }
 }
