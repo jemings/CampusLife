@@ -441,6 +441,10 @@ def test_while_the_hub_serves_writes_go_through_its_admin_api_and_stop_ends_it(t
         capture = capsys.readouterr().out.split()[1]
         assert hub(root, "ls") == 0
         assert capture in capsys.readouterr().out
+        assert hub(root, "reprocess", "--capture", capture) == 0
+        assert re.fullmatch(r"reprocess [0-9a-f-]{36}\ncaptures 1\n", capsys.readouterr().out)
+        assert hub(root, "reprocess", "--capture", "0f8fad5b-d9cb-469f-a165-70867728950e") == 1
+        assert "no Capture 0f8fad5b-d9cb-469f-a165-70867728950e" in capsys.readouterr().err
         assert hub(root, "status") == 0
         status = capsys.readouterr().out
         assert f"hub_id {hub_id}" in status and "pending=" in status and "runner restarts 0" in status
@@ -1225,3 +1229,39 @@ def test_tailscale_check_changes_no_data_in_the_root_it_asks_about(tmp_path, mon
     assert hub(root, "tailscale-check") == 0
 
     assert held() == before
+
+
+async def test_with_no_hub_serving_reprocess_queues_the_jobs_for_the_next_serve(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    for command in (["init"], ["import", str(source(tmp_path, "week4.txt"))], ["import", str(source(tmp_path, "week5.txt", b"5"))]):
+        await asyncio.to_thread(hub, root, *command)
+    first = capsys.readouterr().out.splitlines()[-2].split()[1]
+
+    assert await asyncio.to_thread(hub, root, "reprocess", "--capture", first) == 0
+    said = capsys.readouterr().out
+    assert await asyncio.to_thread(hub, root, "reprocess", "--all") == 0
+    every = capsys.readouterr().out
+
+    nonce = said.split()[1]
+    assert "captures 1\n" in said and "the jobs run when `campuslife-hub serve` next runs" in said
+    assert "captures 2\n" in every
+    async with open_core(root, create=False) as core:
+        ingests = await core.db.read(
+            lambda snap: [json.loads(params) for (params,) in snap.execute("SELECT params FROM processing_jobs WHERE job_type = 'capture.ingest' ORDER BY rowid")]
+        )
+    assert [params.get("reprocess") for params in ingests].count(nonce) == 1
+    assert len(ingests) == 5
+
+
+def test_reprocess_of_a_capture_the_hub_does_not_hold_fails_with_a_message(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+
+    assert hub(root, "reprocess", "--capture", "0f8fad5b-d9cb-469f-a165-70867728950e") == 1
+
+    assert "0f8fad5b-d9cb-469f-a165-70867728950e" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("arguments", [[], ["--all", "--capture", "0f8fad5b-d9cb-469f-a165-70867728950e"], ["--capture", "0f8fad5b"]])
+def test_reprocess_names_one_whole_capture_id_or_all(tmp_path, capsys, arguments):
+    assert exit_code(tmp_path / "CampusLife", "reprocess", *arguments) == 2

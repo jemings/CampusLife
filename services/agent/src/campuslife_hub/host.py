@@ -183,6 +183,8 @@ async def _maintain(core: Core, stopping: asyncio.Event, every: timedelta, clock
             await forget_old_results(core.db, now)
             for finish in await purge.finish_unfinished(core.db, core.blobs, core.purge_hooks):
                 kept += finish.kept
+                if finish.wal_kept:
+                    log.warning("purge %s is still unfinished: %s", finish.journal_id, purge.WAL_KEPT_REASON)
         except Exception:
             log.exception("maintenance failed; it runs again in %s", every)
             continue

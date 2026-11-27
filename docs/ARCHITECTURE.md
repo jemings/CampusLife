@@ -138,7 +138,7 @@ Windows 파일시스템이 바이트의 원천이고, SQLite에는 메타데이�
     ├── hub.lock                       # 단일 인스턴스 lock (E11)
     ├── admin.token                    # admin 토큰, DPAPI로 보호 (E18)
     ├── admin.port                     # 서빙 중인 Hub의 admin 포트, 서빙하는 동안만 있음
-    ├── database\campuslife.sqlite3     # WAL, synchronous=FULL. purge_journal·backups 표 포함
+    ├── database\campuslife.sqlite3     # WAL, synchronous=FULL, secure_delete=ON(못 켜면 기동 거부). purge_journal·backups 표 포함
     ├── blobs\ab\cd\<sha256>            # 원본·Artifact 본문·필기 payload, 읽기 전용
     ├── staging\                       # 해시를 확인하기 전 파일 (blobs와 같은 볼륨, 기동 때 잔여물 삭제)
     ├── uploads\<session uuid>\<index>  # 업로드 세션의 chunk (blobs와 같은 볼륨, 7일 지난 세션 정리)

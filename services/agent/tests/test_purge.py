@@ -1,7 +1,9 @@
 import asyncio
 import json
 import logging
+import sqlite3
 import subprocess
+import time
 import sys
 from dataclasses import dataclass
 
@@ -13,6 +15,7 @@ from campuslife_hub import artifacts, jobs, purge
 from campuslife_hub.artifacts import InvalidArtifact
 from campuslife_hub.blobs import has_blob
 from campuslife_hub.core import open_core
+from campuslife_hub.data_root import Layout
 from campuslife_hub.ingest import INGEST
 from campuslife_hub.job_runner import JobContext, JobRegistry, JobRunner
 from campuslife_hub.jobs import JobSpec, JobState, Pipeline
@@ -611,3 +614,99 @@ async def test_a_blob_purged_while_it_is_being_read_stays_on_the_unfinished_purg
     assert not purged.finished
     assert [finish.finished for finish in finished] == [True]
     assert not blob_store.path_of(sha).exists()
+
+
+@pytest.fixture
+def default_secure_delete_off(monkeypatch):
+    """Every connection opens as on a build whose secure_delete default is 0, whatever this build's is."""
+    real = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        conn = real(*args, **kwargs)
+        conn.execute("PRAGMA secure_delete = OFF")
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+
+
+SECRET_BODY = "퍼지대상비밀문장XYZZY"
+SECRET_FILENAME = "3주차.pdf"
+
+
+def wal_of(database):
+    return database.with_name(database.name + "-wal")
+
+
+def database_file_bytes(database):
+    return b"".join(path.read_bytes() for path in (database, wal_of(database)) if path.exists())
+
+
+def test_a_connection_with_secure_delete_off_leaves_the_deleted_text_in_the_file(tmp_path):
+    path = tmp_path / "control.db"
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA secure_delete = OFF")
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, text TEXT)")
+    conn.executemany("INSERT INTO t (text) VALUES (?)", [(f"filler {i}",) for i in range(200)] + [(SECRET_BODY,)])
+    conn.execute("DELETE FROM t WHERE text = ?", (SECRET_BODY,))
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+
+    assert SECRET_BODY.encode() in path.read_bytes()
+
+
+async def test_a_purge_leaves_no_deleted_text_in_the_database_file_or_its_wal(default_secure_delete_off, db, device, blob_store, tmp_path):
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    await apply(db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": None, "to": SECRET_BODY}}})
+    held_before = database_file_bytes(Layout(tmp_path).database)
+    assert SECRET_BODY.encode() in held_before and SECRET_FILENAME.encode() in held_before
+
+    purged = await purge.purge_blob(db, blob_store, lecture_.pdf, delete_notes=[lecture_.note], hooks=PurgeHooks())
+
+    assert purged.finished
+    left = database_file_bytes(Layout(tmp_path).database)
+    assert SECRET_BODY.encode() not in left
+    assert SECRET_FILENAME.encode() not in left
+
+
+def read_holding_the_wal(database):
+    reader = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True, isolation_level=None)
+    reader.execute("BEGIN")
+    reader.execute("SELECT count(*) FROM items").fetchone()
+    return reader
+
+
+async def test_a_purge_a_reader_keeps_from_emptying_the_wal_stays_unfinished_until_the_reader_lets_go(db, device, blob_store, tmp_path):
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    await apply(db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": None, "to": SECRET_BODY}}})
+    database = Layout(tmp_path).database
+    reader = read_holding_the_wal(database)
+    try:
+        started = time.monotonic()
+        purged = await purge.purge_blob(db, blob_store, lecture_.pdf, delete_notes=[lecture_.note], hooks=PurgeHooks())
+        assert time.monotonic() - started < 3
+        assert purged.wal_kept and not purged.finished
+        assert await db.read(lambda snap: snap.execute("SELECT finished_at FROM purge_journal").fetchall()) == [(None,)]
+        assert SECRET_BODY.encode() in database_file_bytes(database)
+    finally:
+        reader.execute("ROLLBACK")
+        reader.close()
+
+    [finish] = await purge.finish_unfinished(db, blob_store, PurgeHooks())
+
+    assert finish.finished
+    assert await db.read(lambda snap: snap.execute("SELECT finished_at IS NOT NULL FROM purge_journal").fetchall()) == [(1,)]
+    assert SECRET_BODY.encode() not in database_file_bytes(database)
+
+
+async def test_a_purge_with_a_reader_on_the_wal_does_not_hold_up_the_writer_for_the_busy_timeout(db, device, blob_store, tmp_path):
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    reader = read_holding_the_wal(Layout(tmp_path).database)
+    try:
+        started = time.monotonic()
+        await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())
+        elapsed = time.monotonic() - started
+    finally:
+        reader.execute("ROLLBACK")
+        reader.close()
+    assert elapsed < 2
