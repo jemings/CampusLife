@@ -27,11 +27,12 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from . import backup, jobs, purge
+from . import backup, device_admin, jobs, purge
 from .admin_auth import HELLO_PATH, LISTENER_SCOPE_KEY, SESSION_COOKIE, SESSION_LIFETIME, AdminAuth, AdminGuard, session_cookie
 from .admin_page import page
 from .backup import BackupRefused, BackupSettings
 from .core import Core
+from .devices import DeviceSettings
 from .job_runner import JobRunner
 from .jobs import Job, JobState, NoSuchJob, NotRetryable
 from .listing import latest_captures
@@ -81,6 +82,7 @@ class Admin:
     stop: Callable[[], None] = field(default=lambda: None)
     """Ask the host to stop, as a signal would."""
     backup_settings: BackupSettings = BackupSettings()
+    device_settings: DeviceSettings = DeviceSettings()
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
 
 
@@ -456,6 +458,7 @@ async def api_status(request: Request) -> Response:
                 "warn_after_days": settings.warn_after.days,
                 "keep": settings.keep,
             },
+            "devices": {"public_url": admin.device_settings.public_url, "dormant_after_days": admin.device_settings.dormant_after.days},
             **admin.status(),
         }
     )
@@ -473,9 +476,10 @@ for action, change in (("retry", _retry), ("cancel", _cancel)):
 
 
 def create_app(admin: Admin, *, port: int, routers: Sequence[APIRouter] = ()) -> AdminGuard:
-    """The admin app for the listener on 127.0.0.1:port; routers are added behind the same guard (#19)."""
+    """The admin app for the listener on 127.0.0.1:port, its device routes included; routers are added behind the same
+    guard."""
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None, telemetry=NO_TELEMETRY)
-    for added in (router, *routers):
+    for added in (router, device_admin.router, *routers):
         app.include_router(added)
     app.state.admin = admin
     return AdminGuard(app, admin.auth, port)
