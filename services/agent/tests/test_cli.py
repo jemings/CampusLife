@@ -365,7 +365,8 @@ def test_with_a_console_the_reason_serve_refused_shows_once_and_is_in_the_log(tm
     shown = [line for line in capsys.readouterr().err.splitlines() if "schema version 999" in line]
     assert len(shown) == 1
     assert shown[0].startswith("campuslife-hub: the database is at schema version 999")
-    assert "schema version 999" in (root / "logs" / "hub.log").read_text(encoding="utf-8")
+    logged = (root / "logs" / "hub.log").read_text(encoding="utf-8").splitlines()
+    assert len([line for line in logged if "schema version 999" in line]) == 1
 
 
 def test_without_a_console_an_unexpected_error_that_ends_serve_is_in_the_log_once(tmp_path, capsys):
