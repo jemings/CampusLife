@@ -547,7 +547,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - `media_time`은 Capture 녹음 타임라인 기준 `start_ms` ≤ `end_ms`입니다.
   - kind는 Hub가 보내는 쪽에서 열려 있고 `v`는 1 이상입니다(아래 값을 더하는 규칙). `annotation` kind는 #17이 더합니다. D13의 예시 목록과 box 예시를 대체합니다.
   - evidence Relation의 근거 위치는 `locators: [Locator]`(1개 이상, 중복 없음, Hub 소유)입니다. 수락하면 Hub가 evidence의 anchor(blob 또는 capture)마다 `item:<id> —evidence→ blob:<sha> | capture:<id>`를 하나씩 만들고 locators를 합집합으로 모읍니다. add_relation은 만든 Relation의 locators에 둡니다. *(D21로 대체됨: 만든 Relation이 evidence type이면 anchor가 `to`인 Locator만 넣고, 다른 type은 locators 없이 만듭니다. 근거는 accepted Suggestion의 `evidence`에 남습니다. patch_item은 결과가 키를 하나라도 적용할 때만 근거 Relation을 만듭니다)* 각 locator의 anchor는 `to`와 같고, 다른 알려진 type에는 locators가 없습니다(규칙 `locator_anchor`).
-- **토큰 재발급:** 클라이언트 앱이 `POST /v1/devices/me/token`(지금 토큰으로 인증, 본문 없음)으로 시작합니다. 이전 토큰은 새 토큰이 처음 인증에 성공할 때 폐기됩니다. 그 첫 사용이 "새 토큰을 저장했다"는 확인을 대신하고, 그전까지는 두 토큰이 모두 유효합니다. 같은 요청을 다시 보내면 아직 쓰이지 않은 같은 새 토큰을 돌려줍니다. D6의 재발급 문장을 대체합니다.
+- **토큰 재발급:** 클라이언트 앱이 `POST /v1/devices/me/token`(지금 토큰으로 인증, 본문 없음)으로 시작합니다. 이전 토큰은 새 토큰이 처음 인증에 성공할 때 폐기됩니다. 그 첫 사용이 "새 토큰을 저장했다"는 확인을 대신하고, 그전까지는 두 토큰이 모두 유효합니다. 같은 요청을 다시 보내면 아직 쓰이지 않은 같은 새 토큰을 돌려줍니다. *(D23으로 대체됨: 다시 요청하면 또 다른 새 토큰을 내고, 아직 쓰이지 않은 앞의 새 토큰은 무효가 됩니다)* D6의 재발급 문장을 대체합니다.
 - **sync 포트:** 경로, 상태 코드, 헤더는 `openapi/sync.yaml`(OpenAPI 3.1)이 적고, 본문·파라미터·헤더 모양은 모두 JSON Schema를 `$ref`합니다.
   - 모든 응답에 `CampusLife-Hub-Id`·`CampusLife-Epoch`이 붙고, 요청은 `CampusLife-Contract`를 보냅니다.
   - 모든 operation이 400을 가지지만 `GET /v1/hub`는 `contract_too_old`를 내지 않습니다. 너무 오래된 클라이언트도 거기서 `min_contract_version`을 읽고 스스로 멈춥니다.
@@ -738,6 +738,39 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **결과:**
 - sync 앱은 `services/agent/src/campuslife_hub/sync*.py`에 있습니다. serve 설정, `tailscale-check`, 인증서 공개 같은 운영 절차는 `services/agent/README.md`가 적습니다.
 - D5·D21 E10의 해당 문장은 이 항목을 따릅니다. 실기기 연결성은 #39, pairing·토큰은 #19, 충돌·복원 처리는 #18입니다.
+
+---
+
+## D23. 장치 pairing과 토큰 (#19, 2026-11-27)
+
+**문제:** D6의 pairing과 토큰을 구현하려고 보니(#19) 계약에 빈 곳과 모순이 있었습니다.
+- QR에 담을 pairing offer `{hub_url, hub_id, secret}`에 스키마가 없었습니다.
+- `app_version`에는 패턴이 없어 개행도 통과했습니다.
+- D20은 토큰 재발급을 다시 요청하면 "아직 쓰이지 않은 같은 새 토큰"을 돌려준다고 했습니다. Hub가 토큰의 SHA-256만 저장하는 D6와 함께 지킬 수 없는 문장이고, D20을 정할 때 이 충돌을 보지 못했습니다.
+
+각 결정의 근거와 버린 안은 #19 본문의 "결정"에 있습니다.
+
+**검토한 안:**
+- pairing offer: A. `packages/api-contracts`의 JSON Schema. B. `campuslife://` URI.
+- 반복 재발급: A. 다시 요청하면 새 토큰을 내고 쓰이지 않은 앞의 새 토큰을 대체한다. B. HMAC으로 같은 토큰을 다시 유도한다. C. 대기 토큰의 평문을 메모리에 둔다.
+
+**결정** (오케스트레이터 결정, 2026-11-27, 사용자가 결정을 위임)
+- **pairing offer (#19 결정 1):** QR에 담기는 JSON은 `device/pairing_offer {hub_url, hub_id, secret}`(열린 모양)입니다.
+  - `hub_url`은 경로 없는 https origin입니다. `secret`과 `hub_id`는 pair 요청의 secret과 `GET /v1/hub`의 hub_id를 `$ref`합니다.
+  - 수동 코드는 같은 secret을 hex 4자리씩 8묶음으로 보여 줍니다. `hub_url`은 따로 입력받고, `hub_id`는 pair 응답의 `CampusLife-Hub-Id`에서 얻습니다.
+  - 근거: Hub가 쓰고 Kotlin·Swift가 읽는 wire라 D17을 따릅니다.
+  - 버린 안: `campuslife://` URI는 스키마로 적을 수 없습니다. 단점은 OS 카메라 앱의 딥링크가 없다는 것입니다.
+- **`app_version` (#19 결정 1):** `device_name`과 같은 한 줄 규칙(제어문자, 줄·문단 구분자, 양방향 서식 문자 금지)과 길이 상한 64를 겁니다. 두 필드가 pair 요청의 `$defs/one_line` 하나를 가리킵니다. 첫 배포 전이라 깨는 변경을 허용합니다(E21).
+- **반복 재발급 (#19 결정 2):** `POST /v1/devices/me/token`을 다시 요청하면 또 다른 새 토큰을 내고, 아직 쓰이지 않은 앞의 새 토큰은 그때 무효가 됩니다.
+  - 이전(지금) 토큰은 그대로 새 토큰의 첫 인증 성공 때 폐기됩니다.
+  - 이렇게 끝난 토큰은 그 뒤 401 `unauthorized`이고 `device_revoked`가 아닙니다. Device를 revoke한 것이 아니기 때문입니다.
+  - 근거: 같은 토큰을 다시 주려면 평문이나 유도 키가 있어야 해서 해시만 저장하는 D6와 충돌합니다. 응답을 잃어도 클라이언트는 새 토큰이 성공할 때까지 지금 토큰을 쥐고 있으므로 여전히 손해가 없습니다.
+  - 버린 안: HMAC 유도는 키 파일과 그 백업 처리가 늘어납니다. 대기 토큰의 평문을 메모리에 두면 Hub를 재시작했을 때 계약을 어깁니다.
+  - D20의 토큰 재발급 문장 가운데 반복 요청을 대체합니다.
+
+**결과:**
+- 계약은 `schemas/device/pairing_offer.json`·`pair_request.json`과 `openapi/sync.yaml`의 `reissueToken` 설명에 있고, 하네스 규칙은 `HARNESS.md`에 있습니다.
+- 장치 저장, 인증 판정, revoke, 재승인, `audit_log`, 관리 화면의 결정(#19 결정 3–7)은 #19의 남은 PR이 이 항목에 더합니다.
 
 ---
 
