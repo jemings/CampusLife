@@ -300,6 +300,24 @@ def test_without_a_console_serve_leaves_why_it_refused_in_the_log_once(tmp_path,
     assert len([line for line in said if reason in line]) == 1
 
 
+def test_without_a_console_init_on_a_store_python_creates_nothing(tmp_path):
+    root = tmp_path / "CampusLife"
+
+    finished = no_console(f"sys.base_prefix = {STORE!r}", ["--root", str(root), "init"])
+
+    assert finished.returncode == 1
+    assert not root.exists(), sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+
+
+def test_without_a_console_a_refused_restore_leaves_the_root_empty(tmp_path):
+    root = tmp_path / "Restored"
+
+    finished = no_console("", ["--root", str(root), "restore", "--from", str(tmp_path / "no-drive")])
+
+    assert finished.returncode == 1
+    assert not root.exists(), sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+
+
 def test_with_a_console_the_reason_serve_refused_shows_once_and_is_in_the_log(tmp_path, capsys):
     root = tmp_path / "CampusLife"
     hub(root, "init")
