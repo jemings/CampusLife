@@ -44,7 +44,7 @@ data class BlobRow(
 @Entity(tableName = "local_capture")
 data class LocalCapture(
     @PrimaryKey val id: String,
-    val seal: String,
+    @ColumnInfo(collate = ColumnInfo.NOCASE) val seal: String,
     val draft: String,
 )
 
@@ -57,6 +57,7 @@ data class LocalCapture(
             parentColumns = ["id"],
             childColumns = ["capture_id"],
             onDelete = ForeignKey.CASCADE,
+            deferred = true,
         ),
     ],
     indices = [Index(value = ["capture_id", "position"], unique = true), Index(value = ["sha256"])],
