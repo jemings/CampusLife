@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 from datetime import timedelta
@@ -432,6 +433,14 @@ async def test_after_ten_failed_pairings_in_ten_minutes_no_secret_is_judged_unti
         paired = await b.pair(offer.secret)
         assert await b.authenticate(paired.token) == paired.device_id
         assert len(await pair_failures(b)) == 10
+
+
+async def test_pairing_attempts_that_arrive_together_are_judged_one_at_a_time_so_the_limit_holds(tmp_path):
+    async with bench(tmp_path) as b:
+        answers = await asyncio.gather(*(b.pair(UNKNOWN_SECRET) for _ in range(50)))
+
+        assert len(await pair_failures(b)) == 10
+        assert sorted(answer.retry_after is None for answer in answers) == [False] * 40 + [True] * 10
 
 
 async def test_failed_pairings_spread_over_more_than_ten_minutes_are_not_limited(tmp_path):
