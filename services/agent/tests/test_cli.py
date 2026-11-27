@@ -264,6 +264,38 @@ def served(root):
     return process
 
 
+NO_CONSOLE = """
+import sys
+sys.stdin = sys.stdout = sys.stderr = None
+{setup}
+from campuslife_hub.cli import main
+raise SystemExit(main({argv!r}))
+"""
+STORE = r"C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0"
+
+
+@pytest.mark.parametrize(
+    ("refusal", "setup", "reason"),
+    [("database too new", "", "schema version 999"), ("store python", f"sys.base_prefix = {STORE!r}", "Microsoft Store")],
+    ids=["database too new", "store python"],
+)
+def test_without_a_console_serve_leaves_why_it_refused_in_the_log_once(tmp_path, capsys, refusal, setup, reason):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    if refusal == "database too new":
+        with sqlite3.connect(root / "database" / "campuslife.sqlite3") as conn:
+            conn.execute("PRAGMA user_version = 999")
+        conn.close()
+
+    program = NO_CONSOLE.format(setup=setup, argv=["--root", str(root), "serve", "--admin-port", "0"])
+    finished = subprocess.run([sys.executable, "-c", program], capture_output=True, timeout=60)
+
+    assert (finished.returncode, finished.stdout, finished.stderr) == (1, b"", b"")
+    log = root / "logs" / "hub.log"
+    said = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    assert len([line for line in said if reason in line]) == 1
+
+
 def test_while_the_hub_serves_writes_go_through_its_admin_api_and_stop_ends_it(tmp_path, capsys, monkeypatch):
     root = tmp_path / "CampusLife"
     hub(root, "init")
