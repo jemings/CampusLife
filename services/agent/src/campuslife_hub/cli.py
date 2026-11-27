@@ -59,18 +59,23 @@ class CommandFailed(Exception):
     pass
 
 
-def _at_least_one(text: str) -> int:
-    value = int(text)
-    if value < 1:
-        raise argparse.ArgumentTypeError("at least 1")
+def _whole_number(text: str, low: int, high: int | None, said: str) -> int:
+    """argparse names a type that raises ValueError by its function name, so every refusal here says what it takes."""
+    try:
+        value = int(text)
+    except ValueError:
+        value = None
+    if value is None or value < low or (high is not None and value > high):
+        raise argparse.ArgumentTypeError(f"{text!r} is not {said}")
     return value
+
+
+def _at_least_one(text: str) -> int:
+    return _whole_number(text, 1, None, "a whole number of at least 1")
 
 
 def _port(text: str) -> int:
-    value = int(text)
-    if not 0 <= value <= 65535:
-        raise argparse.ArgumentTypeError("a port is 0 to 65535")
-    return value
+    return _whole_number(text, 0, 65535, "a port (0 to 65535)")
 
 
 def _parser() -> argparse.ArgumentParser:
