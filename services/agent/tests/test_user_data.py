@@ -742,13 +742,14 @@ async def test_a_result_is_kept_for_ninety_days_to_the_millisecond(db, device, m
 
 async def test_a_mutation_a_client_still_keeps_is_answered_from_its_first_result(db, device, monkeypatch):
     """D24 decision 5: a client resends what it kept after a 409 epoch_changed; for as long as it keeps a Mutation, the
-    Hub still holds that Mutation's result, so one the restored Hub already applied comes back duplicate."""
+    Hub still holds that Mutation's result, so one the restored Hub already applied comes back duplicate. That holds
+    with 30 days to spare for a client's clock and its cleanup running late."""
     recorded = datetime(2026, 3, 2, 0, 30, tzinfo=UTC)
     monkeypatch.setattr(mutations, "now_instant", lambda: instant(recorded))
     create = mutation("create_tag")
     await apply(db, device, create)
 
-    await mutations.forget_old_results(db, recorded + timedelta(days=SENT_RETENTION_DAYS))
+    await mutations.forget_old_results(db, recorded + timedelta(days=SENT_RETENTION_DAYS + 30))
 
     assert (await apply(db, device, create))[0]["result"] == "duplicate"
 
