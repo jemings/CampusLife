@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import secrets
 from contextlib import asynccontextmanager
@@ -7,13 +9,14 @@ import httpx
 import pytest
 from conftest import SignedAs
 from fastapi import APIRouter, HTTPException
+from opentelemetry import trace
 
 from campuslife_hub import admin as admin_app
 from campuslife_hub import admin_auth, jobs
 from campuslife_hub.admin import Admin, create_app
 from campuslife_hub.admin_auth import (
-    HELLO_LIFETIME, LOGIN_CODE_LIFETIME, MAX_SIGNED_BODY_BYTES, SESSION_COOKIE, SESSION_LIFETIME, AdminAuth, hub_proof,
-    signed_authorization,
+    HELLO_LIFETIME, LOGIN_CODE_LIFETIME, MAX_SIGNED_BODY_BYTES, SESSION_COOKIE, SESSION_LIFETIME, AdminAuth, hello_mac,
+    hub_proof, signed_authorization,
 )
 from campuslife_hub.core import open_core
 from campuslife_hub.job_runner import JobContext, JobRegistry, JobRunner
@@ -23,7 +26,9 @@ from campuslife_hub.local_import import import_files
 from campuslife_hub.redaction import Redactor
 
 PORT = 8765
-BASE = f"http://127.0.0.1:{PORT}"
+ADDRESS = f"127.0.0.1:{PORT}"
+ELSEWHERE = f"127.0.0.1:{PORT + 1}"
+BASE = f"http://{ADDRESS}"
 ORIGIN = {"origin": BASE}
 TOKEN = secrets.token_urlsafe(32)
 SIGNED = SignedAs(TOKEN)
@@ -435,25 +440,52 @@ async def test_an_error_a_route_raises_is_answered_behind_the_guard(tmp_path):
     assert response.headers["content-security-policy"] == admin_auth.PAGE_HEADERS["content-security-policy"]
 
 
-async def hello(client, nonce=None):
+async def hello(client, nonce=None, *, headers=None):
     nonce = nonce or secrets.token_hex(32)
-    return nonce, await client.post("/api/hello", json={"nonce": nonce})
+    return nonce, await client.post("/api/hello", headers=headers, json={"nonce": nonce, "mac": hello_mac(TOKEN, ADDRESS, nonce)})
 
 
-async def signature(client, method, path, body=b"", *, query="", token=TOKEN):
+async def signature(client, method, path, body=b"", *, query="", token=TOKEN, address=ADDRESS):
     _, answer = await hello(client)
-    return {"authorization": signed_authorization(token, answer.json()["nonce"], method, path, query, body)}
+    return {"authorization": signed_authorization(token, address, answer.json()["nonce"], method, path, query, body)}
 
 
-async def test_the_hub_proves_it_holds_the_token_to_a_nonce_of_64_hex_digits(tmp_path):
+async def test_the_hub_proves_it_holds_the_token_to_a_client_that_proves_it_too(tmp_path):
     async with hub(tmp_path) as (client, _):
         nonce, answer = await hello(client)
-        refused = [(await client.post("/api/hello", json=body)).status_code for body in ({"nonce": "f" * 63}, {"nonce": nonce.upper()}, {}, [nonce])]
+        upper = nonce.upper()
+        refused = [
+            (await client.post("/api/hello", json=body)).status_code
+            for body in (
+                {"nonce": "f" * 63, "mac": hello_mac(TOKEN, ADDRESS, "f" * 63)},
+                {"nonce": upper, "mac": hello_mac(TOKEN, ADDRESS, upper)},
+                {"nonce": nonce, "mac": hello_mac(secrets.token_urlsafe(32), ADDRESS, nonce)},
+                {"nonce": nonce, "mac": hello_mac(TOKEN, ELSEWHERE, nonce)},
+                {"nonce": nonce, "mac": 7},
+                {"nonce": nonce},
+                {},
+                [nonce],
+            )
+        ]
 
     assert answer.status_code == 200
-    assert answer.json()["proof"] == hub_proof(TOKEN, nonce, answer.json()["nonce"])
+    assert answer.json()["proof"] == hub_proof(TOKEN, ADDRESS, nonce, answer.json()["nonce"])
     assert TOKEN not in answer.text
-    assert refused == [400, 400, 400, 400]
+    assert refused == [401] * 8
+
+
+async def test_the_hub_proves_itself_and_takes_signatures_only_for_the_port_it_listens_on_whatever_host_is_named(tmp_path):
+    async with hub(tmp_path) as (client, _):
+        nonce, answer = await hello(client, headers={"host": f"localhost:{PORT}"})
+        refused = [
+            await client.post("/api/login", headers=await signature(client, "POST", "/api/login", address=ELSEWHERE)),
+            await client.get("/api/status", headers=await signature(client, "GET", "/api/status", address=f"localhost:{PORT}")),
+        ]
+        login = await client.post("/api/login", headers={"host": f"localhost:{PORT}", **await signature(client, "POST", "/api/login")})
+
+    assert answer.json()["proof"] == hub_proof(TOKEN, ADDRESS, nonce, answer.json()["nonce"])
+    assert [response.status_code for response in refused] == [401, 401]
+    assert login.json()["url"].startswith(f"http://{ADDRESS}/login?code=")
 
 
 async def test_a_signed_request_is_taken_once_and_only_as_it_was_signed(tmp_path):
@@ -491,6 +523,87 @@ async def test_a_nonce_of_the_hubs_signs_only_within_its_lifetime_and_while_few_
 
         assert (await client.get("/api/status", headers=oldest)).status_code == 401
         assert (await client.get("/api/status", headers=kept)).status_code == 200
+
+
+async def test_a_client_that_signs_as_the_admin_auth_docstring_says_is_answered(tmp_path):
+    def mac(purpose, *parts):
+        return hmac.new(TOKEN.encode(), "\0".join((purpose, *parts)).encode(), hashlib.sha256).hexdigest()
+
+    async def signed(client, method, target, body=b""):
+        nonce = secrets.token_hex(32)
+        answer = (await client.post("/api/hello", json={"nonce": nonce, "mac": mac("campuslife-admin-hello", ADDRESS, nonce)})).json()
+        assert answer["proof"] == mac("campuslife-hub-proof", ADDRESS, nonce, answer["nonce"])
+        path, _, query = target.partition("?")
+        path = path.replace("%20", " ")
+        signature = mac("campuslife-admin-request", ADDRESS, answer["nonce"], method, path, query, hashlib.sha256(body).hexdigest())
+        return await client.request(method, target, content=body, headers={"authorization": f"CampusLife {answer['nonce']}.{signature}"})
+
+    body = json.dumps({"paths": [str(source(tmp_path, "주간 노트.txt"))]}, ensure_ascii=False).encode()
+    async with hub(tmp_path) as (client, _):
+        responses = [
+            await signed(client, "POST", "/api/import", body),
+            await signed(client, "GET", "/api/status?week=4%20notes&x="),
+            await signed(client, "POST", "/api/jobs/no%20such%20job/retry"),
+        ]
+
+    assert [response.status_code for response in responses] == [200, 200, 404]
+
+
+async def test_hellos_from_a_program_without_the_token_do_not_push_out_the_nonce_a_client_waits_on(tmp_path, monkeypatch):
+    async with hub(tmp_path) as (client, _):
+        monkeypatch.setattr(admin_auth, "MAX_PENDING_HELLOS", 2)
+        waiting = await signature(client, "GET", "/api/status")
+        anonymous = [(await client.post("/api/hello", json={"nonce": secrets.token_hex(32)})).status_code for _ in range(3)]
+
+        assert (await client.get("/api/status", headers=waiting)).status_code == 200
+        assert anonymous == [401] * 3
+
+
+@pytest.mark.parametrize(("method", "path"), [("POST", "/api/hello"), ("GET", "/login"), ("GET", "/static/admin.css")])
+async def test_a_request_before_login_carries_at_most_a_kibibyte(tmp_path, method, path):
+    pulled = []
+
+    async def endless():
+        for _ in range(1000):
+            pulled.append(True)
+            yield b"x" * 65536
+
+    async with hub(tmp_path) as (client, _):
+        response = await client.request(method, path, content=endless())
+
+    assert response.status_code == 413
+    assert len(pulled) <= 2
+
+
+async def test_a_page_request_that_carries_an_authorization_header_is_not_read_by_the_guard(tmp_path):
+    big = b"x" * (MAX_SIGNED_BODY_BYTES + 1)
+    async with hub(tmp_path) as (client, admin):
+        await log_in(client)
+        response = await client.post("/import", headers={**ORIGIN, "authorization": "CampusLife x.y"}, **multipart(("big.txt", big), cloud_policy="blocked"))
+        captures = await admin.core.db.read(list_captures)
+
+    assert response.status_code == 303
+    assert len(captures) == 1
+
+
+async def test_fastapi_records_nothing_of_a_request_even_where_opentelemetry_is_set_up(tmp_path, monkeypatch):
+    spans = []
+
+    class Recording(trace.NoOpTracer):
+        def start_span(self, name, *args, attributes=None, **options):
+            spans.append((name, attributes))
+            return trace.INVALID_SPAN
+
+    class SetUp(trace.TracerProvider):
+        def get_tracer(self, *args, **options):
+            return Recording()
+
+    monkeypatch.setattr(trace, "get_tracer_provider", SetUp)
+    async with hub(tmp_path) as (client, _):
+        await log_in(client)
+        assert (await client.get("/")).status_code == 200
+
+    assert spans == []
 
 
 async def test_a_signed_request_past_one_mebibyte_is_refused(tmp_path):

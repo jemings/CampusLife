@@ -4,6 +4,7 @@ import http.server
 import io
 import json
 import os
+import re
 import signal
 import socket
 import sqlite3
@@ -351,7 +352,7 @@ def test_serve_needs_an_initialised_root_and_a_free_port(tmp_path, capsys):
 @contextmanager
 def program_on_the_port(root, *, token=None, answer=None, stall=None, hello_status=200):
     """An HTTP server on 127.0.0.1 whose port root's admin.port names, recording each request it gets. With token it
-    proves itself as the Hub would, as a program relaying to the Hub could; every other request gets answer."""
+    proves itself as a Hub listening there would; every other request gets answer."""
     seen = []
 
     class Answering(http.server.BaseHTTPRequestHandler):
@@ -366,7 +367,7 @@ def program_on_the_port(root, *, token=None, answer=None, stall=None, hello_stat
             seen.append((self.command, self.path, str(self.headers), body))
             if self.path == "/api/hello":
                 nonce = json.loads(body)["nonce"]
-                reply = {"nonce": "hub-nonce", "proof": hub_proof(token, nonce, "hub-nonce") if token else "0" * 64}
+                reply = {"nonce": "hub-nonce", "proof": hub_proof(token, base.removeprefix("http://"), nonce, "hub-nonce") if token else "0" * 64}
             else:
                 if stall is not None:
                     stall.wait(30)
@@ -392,6 +393,49 @@ def program_on_the_port(root, *, token=None, answer=None, stall=None, hello_stat
     finally:
         if stall is not None:
             stall.set()
+        server.shutdown()
+        server.server_close()
+
+
+@contextmanager
+def relaying_to(port):
+    """An HTTP server on 127.0.0.1 that passes each request on to the listener on port as if it had been sent
+    there, recording what that listener answers."""
+    answered = []
+
+    class Relaying(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.relay()
+
+        def do_POST(self):
+            self.relay()
+
+        def relay(self):
+            body = self.rfile.read(int(self.headers.get("content-length") or 0))
+            headers = {name: value for name, value in self.headers.items() if name.lower() not in ("host", "connection")}
+            onward = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+            onward.request(self.command, self.path, body=body or None, headers={**headers, "host": f"127.0.0.1:{port}"})
+            response = onward.getresponse()
+            data = response.read()
+            onward.close()
+            answered.append((self.command, self.path, response.status, data))
+            self.send_response(response.status)
+            for name, value in response.getheaders():
+                if name.lower() not in ("connection", "content-length", "date", "server", "transfer-encoding"):
+                    self.send_header(name, value)
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Relaying)
+    serving = threading.Thread(target=server.serve_forever, daemon=True)
+    serving.start()
+    try:
+        yield server.server_address[1], answered
+    finally:
         server.shutdown()
         server.server_close()
 
@@ -467,6 +511,35 @@ def test_a_port_a_killed_hub_left_is_removed_and_nothing_is_sent_to_whatever_hol
     assert "no Hub is serving" in capsys.readouterr().err
     assert seen == []
     assert not (root / "admin.port").exists()
+
+
+def test_a_program_that_relays_to_the_hub_from_the_port_admin_port_names_gets_nothing_it_can_use(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    process = served(root)
+    port = int((root / "admin.port").read_text())
+    try:
+        with relaying_to(port) as (relay, answered):
+            (root / "admin.port").write_text(f"{relay}\n")
+            assert hub(root, "open", "--no-browser") != 0
+            (root / "admin.port").write_text(f"{port}\n")
+        logins = [login.decode() for *_, data in answered for login in re.findall(rb"/login\?code=[A-Za-z0-9_-]+", data)]
+        sessions = []
+        for login in logins:
+            browser = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+            browser.request("GET", login)
+            sessions.append(browser.getresponse().status)
+            browser.close()
+
+        assert sessions == []
+        assert [(method, path, status) for method, path, status, _ in answered] == [("POST", "/api/hello", 401)]
+        assert "is not the Hub" in capsys.readouterr().err
+        assert hub(root, "stop") == 0
+        assert process.wait(timeout=30) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
 
 
 def test_serve_refuses_an_admin_token_file_that_holds_no_token(tmp_path, capsys):

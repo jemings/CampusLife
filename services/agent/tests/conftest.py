@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from campuslife_contracts import contract_root
-from campuslife_hub.admin_auth import HELLO_PATH, hub_proof, signed_authorization
+from campuslife_hub.admin_auth import HELLO_PATH, hello_mac, hub_proof, signed_authorization
 from campuslife_hub.data_root import Layout
 from campuslife_hub.db import Database
 from campuslife_hub.identity import ensure_identity
@@ -33,14 +33,15 @@ class SignedAs(httpx.Auth):
         self.token = token
 
     def auth_flow(self, request):
-        client_nonce = secrets.token_hex(32)
+        address, client_nonce = f"{request.url.host}:{request.url.port}", secrets.token_hex(32)
         same_origin = {name: value for name, value in request.headers.items() if name in ("host", "origin")}
-        answer = yield httpx.Request("POST", request.url.join(HELLO_PATH), headers=same_origin, json={"nonce": client_nonce})
+        hello = {"nonce": client_nonce, "mac": hello_mac(self.token, address, client_nonce)}
+        answer = yield httpx.Request("POST", request.url.join(HELLO_PATH), headers=same_origin, json=hello)
         if answer.status_code == 200:
             hub_nonce = answer.json()["nonce"]
-            assert answer.json()["proof"] == hub_proof(self.token, client_nonce, hub_nonce)
+            assert answer.json()["proof"] == hub_proof(self.token, address, client_nonce, hub_nonce)
             request.headers["authorization"] = signed_authorization(
-                self.token, hub_nonce, request.method, request.url.path, request.url.query.decode(), request.content
+                self.token, address, hub_nonce, request.method, request.url.path, request.url.query.decode(), request.content
             )
         yield request
 
