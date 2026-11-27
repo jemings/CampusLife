@@ -79,6 +79,16 @@ def test_any_mapping_of_the_admin_port_is_a_problem_naming_it(serve):
     assert any(ADMIN_MAPPED in problem for problem in verdict.problems), verdict.problems
 
 
+@pytest.mark.parametrize(
+    "target", ["http://[::ffff:127.0.0.1]:8731", "http://127.1.2.3:8731", "[::ffff:127.0.0.1]:8731"],
+    ids=["ipv4-mapped ipv6 loopback", "another 127/8 address", "a TCP forward to ipv4-mapped loopback"],
+)
+def test_every_spelling_of_a_loopback_address_is_named_the_admin_port(target):
+    serve = on_8443(forward=target) if "://" not in target else on_8443(proxy=target)
+
+    assert any(ADMIN_MAPPED in problem for problem in judged(serve).problems)
+
+
 @pytest.mark.parametrize("target", ["http://192.168.0.10:8731", "http://127.0.0.1:18731"], ids=["another machine", "another port"])
 def test_a_mapping_elsewhere_is_not_named_the_admin_port(target):
     assert not [problem for problem in judged(on_8443(proxy=target)).problems if ADMIN_MAPPED in problem]
