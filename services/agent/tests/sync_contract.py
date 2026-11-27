@@ -82,6 +82,10 @@ def _json_body(response: httpx.Response) -> object:
 
 
 def _check_error(response: httpx.Response) -> object:
+    if response.request.method == "HEAD":
+        media = response.headers.get("content-type", "").split(";")[0].strip().lower()
+        assert (media, response.content) == (JSON, b""), "an error answering HEAD names a JSON body it does not carry"
+        return None
     body = _json_body(response)
     assert validate(ERROR, body) == [], (response.status_code, body)
     return body
