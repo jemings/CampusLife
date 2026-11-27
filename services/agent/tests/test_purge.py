@@ -1,3 +1,4 @@
+import asyncio
 import json
 import subprocess
 import sys
@@ -10,6 +11,8 @@ from campuslife_hub import artifacts, jobs, purge
 from campuslife_hub.artifacts import InvalidArtifact
 from campuslife_hub.blobs import has_blob
 from campuslife_hub.core import open_core
+from campuslife_hub.ingest import INGEST
+from campuslife_hub.job_runner import JobContext, JobRegistry, JobRunner
 from campuslife_hub.jobs import JobSpec, JobState, Pipeline
 from campuslife_hub.local_import import import_files
 from campuslife_hub.purge import PurgeHooks, PurgeRefused
@@ -165,6 +168,21 @@ async def test_a_soft_deleted_fork_note_is_marked_too(db, device, blob_store, tm
     assert {"deleted_at", "evidence_purged_at"} <= marked.keys()
 
 
+async def test_a_fork_note_created_after_the_purge_of_its_artifact_arrives_marked(db, device, blob_store, tmp_path):
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())
+    late_id, create_late = note(lecture_.summary["id"], "오프라인 정리")
+    kept_id, create_kept = note(lecture_.audio_notes["id"], "오프라인 녹음 정리")
+
+    results = await apply(db, device, create_late, create_kept)
+
+    assert [result["result"] for result in results] == ["applied", "applied"]
+    [(purged_at,)] = await db.read(lambda snap: snap.execute("SELECT registered_at FROM purge_journal").fetchall())
+    items = live(await feed(db), "item")
+    assert items[late_id]["evidence_purged_at"] == purged_at
+    assert "evidence_purged_at" not in items[kept_id]
+
+
 async def test_fork_notes_the_user_chose_go_with_the_purge(db, device, blob_store, tmp_path):
     lecture_ = await lecture(db, device, blob_store, tmp_path)
     stale = {"from_hash": None, "to": "다른 장치에서 쓴 글"}
@@ -233,6 +251,22 @@ async def test_a_derived_blob_something_kept_also_names_stays(db, device, blob_s
     assert lecture_.transcript["id"] in purged.target.artifacts
 
 
+async def test_an_artifact_made_from_bytes_a_kept_artifact_also_holds_stays(db, device, blob_store, tmp_path):
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    same_output = await made(db, blob_store, tmp_path, "transcribe.alt", f"attachment:{lecture_.audio_attachment}", [lecture_.audio], b"slide text")
+    assert same_output["content_blob"] == lecture_.transcript["content_blob"]
+
+    purged = await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())
+
+    changes = await feed(db)
+    assert purged.target.artifacts == (lecture_.transcript["id"],)
+    assert purged.target.blobs == (lecture_.pdf,)
+    assert {lecture_.summary["id"], same_output["id"]} <= set(live(changes, "artifact"))
+    assert lecture_.suggestion["id"] in live(changes, "suggestion")
+    assert purged.marked == ()
+    assert await held(db, lecture_.summary["content_blob"])
+
+
 async def test_purging_an_artifacts_content_removes_that_artifact_and_what_was_made_from_it(db, device, blob_store, tmp_path):
     lecture_ = await lecture(db, device, blob_store, tmp_path)
 
@@ -245,19 +279,65 @@ async def test_purging_an_artifacts_content_removes_that_artifact_and_what_was_m
 
 async def test_purging_cancels_the_jobs_still_to_run_on_what_it_removes(db, device, blob_store, tmp_path):
     lecture_ = await lecture(db, device, blob_store, tmp_path)
-    waiting = await db.write(lambda tx: jobs.enqueue(tx, JobSpec("summarize", f"artifact:{lecture_.transcript['id']}", (lecture_.transcript["content_blob"],), {"n": 2}),
-                                                     Pipeline("summarize-2")))
-    other = await db.write(lambda tx: jobs.enqueue(tx, JobSpec("summarize", f"artifact:{lecture_.audio_notes['id']}", (lecture_.audio_notes["content_blob"],), {}),
-                                                   Pipeline("summarize-2")))
-
-    on_subject = await db.write(lambda tx: jobs.enqueue(tx, JobSpec("thumbnail", f"attachment:{lecture_.pdf_attachment}", (lecture_.audio,), {}),
-                                                        Pipeline("thumbnail-1")))
     [ingest] = await db.read(lambda snap: jobs.of_subject(snap, f"capture:{lecture_.capture}"))
 
-    await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())
+    async def queued(job_type, subject, *inputs):
+        return await db.write(lambda tx: jobs.enqueue(tx, JobSpec(job_type, subject, inputs, {"n": 2}), Pipeline(f"{job_type}-2")))
 
-    states = await db.read(lambda snap: {job.id: jobs.get(snap, job.id).state for job in (waiting, other, on_subject, ingest)})
-    assert states == {waiting.id: JobState.CANCELLED, other.id: JobState.PENDING, on_subject.id: JobState.CANCELLED, ingest.id: JobState.CANCELLED}
+    on_both = await queued("summarize", f"artifact:{lecture_.transcript['id']}", lecture_.transcript["content_blob"])
+    on_attachment = await queued("thumbnail", f"attachment:{lecture_.pdf_attachment}", lecture_.audio)
+    on_artifact = await queued("translate", f"artifact:{lecture_.transcript['id']}", lecture_.audio)
+    reading = await queued("align.slides", f"capture:{lecture_.capture}", lecture_.pdf, lecture_.audio)
+    other = await queued("summarize", f"artifact:{lecture_.audio_notes['id']}", lecture_.audio_notes["content_blob"])
+
+    purged = await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())
+
+    states = await db.read(lambda snap: {job.id: jobs.get(snap, job.id).state for job in (on_both, on_attachment, on_artifact, reading, other, ingest)})
+    assert states == {on_both.id: JobState.CANCELLED, on_attachment.id: JobState.CANCELLED, on_artifact.id: JobState.CANCELLED,
+                      reading.id: JobState.CANCELLED, other.id: JobState.PENDING, ingest.id: JobState.PENDING}
+    cancelled = await db.read(lambda snap: {job_id for (job_id,) in snap.execute("SELECT id FROM processing_jobs WHERE state = 'cancelled'")})
+    assert set(purged.cancelled) == cancelled
+
+
+def two_files(pdf, audio):
+    return {"id": new_id(), "created_at": "2026-03-02T00:30:00.000Z", "origin": {"type": "import"}, "links": [],
+            "attachments": [{"id": new_id(), "blob_sha256": pdf, "role": "file", "cloud_policy": "local_only"},
+                            {"id": new_id(), "blob_sha256": audio, "role": "audio_segment", "seq": 0, "cloud_policy": "local_only"}]}
+
+
+async def test_purging_one_file_of_a_capture_leaves_its_ingest_to_plan_the_file_left(db, device, blob_store, tmp_path):
+    pdf = await store_bytes(blob_store, tmp_path, b"%PDF to purge")
+    audio = await store_bytes(blob_store, tmp_path, b"recording that stays")
+    capture = two_files(pdf, audio)
+    await apply(db, device, commit(capture))
+    [ingest] = await db.read(lambda snap: jobs.of_subject(snap, f"capture:{capture['id']}"))
+
+    await purge.purge_blob(db, blob_store, pdf, hooks=PurgeHooks())
+
+    assert await db.read(lambda snap: jobs.get(snap, ingest.id).state) is JobState.PENDING
+    registry, seen = JobRegistry(), []
+
+    async def planner(view, context):
+        seen.append([attachment["blob_sha256"] for attachment in view.attachments])
+        return []
+
+    registry.plan("files", planner)
+    await JobRunner(JobContext(db, blob_store, registry)).run_one()
+    assert seen == [[audio]]
+    assert await db.read(lambda snap: jobs.get(snap, ingest.id).state) is JobState.SUCCEEDED
+
+
+async def test_purging_the_last_file_of_a_capture_cancels_its_ingest(db, device, blob_store, tmp_path):
+    pdf = await store_bytes(blob_store, tmp_path, b"%PDF to purge")
+    capture = two_files(pdf, pdf)
+    await apply(db, device, commit(capture))
+    [ingest] = await db.read(lambda snap: jobs.of_subject(snap, f"capture:{capture['id']}"))
+
+    purged = await purge.purge_blob(db, blob_store, pdf, hooks=PurgeHooks())
+
+    assert ingest.job_type == INGEST
+    assert await db.read(lambda snap: jobs.get(snap, ingest.id).state) is JobState.CANCELLED
+    assert purged.cancelled == (ingest.id,)
 
 
 async def test_a_job_cancelled_by_a_purge_records_no_artifact(db, device, blob_store, tmp_path):
@@ -379,3 +459,28 @@ async def test_discarding_a_blob_removes_its_file_only_once_no_row_names_it(db, 
     assert await blob_store.discard(sha) == []
     assert not blob_store.path_of(sha).exists()
     assert await blob_store.discard(sha) == []
+
+
+async def test_a_purge_leaves_the_files_while_a_backup_holds_blob_removals(db, device, blob_store, tmp_path):
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+
+    async with blob_store.removals:
+        purging = asyncio.create_task(purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks()))
+        await asyncio.sleep(0.05)
+        assert not purging.done()
+        assert blob_store.path_of(lecture_.pdf).exists()
+        assert not await held(db, lecture_.pdf)
+
+    assert (await purging).finished
+    assert not blob_store.path_of(lecture_.pdf).exists()
+
+
+async def test_a_stored_blob_no_row_names_yet_is_purged_with_its_file(db, blob_store, tmp_path):
+    sha = await store_bytes(blob_store, tmp_path, b"uploaded, never committed")
+
+    purged = await purge.purge_blob(db, blob_store, sha, hooks=PurgeHooks())
+
+    assert purged.target == purge.PurgeTarget(blobs=(sha,))
+    assert purged.finished
+    assert not await held(db, sha)
+    assert not blob_store.path_of(sha).exists()
