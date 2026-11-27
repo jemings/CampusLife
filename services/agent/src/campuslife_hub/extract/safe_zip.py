@@ -2,9 +2,11 @@
 
 Opening checks every member the central directory lists before anything is read: its path stays inside the
 archive, it is no link, it is not encrypted, and its declared size and compression ratio keep within the limits
-table, as do the member count and their total size. Reading a member stops at its declared size, so a header that
-lies about it cannot make a reader inflate more. An archive inside an archive opens one level deeper, up to
-zip_max_depth. Only this module imports zipfile (tests/test_extract_boundary.py).
+table, as do the member count and their total size. Reading a member is zipfile's: it stops at the size the member
+declares, so a header that lies about it cannot make a reader inflate more, and bytes that then fail the member's CRC
+end the job as corrupt. zipfile cuts a member name at its first NUL, so a NUL never reaches the path check. An archive
+inside an archive opens one level deeper, up to zip_max_depth. Only this module imports zipfile
+(tests/test_extract_boundary.py).
 """
 
 from __future__ import annotations
@@ -40,7 +42,6 @@ def _path_escapes(name: str) -> bool:
         name.startswith(("/", "\\"))
         or (len(name) > 1 and name[1] == ":")
         or ".." in parts
-        or "\x00" in name
     )
 
 
@@ -86,12 +87,9 @@ class SafeZip:
         info = self._archive.getinfo(name)
         try:
             with self._archive.open(info) as member:
-                data = member.read(info.file_size + 1)
+                return member.read()
         except (zipfile.BadZipFile, EOFError, ValueError, NotImplementedError) as error:
             raise Refused(Status.CORRUPT, f"member {name!r} cannot be read: {error}") from None
-        if len(data) > info.file_size:
-            raise _unsafe(f"member {name!r} inflates past the size it declares")
-        return data
 
     @contextmanager
     def open_nested(self, name: str) -> Iterator[SafeZip]:
