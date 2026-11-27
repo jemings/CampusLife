@@ -20,10 +20,10 @@ from sync_contract import checked
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 
-from campuslife_hub import backup, host, jobs, mutations, purge
+from campuslife_hub import backup, devices, host, jobs, mutations, purge, sync_devices
 from campuslife_hub.core import open_core
 from campuslife_hub.db import Database
-from campuslife_hub.devices import Refusal, RefusalCode
+from campuslife_hub.devices import DeviceSettings, Refusal, RefusalCode
 from campuslife_hub.host import HostConfig, PortTaken
 from campuslife_hub.job_runner import JobRegistry, JobRunner
 from campuslife_hub.jobs import JobSpec, JobState, Pipeline, Succeeded
@@ -211,6 +211,39 @@ async def test_maintenance_runs_every_period_with_the_hosts_clock(tmp_path):
             return counts == [0, 0, 0]
 
         await until(all_forgotten)
+
+
+async def test_maintenance_makes_a_device_unseen_for_longer_than_the_dormant_period_dormant(tmp_path):
+    """Thirty days rather than the default ninety, so the round can only have used the period serve was given."""
+    paired_at = datetime.now(UTC)
+    settings = DeviceSettings(dormant_after=timedelta(days=30))
+    config = {"maintenance_every": timedelta(seconds=0.05), "devices": settings}
+
+    async with serving(tmp_path, config=config, clock=lambda: paired_at + timedelta(days=31)) as (core, *_):
+        redactor = Redactor()
+        offer = await devices.offer(core, now=paired_at, public_url="https://campus-laptop.tail0a1b2c.ts.net", redactor=redactor)
+        request = devices.PairRequest(offer.secret, devices.ClientPlatform.ANDROID, "Fold8", "0.1.0")
+        paired = await devices.pair(core, request, now=paired_at, limiter=devices.PairingLimiter(), redactor=redactor)
+
+        async def dormant():
+            record = await core.db.read(lambda snap: devices.device(snap, paired.device_id))
+            return record.state == devices.DeviceState.DORMANT
+
+        await until(dormant)
+
+
+async def test_the_device_settings_reach_the_sync_listener(tmp_path):
+    settings = DeviceSettings(public_url="https://campus-laptop.tail0a1b2c.ts.net", dormant_after=timedelta(days=30))
+    given = []
+
+    def sync_app(hosted):
+        given.append(hosted.devices)
+        return create_sync_app(hosted, refuse_every_bearer)
+
+    async with serving(tmp_path, sync_app=sync_app, config={"devices": settings}):
+        pass
+
+    assert given == [settings]
 
 
 async def test_the_backup_settings_reach_the_admin_listener(tmp_path):
@@ -428,6 +461,46 @@ async def test_the_sync_listener_refuses_every_token_until_devices_pair_and_answ
 
     assert [answer.status_code for answer in answers] == [401, 401, 401]
     assert {answer.headers["campuslife-hub-id"] for answer in answers} == {core.identity.hub_id}
+
+
+async def test_tokens_paired_and_reissued_over_the_sync_listener_reach_neither_hub_log_nor_the_database(tmp_path):
+    redactor = Redactor()
+    log_file = tmp_path / "logs" / "hub.log"
+    handler = file_handler(log_file, redactor)
+    root = logging.getLogger()
+    level = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG)
+    try:
+        async with serving(tmp_path, redactor=redactor, sync_app=sync_devices.sync_app) as (core, client, listening, *_):
+            offer = await devices.offer(core, now=datetime.now(UTC), public_url="https://campus-laptop.tail0a1b2c.ts.net", redactor=redactor)
+            async with httpx.AsyncClient(
+                base_url=f"http://127.0.0.1:{listening.sync[1]}", headers={"CampusLife-Contract": "1"}, trust_env=False, event_hooks={"response": [checked]}
+            ) as sync:
+                body = {"secret": offer.secret, "platform": "android", "device_name": "Fold8", "app_version": "0.1.0"}
+                paired = (await sync.post("/v1/pair", json=body)).json()["token"]
+                reissued = (await sync.post("/v1/devices/me/token", headers={"Authorization": f"Bearer {paired}"})).json()["token"]
+                synced = await sync.get("/v1/changes", params={"since": "0"}, headers={"Authorization": f"Bearer {reissued}"})
+            logging.getLogger("campuslife_hub.test").warning("paired with %s, then given %s for %s", paired, reissued, offer.secret)
+            texts = [offer.secret, paired, reissued]
+            assert synced.status_code == 200
+            assert held_by_the_database(core, texts) == []
+            assert core.layout.database.with_name(core.layout.database.name + "-wal").stat().st_size > 0
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(level)
+        handler.close()
+
+    written = log_file.read_text(encoding="utf-8")
+    assert "POST /v1/pair" in written
+    assert [text for text in texts if text in written] == []
+    assert held_by_the_database(core, texts) == []
+
+
+def held_by_the_database(core, texts):
+    """Which texts the database file, its WAL or its shared memory file holds, as UTF-8 or UTF-16."""
+    data = b"".join(path.read_bytes() for path in core.layout.database.parent.iterdir() if path.name.startswith(core.layout.database.name))
+    return [text for text in texts if text.encode() in data or text.encode("utf-16-le") in data]
 
 
 async def test_a_chunked_body_reaches_the_sync_app_whole(tmp_path):
