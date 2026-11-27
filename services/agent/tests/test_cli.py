@@ -274,6 +274,11 @@ raise SystemExit(main({argv!r}))
 STORE = r"C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0"
 
 
+def no_console(setup, argv):
+    """The CLI run as pythonw runs it: every standard stream None."""
+    return subprocess.run([sys.executable, "-c", NO_CONSOLE.format(setup=setup, argv=argv)], capture_output=True, timeout=60)
+
+
 @pytest.mark.parametrize(
     ("refusal", "setup", "reason"),
     [("database too new", "", "schema version 999"), ("store python", f"sys.base_prefix = {STORE!r}", "Microsoft Store")],
@@ -287,13 +292,29 @@ def test_without_a_console_serve_leaves_why_it_refused_in_the_log_once(tmp_path,
             conn.execute("PRAGMA user_version = 999")
         conn.close()
 
-    program = NO_CONSOLE.format(setup=setup, argv=["--root", str(root), "serve", "--admin-port", "0"])
-    finished = subprocess.run([sys.executable, "-c", program], capture_output=True, timeout=60)
+    finished = no_console(setup, ["--root", str(root), "serve", "--admin-port", "0"])
 
     assert (finished.returncode, finished.stdout, finished.stderr) == (1, b"", b"")
     log = root / "logs" / "hub.log"
     said = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
     assert len([line for line in said if reason in line]) == 1
+
+
+def test_without_a_console_an_unexpected_error_that_ends_serve_is_in_the_log_once(tmp_path, capsys):
+    root = tmp_path / "CampusLife"
+    hub(root, "init")
+    setup = (
+        "import campuslife_hub.host as h\n"
+        "async def ended(*args, **kwargs):\n"
+        "    raise RuntimeError('the admin listener ended')\n"
+        "h.serve = ended"
+    )
+
+    finished = no_console(setup, ["--root", str(root), "serve", "--admin-port", "0"])
+
+    assert finished.returncode == 1
+    said = (root / "logs" / "hub.log").read_text(encoding="utf-8").splitlines()
+    assert len([line for line in said if "the admin listener ended" in line]) == 1
 
 
 def test_while_the_hub_serves_writes_go_through_its_admin_api_and_stop_ends_it(tmp_path, capsys, monkeypatch):
