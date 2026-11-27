@@ -47,7 +47,7 @@ def _is_canonical_text(text: object) -> bool:
     return not isinstance(text, str) or "\r" not in text
 
 
-def _create_item(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
+def create_item(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
     if data["kind"] not in ITEM_KINDS:
         return Rejected(Reason.SCHEMA)
     if not all(_is_canonical_text(data.get(column)) for column in TEXT_COLUMNS[Entity.ITEM]):
@@ -68,7 +68,7 @@ def _create_tag(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
     return _create_once(tx, ref, data, {"id": ref.id, **data})
 
 
-def _create_relation(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
+def create_relation(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
     """A Relation is named by its ends, so creating it again adds it back after a delete (D18)."""
     if not (refs.exists(tx, data["from"]) and refs.exists(tx, data["to"])):
         return Rejected(Reason.LINK_TARGET_MISSING)
@@ -77,7 +77,7 @@ def _create_relation(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
     return Applied()
 
 
-CREATES = {Entity.ITEM: _create_item, Entity.TAG: _create_tag, Entity.RELATION: _create_relation}
+CREATES = {Entity.ITEM: create_item, Entity.TAG: _create_tag, Entity.RELATION: create_relation}
 
 
 def create(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
@@ -95,7 +95,7 @@ def _without(mapping: dict, name: str) -> dict:
     return {member: value for member, value in mapping.items() if member != name}
 
 
-def _with_value(row: dict, key: str, value: object) -> dict:
+def with_value(row: dict, key: str, value: object) -> dict:
     """to: null removes the column (A3)."""
     if key.startswith(FIELDS_PREFIX):
         name = key.removeprefix(FIELDS_PREFIX)
@@ -112,7 +112,7 @@ def _holds_from(current: object, change: dict) -> bool:
     return current == change["from"]
 
 
-def _could_be_created(entity: Entity, row: dict, mutation_id: str) -> bool:
+def could_be_created(entity: Entity, row: dict, mutation_id: str) -> bool:
     """An Item must stay one a client could create: dates that follow all_day and only the fields its kind defines."""
     if entity is not Entity.ITEM:
         return True
@@ -136,7 +136,7 @@ def _units(keys: Iterable[str]) -> list[tuple[str, ...]]:
 
 def _with_changes(row: dict, changes: dict[str, dict], keys: Iterable[str]) -> dict:
     for key in keys:
-        row = _with_value(row, key, changes[key]["to"])
+        row = with_value(row, key, changes[key]["to"])
     return row
 
 
@@ -164,10 +164,10 @@ def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
         standing = {
             key
             for unit in _units(changes)
-            if lost.isdisjoint(unit) and _could_be_created(ref.entity, _with_changes(row, changes, unit), mutation["mutation_id"])
+            if lost.isdisjoint(unit) and could_be_created(ref.entity, _with_changes(row, changes, unit), mutation["mutation_id"])
             for key in unit
         }
-    elif _could_be_created(ref.entity, _with_changes(row, changes, changes), mutation["mutation_id"]):
+    elif could_be_created(ref.entity, _with_changes(row, changes, changes), mutation["mutation_id"]):
         standing = set(changes)
     else:
         return Rejected(Reason.SCHEMA)
