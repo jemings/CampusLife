@@ -944,7 +944,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 재처리 중인 Blob은 그 nonce의 identify가 끝난 뒤에야 판별된 것으로 봅니다.
   - nonce는 추출기·변환기에도, 본문 `extractor.params`에도 가지 않습니다. 그래서 같은 추출기 버전이면 block id가 같습니다. 추출기는 `reprocess`라는 param을 가질 수 없습니다.
   - 원본 Blob은 읽기만 합니다. 업그레이드 때 이미 읽은 것을 자동으로 다시 계획하지 않습니다(새로 생긴 reader는 다음 항목).
-- **새 reader 자동 계획(#6 PR2 결정, 2026-11-28, #5 PR3 재리뷰가 넘긴 질문):** job runner가 시작할 때(`JobRunner.run_forever`의 처음, 곧 `serve`) files planner의 `catch_up`이 돕니다. reader 집합(job type마다 읽는 형식)이 지난번에 기록한 것(`planner_rules`, migration 0011)과 다르면, 지금 identify pipeline으로 판별된 Blob의 Attachment마다 `refine`이 고른 reader 가운데 그 Blob에 job이 하나도 없는 것만 넣고, 새 집합을 같은 트랜잭션에서 기록합니다.
+- **새 reader 자동 계획(#6 PR2 결정, 2026-11-28, #5 PR3 재리뷰가 넘긴 질문):** job runner가 시작할 때(`JobRunner.run_forever`의 처음, 곧 `serve`) files planner의 `catch_up`이 돕니다. reader 집합(job type마다 읽는 형식)이 지난번에 기록한 것(`planner_rules`, migration 0012)과 다르면, 지금 identify pipeline으로 판별된 Blob의 Attachment마다 `refine`이 고른 reader 가운데 그 Blob에 job이 하나도 없는 것만 넣고, 새 집합을 같은 트랜잭션에서 기록합니다.
   - 대상: 새 추출기·변환기(나중에 `serve --libreoffice`를 켠 렌디션 포함, #59), 그리고 읽는 형식이 늘어난 추출기입니다.
   - 대상 아님: 버전이나 상한만 바뀐 추출기(그 Blob에 옛 pipeline의 job이 있음)와 다른 identify pipeline으로 판별된 Blob입니다. 이들은 위 상태 사실과 함께 재처리를 기다립니다(결정 5). 실패한 job이 있는 reader도 다시 넣지 않습니다.
   - 근거: 업그레이드 뒤 사용자가 `reprocess --all`을 알아야 한다면 경험이 나쁩니다. 새 reader의 job만 더하는 것은 job_key로 멱등이고 원본과 옛 Artifact를 건드리지 않습니다. 이미 읽은 결과를 버전이 바뀌었다고 다시 만드는 것은 비용이 크고 인용 기준(`current`)을 바꾸므로 여전히 사용자가 정합니다.
@@ -955,7 +955,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 
 **결과:**
 - 계약은 `schemas/artifact/body.json`·`extraction.json`·`identify.json`과 `HARNESS.md`의 "Artifact 본문"에 있습니다.
-- 코드는 `services/agent/src/campuslife_hub/extract/`(framework, running, child, sniff, formats, safe_zip, limits, bodies, text, extractors, fakes, 그리고 #6 PR2의 document·safe_xml·cfb), `media.py`, `migrations/0009_blob_media.sql`·`0010_released_jobs.sql`·`0011_planner_rules.sql`, `ingest.py`(재처리), `job_runner.py`(`catch_up`), `pipelines.py`(composition root)에 있습니다.
+- 코드는 `services/agent/src/campuslife_hub/extract/`(framework, running, child, sniff, formats, safe_zip, limits, bodies, text, extractors, fakes, 그리고 #6 PR2의 document·safe_xml·cfb), `media.py`, `migrations/0009_blob_media.sql`·`0010_released_jobs.sql`·`0012_planner_rules.sql`, `ingest.py`(재처리), `job_runner.py`(`catch_up`), `pipelines.py`(composition root)에 있습니다.
 - 운영 방법은 `services/agent/README.md`, 형식·상한은 FILE-INGESTION, 엔터티는 DOMAIN-MODEL이 적습니다.
 - 범위 밖: 형식별 추출기와 형식별 Locator(#6·#7·#13), LibreOffice 변환기(O4), `supersedes` 제안·`processing_summary`·`current`(#8), AnnotationLayer pin(#17).
 
