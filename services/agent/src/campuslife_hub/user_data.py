@@ -11,7 +11,7 @@ from collections.abc import Iterable
 
 from campuslife_contracts import contract_root, text_hash, validate
 
-from . import conflict_stash, purge, refs, store
+from . import conflict_records, purge, refs, store
 from .clock import now_instant
 from .created import earlier_create, remember_create
 from .db import Tx
@@ -35,7 +35,7 @@ TEXT_COLUMNS = {
     Entity(entity): frozenset(name for name, column in _schema(f"mutation/{target['schema']}")["properties"].items() if column.get("x-text") is True)
     for entity, target in MUTATION_DEFS["patch"]["x-set-targets"].items()
 }
-"""Each entity's x-text columns: a patch compares them by from_hash, and keeps a value that lost in the stash (E8)."""
+"""Each entity's x-text columns: a patch compares them by from_hash (E7)."""
 
 SCHEMA_VERSION = 1
 
@@ -56,7 +56,7 @@ def create_item(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
         return Rejected(Reason.NOT_CANONICAL)
     row = {"id": ref.id, "schema_version": SCHEMA_VERSION, **data}
     forked_from = data["fields"].get("forked_from_artifact") if data["kind"] == "note" else None
-    purged = forked_from and purge.purged_at(tx, forked_from)
+    purged = forked_from and purge.purged_at(tx, EntityRef(Entity.ARTIFACT, forked_from))
     return _create_once(tx, ref, data, {**row, "evidence_purged_at": purged} if purged else row)
 
 
@@ -128,6 +128,12 @@ def could_be_created(entity: Entity, row: dict, mutation_id: str) -> bool:
 PATCHABLE = frozenset({Entity.ITEM, Entity.ATTACHMENT, Entity.TAG})
 
 
+def live(tx: Tx, ref: EntityRef) -> dict | None:
+    """The row a patch may change: neither missing nor soft-deleted."""
+    row = store.get(tx, ref)
+    return None if row is None or "deleted_at" in row else row
+
+
 BOUND_KEYS = (frozenset({"all_day", "starts_at", "due_at"}),)
 """Keys an Item can hold only together (item.json dates_follow_all_day), so a patch writes or holds back each group whole."""
 
@@ -152,7 +158,8 @@ def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
     lost, it holds back the rest of its BOUND_KEYS group, a group or key that would leave such a row on its own
     is held back too, and the others are written; held-back keys count as conflicted. So beside a key that lost,
     a key that breaks the row on its own shows as a conflict; resent with current froms, it shows as schema.
-    A losing x-text value, and every value sent to an entity that is not live, goes to the conflict stash (E8).
+    Every conflicted key, and every key sent to an entity that is not live, is kept in the Mutation's ConflictRecord (D24),
+    except for an entity a purge removed: the user destroyed it, and its text does not come back (D24 decision 2).
     """
     ref = EntityRef(Entity(mutation["entity"]), mutation["id"])
     if ref.entity not in PATCHABLE:
@@ -160,10 +167,11 @@ def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
     changes: dict[str, dict] = mutation["set"]
     if not all(_is_canonical_text(change["to"]) for change in changes.values() if "from_hash" in change):
         return Rejected(Reason.NOT_CANONICAL)
-    row = store.get(tx, ref)
-    if row is None or "deleted_at" in row:
-        conflict_stash.keep(tx, mutation, device, ref, changes)
+    row = live(tx, ref)
+    if row is None and purge.purged_at(tx, ref) is not None:
         return Rejected(Reason.DELETED)
+    if row is None:
+        return Rejected(Reason.DELETED, conflict_records.keep(tx, mutation["mutation_id"], ref, changes, changes))
     lost = {key for key, change in changes.items() if _value(row, key) != change["to"] and not _holds_from(_value(row, key), change)}
     if lost:
         standing = {
@@ -178,11 +186,12 @@ def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
         return Rejected(Reason.SCHEMA)
     applied = tuple(key for key in changes if key in standing)
     conflicted = tuple(key for key in changes if key not in standing)
-    conflict_stash.keep(tx, mutation, device, ref, (key for key in changes if key in lost and key in TEXT_COLUMNS[ref.entity]))
     updated = _with_changes(row, changes, applied)
     if updated != row:
         store.write(tx, ref, updated)
-    return Conflict(applied, conflicted) if conflicted else Applied(applied)
+    if not conflicted:
+        return Applied(applied)
+    return Conflict(applied, conflicted, conflict_records.keep(tx, mutation["mutation_id"], ref, changes, conflicted))
 
 
 def _delete_item(tx: Tx, ref: EntityRef) -> Outcome:
