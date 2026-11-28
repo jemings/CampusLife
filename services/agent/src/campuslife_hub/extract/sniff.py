@@ -1,6 +1,7 @@
 """identify (S9): the media type family a Blob's bytes show, read in the child.
 
-Magic bytes at the start first, then a PDF header anywhere in the first 1024 bytes, as PDF readers take it. A ZIP is
+Magic bytes at the start first, then a PDF header anywhere in the first 1024 bytes, as PDF readers take it, when the
+bytes are no text: a note or code that mentions %PDF- is text. A ZIP is
 opened through safe_zip for its member names to tell OOXML and HWPX from a plain archive, so an archive whose names
 are dangerous ends identify with unsafe_input, while one too large to read is left to its extractor. An OLE compound
 file is opened through cfb for the entries of its root storage (CFB_ROOTS), so a word in a stream's bytes says
@@ -86,6 +87,8 @@ def _is_text(sample: bytes, whole: bool) -> bool:
 
 
 def _signature(head: bytes) -> str | None:
+    if head.startswith(PDF_HEADER):
+        return formats.PDF
     if head.startswith((b"PK\x03\x04", b"PK\x05\x06")):
         return formats.ZIP
     if head.startswith(CFB_MAGIC):
@@ -103,8 +106,6 @@ def _signature(head: bytes) -> str | None:
         return formats.HEIC if brand in HEIF_BRANDS else FTYP_BRANDS.get(brand, formats.MP4)
     if head.startswith(b"ID3") or (len(head) > 1 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0):
         return formats.MP3
-    if PDF_HEADER in head[:PDF_HEADER_WITHIN]:
-        return formats.PDF
     return None
 
 
@@ -119,4 +120,6 @@ def identify(path: Path, limits: Limits) -> str:
         return _cfb_family(path)
     if family is not None:
         return family
-    return formats.TEXT if _is_text(sample, whole) else formats.UNKNOWN
+    if _is_text(sample, whole):
+        return formats.TEXT
+    return formats.PDF if PDF_HEADER in sample[:PDF_HEADER_WITHIN] else formats.UNKNOWN
