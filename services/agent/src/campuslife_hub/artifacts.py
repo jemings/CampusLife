@@ -39,11 +39,12 @@ def current(runner: Tx | Snapshot, subject_ref: str, artifact_type: str) -> dict
 
 
 def current_of(runner: Tx | Snapshot, subject_refs: Iterable[str], artifact_type: str) -> dict[str, dict]:
-    """`current` for many subjects in one pass over the Artifacts, by subject; a subject with none is left out."""
+    """`current` for many subjects in one pass over the Artifacts, by subject; a subject with none is left out. An
+    Artifact's row is inserted once and only ever rewritten in place (a touch), so its rowid orders the recording."""
     rows = runner.execute(
-        "SELECT artifacts.data FROM artifacts JOIN sync_index ON sync_index.entity = 'artifact' AND sync_index.id = artifacts.id"
-        " WHERE artifacts.artifact_type = ? AND json_extract(artifacts.data, '$.subject_ref') IN (SELECT value FROM json_each(?))"
-        " ORDER BY sync_index.rev",
+        "SELECT data FROM artifacts"
+        " WHERE artifact_type = ? AND json_extract(data, '$.subject_ref') IN (SELECT value FROM json_each(?))"
+        " ORDER BY rowid",
         (artifact_type, json.dumps(list(subject_refs))),
     )
     return {artifact["subject_ref"]: artifact for artifact in (json.loads(data) for (data,) in rows)}
