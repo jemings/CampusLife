@@ -79,7 +79,7 @@ FileExtractor 계약을 정의하고 형식별 adapter를 등록합니다. 각 e
 
 extractor는 형식 판별 결과(magic bytes + MIME)로 선택합니다. 확장자만으로 선택하지 않습니다. identify job이 child에서 Blob 바이트만으로 형식 계열을 판별하고, Attachment마다 확장자·신고 MIME이 그 계열 안에서만 좁힙니다(`refine`). extractor는 subprocess로 실행하고 timeout·Windows Job Object 메모리 상한을 두며, 결과는 stdout JSON으로 받습니다. parser 크래시나 무한 루프가 Hub 본체를 멈추지 않습니다(D16).
 
-추출기·변환기 하나는 `campuslife_hub.extract`의 함수와 descriptor(`Extractor(id, version, entry, accepts, kind)`)이고, `extractors.ALL`에 넣으면 등록됩니다. child 실행, 상한, 결과 매핑, Locator 앵커와 block id, 기록은 프레임워크가 맡습니다. ZIP 계열은 `extract/safe_zip.py`, XML은 `extract/safe_xml.py`, OLE 복합 파일(.doc·.xls·.ppt·.hwp)은 `extract/cfb.py`로만 엽니다.
+추출기·변환기 하나는 `campuslife_hub.extract`의 함수와 descriptor(`Extractor(id, version, entry, accepts, kind, limits)`)이고, `extractors.ALL`에 넣으면 등록됩니다. child 실행, 상한, 결과 매핑, Locator 앵커와 block id, 기록은 프레임워크가 맡습니다. ZIP 계열은 `extract/safe_zip.py`, XML은 `extract/safe_xml.py`, OLE 복합 파일(.doc·.xls·.ppt·.hwp)은 `extract/cfb.py`로만 엽니다.
 
 추천 초기 구현 후보(실제 도입 전에 라이선스/유지보수/Windows 호환성 확인):
 - PDF: PyMuPDF 또는 pypdf, 스캔 페이지 OCR은 별도 adapter
@@ -165,7 +165,7 @@ locator를 추출할 수 없으면 파일명/문서 단위 근거로 표시하�
 
 Windows 로컬 UI는 파일마다 그 파일에 필요한 job(Blob의 identify, 판별 결과로 고른 extract·render)의 최근 상태와 `outcome_code`, 실패 이유를 보여 줍니다. 이름과 바이트의 불일치, "읽는 추출기 없음", 처리 규칙이 바뀌었거나 새 추출기·새 버전이 이 파일을 읽을 수 있다는 사실은 저장하지 않고 화면을 그릴 때 계산합니다.
 
-**재처리:** `reprocess`는 `capture.ingest`를 nonce와 함께 다시 넣고, 그 nonce가 identify·extract·render job params에 들어가 다시 돕니다. 원본 Blob은 바꾸지 않고, 같은 추출기 버전이면 block id가 같습니다. 추출기를 올려도 자동으로 다시 처리하지 않으므로, 새 버전으로 읽히고 싶은 Capture는 재처리합니다. 새로 생긴 추출기·변환기는 다릅니다. Hub가 시작할 때, 이미 판별된 파일 가운데 그것이 한 번도 읽지 않은 파일에 job을 넣습니다(D26).
+**재처리:** `reprocess`는 `capture.ingest`를 nonce와 함께 다시 넣고, 그 nonce가 identify·extract·render job params에 들어가 다시 돕니다. 원본 Blob은 바꾸지 않고, 같은 추출기 버전이면 block id가 같습니다. 추출기를 올려도 자동으로 다시 처리하지 않으므로, 새 버전으로 읽히고 싶은 Capture는 재처리합니다. 새로 생긴 추출기·변환기는 다릅니다. Hub가 시작할 때, 지금 identify 규칙으로 판별된 파일 가운데 그것이 한 번도 읽지 않은 파일에 job을 넣습니다. 같은 업데이트가 identify 규칙(`sniff.VERSION`이나 identify 상한)도 바꾸면 기존 파일은 그 조건에 들지 않으므로 재처리해야 새 추출기로 읽힙니다(D26).
 
 ## 10. 보안 및 리소스 보호
 
