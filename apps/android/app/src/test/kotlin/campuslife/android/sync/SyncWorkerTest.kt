@@ -162,14 +162,4 @@ class SyncWorkerTest {
     private fun finished(work: WorkManager, info: WorkInfo): WorkInfo.State = runBlocking {
         withTimeout(10_000) { work.getWorkInfoByIdFlow(info.id).first { it?.state?.isFinished == true } }!!.state
     }
-
-    private data class RecordedSchedule(var large: Int = 0, var stops: Int = 0) : SyncSchedule {
-        override fun requestLarge() {
-            large++
-        }
-
-        override fun stopUntilUserActs() {
-            stops++
-        }
-    }
 }
