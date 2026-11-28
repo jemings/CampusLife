@@ -134,6 +134,9 @@ def propose(
     missing = [anchor for anchor in _anchors(suggestion["evidence"]) if not refs.exists(tx, anchor)]
     if missing:
         raise InvalidSuggestion(f"the evidence rests on what the Hub does not hold: {missing}")
+    gone = [target for target in _targets(action, proposed) if refs.ever_existed(tx, target) and not refs.exists(tx, target)]
+    if gone:
+        raise InvalidSuggestion(f"the proposal is on what is gone for good: {gone}")
     same = [
         json.loads(data)
         for (data,) in tx.execute("SELECT data FROM suggestions WHERE fingerprint = ? ORDER BY rowid", (suggestion["fingerprint"],))
@@ -150,6 +153,16 @@ def propose(
         store.write(tx, EntityRef(Entity.SUGGESTION, row["id"]), {**row, "state": "superseded"})
     store.write(tx, EntityRef(Entity.SUGGESTION, suggestion["id"]), suggestion)
     return suggestion
+
+
+def _targets(action: str, proposed: dict) -> list[str]:
+    """What the write would change or link to. One purged away cannot come back, unlike one the Hub does not hold
+    yet or an Item in the trash; a purge writes its tombstones in the transaction that journals it."""
+    if action == "patch_item":
+        return [f"item:{proposed['id']}"]
+    if action == "add_relation":
+        return [proposed["from"], proposed["to"]]
+    return []
 
 
 def _anchors(evidence: list[dict]) -> dict[str, list[dict]]:
