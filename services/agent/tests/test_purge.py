@@ -6,12 +6,14 @@ import subprocess
 import time
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from campuslife_contracts import text_hash
 from test_capture_commit import apply, blob_store, commit, device, feed, new_id, store_bytes
 from waiting import until
 
-from campuslife_hub import artifacts, jobs, purge
+from campuslife_hub import artifacts, jobs, mutations, purge
 from campuslife_hub.artifacts import InvalidArtifact
 from campuslife_hub.blobs import has_blob
 from campuslife_hub.core import open_core
@@ -188,10 +190,42 @@ async def test_a_fork_note_created_after_the_purge_of_its_artifact_arrives_marke
     assert "evidence_purged_at" not in items[kept_id]
 
 
+async def test_a_purge_takes_the_conflict_records_of_what_it_purges_and_leaves_the_others(db, device, blob_store, tmp_path):
+    """D24 decision 2: purging is the user destroying the entity, so what was kept for it goes too."""
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    policy = {"mutation_id": new_id(), "op": "patch", "entity": "attachment", "id": lecture_.pdf_attachment,
+              "set": {"cloud_policy": {"from": "blocked", "to": "cloud_allowed"}}}
+    other = {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": COURSE, "set": {"title": {"from": "알고리즘", "to": "자료구조 2"}}}
+    await apply(db, device, policy, other)
+
+    await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())
+
+    changes = await feed(db)
+    assert ("conflict_record", policy["mutation_id"]) in tombstones(changes)
+    assert other["mutation_id"] in live(changes, "conflict_record")
+
+
+async def test_a_patch_resent_after_its_record_was_purged_keeps_nothing_again(db, device, blob_store, tmp_path):
+    """A resend judged again after ninety days finds the entity purged; what the user destroyed is not kept again."""
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    policy = {"mutation_id": new_id(), "op": "patch", "entity": "attachment", "id": lecture_.pdf_attachment,
+              "set": {"cloud_policy": {"from": "blocked", "to": "cloud_allowed"}}}
+    await apply(db, device, policy)
+    await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())
+    before = await feed(db)
+    await mutations.forget_old_results(db, datetime.now(UTC) + timedelta(days=91))
+
+    [again] = await apply(db, device, policy)
+
+    assert {name: value for name, value in again.items() if name != "mutation_id"} == {"result": "rejected", "reason": "deleted"}
+    assert await feed(db) == before
+
+
 async def test_fork_notes_the_user_chose_go_with_the_purge(db, device, blob_store, tmp_path):
     lecture_ = await lecture(db, device, blob_store, tmp_path)
     stale = {"from_hash": None, "to": "다른 장치에서 쓴 글"}
-    await apply(db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": stale}})
+    kept = {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": stale}}
+    assert (await apply(db, device, kept))[0]["conflict_record_ids"] == [kept["mutation_id"]]
 
     purged = await purge.purge_blob(db, blob_store, lecture_.pdf, delete_notes=[lecture_.note], hooks=PurgeHooks())
 
@@ -200,7 +234,7 @@ async def test_fork_notes_the_user_chose_go_with_the_purge(db, device, blob_stor
     assert [row for row in live(changes, "relation").values() if mentions(row, lecture_.note)] == []
     assert purged.target.items == (lecture_.note,)
     assert purged.marked == ()
-    assert await db.read(lambda snap: snap.execute("SELECT count(*) FROM conflict_stash WHERE entity_id = ?", (lecture_.note,)).fetchone()) == (0,)
+    assert ("conflict_record", kept["mutation_id"]) in tombstones(changes)
 
 
 async def test_a_note_the_purge_does_not_reach_cannot_be_chosen_and_nothing_is_purged(db, device, blob_store, tmp_path):
@@ -656,8 +690,12 @@ def test_a_connection_with_secure_delete_off_leaves_the_deleted_text_in_the_file
 
 
 async def test_a_purge_leaves_no_deleted_text_in_the_database_file_or_its_wal(default_secure_delete_off, db, device, blob_store, tmp_path):
+    """The rows the purge removes: the marker is the purged Note's own body, the file name is the Attachment's."""
     lecture_ = await lecture(db, device, blob_store, tmp_path)
-    await apply(db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": None, "to": SECRET_BODY}}})
+    [written] = await apply(
+        db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": text_hash("스택과 큐\n"), "to": SECRET_BODY}}}
+    )
+    assert written["result"] == "applied"
     held_before = database_file_bytes(Layout(tmp_path).database)
     assert SECRET_BODY.encode() in held_before and SECRET_FILENAME.encode() in held_before
 
@@ -667,6 +705,72 @@ async def test_a_purge_leaves_no_deleted_text_in_the_database_file_or_its_wal(de
     left = database_file_bytes(Layout(tmp_path).database)
     assert SECRET_BODY.encode() not in left
     assert SECRET_FILENAME.encode() not in left
+
+
+async def test_a_purge_leaves_no_text_of_the_conflict_records_it_takes_in_the_database_file_or_its_wal(default_secure_delete_off, db, device, blob_store, tmp_path):
+    """The records the purge tombstones: the marker is only in a ConflictRecord, never in the Note's row."""
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    kept_aside = "충돌로남긴비밀문장QWERTY"
+    stale = {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": None, "to": kept_aside}}}
+    [outcome] = await apply(db, device, stale)
+    assert outcome["conflict_record_ids"] == [stale["mutation_id"]]
+    assert kept_aside.encode() in database_file_bytes(Layout(tmp_path).database)
+
+    purged = await purge.purge_blob(db, blob_store, lecture_.pdf, delete_notes=[lecture_.note], hooks=PurgeHooks())
+
+    assert purged.finished
+    assert kept_aside.encode() not in database_file_bytes(Layout(tmp_path).database)
+
+
+async def test_an_edit_made_before_the_purge_and_sent_after_it_is_refused_and_keeps_nothing(default_secure_delete_off, db, device, blob_store, tmp_path):
+    """D24 decision 2: the user destroyed the Note, so another Mutation that reaches the Hub after the purge brings
+    none of its text back, not even in a record no purge could reach."""
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    await purge.purge_blob(db, blob_store, lecture_.pdf, delete_notes=[lecture_.note], hooks=PurgeHooks())
+    before = await feed(db)
+    offline = "퍼지뒤도착한오프라인편집ZXCV"
+
+    [result] = await apply(
+        db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": text_hash("스택과 큐\n"), "to": offline}}}
+    )
+
+    assert {name: value for name, value in result.items() if name != "mutation_id"} == {"result": "rejected", "reason": "deleted"}
+    assert await feed(db) == before
+    assert offline.encode() not in database_file_bytes(Layout(tmp_path).database)
+
+
+async def test_an_edit_sent_while_the_purge_is_unfinished_keeps_nothing(db, device, blob_store, tmp_path):
+    """The rows went when the purge committed; a hook that failed leaves it unfinished, not undone."""
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    hooks = PurgeHooks()
+
+    def failing(target):
+        raise OSError("index locked")
+
+    hooks.register("index", failing)
+    purged = await purge.purge_blob(db, blob_store, lecture_.pdf, delete_notes=[lecture_.note], hooks=hooks)
+    assert not purged.finished
+    before = await feed(db)
+
+    [result] = await apply(
+        db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": text_hash("스택과 큐\n"), "to": "다른 장치에서 쓴 글"}}}
+    )
+
+    assert {name: value for name, value in result.items() if name != "mutation_id"} == {"result": "rejected", "reason": "deleted"}
+    assert await feed(db) == before
+
+
+async def test_an_edit_of_a_purged_attachment_sent_after_the_purge_keeps_nothing(db, device, blob_store, tmp_path):
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())
+    before = await feed(db)
+
+    [result] = await apply(
+        db, device, {"mutation_id": new_id(), "op": "patch", "entity": "attachment", "id": lecture_.pdf_attachment, "set": {"cloud_policy": {"from": "local_only", "to": "blocked"}}}
+    )
+
+    assert {name: value for name, value in result.items() if name != "mutation_id"} == {"result": "rejected", "reason": "deleted"}
+    assert await feed(db) == before
 
 
 def read_holding_the_wal(database):

@@ -21,7 +21,7 @@ from .db import Tx
 from .devices import DeviceId
 from .outcomes import Applied, Conflict, Outcome, Reason, Rejected
 from .store import Entity, EntityRef
-from .user_data import FIELDS_PREFIX, ITEM_DATA, TEXT_COLUMNS, could_be_created, create_item, create_relation, patch, with_value
+from .user_data import FIELDS_PREFIX, ITEM_DATA, TEXT_COLUMNS, could_be_created, create_item, create_relation, live, patch, with_value
 
 _KNOWN = json.loads((contract_root() / "schemas" / "suggestion" / "suggestion.json").read_text(encoding="utf-8"))["$defs"]["known"]
 
@@ -173,7 +173,9 @@ def _accept_create_item(tx: Tx, suggestion: dict, edits: dict, mutation: dict, d
 
 
 def _accept_patch_item(tx: Tx, suggestion: dict, edits: dict, mutation: dict, device: DeviceId) -> Outcome:
-    """The proposed patch, an edit in place of its key's to, compare-and-set like a client's (D18)."""
+    """The proposed patch, an edit in place of its key's to, compare-and-set like a client's (D18). Its keys that lose
+    are kept in a ConflictRecord as a client's are; refused because the Item is not live, it keeps none, as the open
+    Suggestion still holds what it proposes (D24 decision 1, E3)."""
     proposed = suggestion["proposed"]
     if not edits.keys() <= proposed["set"].keys():
         return Rejected(Reason.SCHEMA)
@@ -182,6 +184,8 @@ def _accept_patch_item(tx: Tx, suggestion: dict, edits: dict, mutation: dict, de
     anchors = _anchors(suggestion["evidence"])
     if not all(refs.exists(tx, anchor) for anchor in anchors):
         return Rejected(Reason.LINK_TARGET_MISSING)
+    if live(tx, EntityRef(Entity.ITEM, proposed["id"])) is None:
+        return Rejected(Reason.DELETED)
     patched = patch(tx, item_patch, device)
     if isinstance(patched, Applied) or (isinstance(patched, Conflict) and patched.applied_fields):
         _copy_evidence(tx, f"item:{proposed['id']}", anchors)

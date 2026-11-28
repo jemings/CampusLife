@@ -62,6 +62,11 @@ async def decide(db, device, mutation):
     return {name: value for name, value in result.items() if name != "mutation_id"}
 
 
+def decided(result):
+    """What compare-and-set decided, without the ConflictRecords it named."""
+    return {name: value for name, value in result.items() if name != "conflict_record_ids"}
+
+
 def rows(changes, entity):
     return {row["id"]: row["data"] for row in changes if row["entity"] == entity and not row["deleted"]}
 
@@ -343,11 +348,16 @@ async def test_a_patch_item_whose_item_changed_since_is_a_conflict_and_the_sugge
     moved = {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": item_id,
              "set": {"due_at": {"from": "2026-03-16T14:59:00.000Z", "to": "2026-03-20T14:59:00.000Z"}}}
     await apply(db, device, moved)
+    decision = accepting(suggestion)
 
-    result = await decide(db, device, accepting(suggestion))
+    result = await decide(db, device, decision)
 
-    assert result == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["due_at"]}
-    assert rows(await feed(db), "item")[item_id]["due_at"] == "2026-03-20T14:59:00.000Z"
+    assert result == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["due_at"], "conflict_record_ids": [decision["mutation_id"]]}
+    changes = await feed(db)
+    assert rows(changes, "item")[item_id]["due_at"] == "2026-03-20T14:59:00.000Z"
+    assert rows(changes, "conflict_record") == {
+        decision["mutation_id"]: {"id": decision["mutation_id"], "entity_ref": f"item:{item_id}", "set": suggestion["proposed"]["set"]},
+    }
     assert await state_of(db, suggestion) == "accepted"
 
 
@@ -361,7 +371,7 @@ async def test_a_patch_item_that_lost_every_key_adds_no_evidence(db, device, blo
              "set": {"due_at": {"from": "2026-03-16T14:59:00.000Z", "to": "2026-03-20T14:59:00.000Z"}}}
     await apply(db, device, moved)
 
-    assert await decide(db, device, accepting(suggestion)) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["due_at"]}
+    assert decided(await decide(db, device, accepting(suggestion))) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["due_at"]}
 
     assert rows(await feed(db), "relation") == {}
     assert await state_of(db, suggestion) == "accepted"
@@ -377,12 +387,13 @@ async def test_a_patch_item_that_won_some_keys_adds_its_evidence(db, device, blo
              "set": {"due_at": {"from": "2026-03-16T14:59:00.000Z", "to": "2026-03-20T14:59:00.000Z"}}}
     await apply(db, device, moved)
 
-    assert await decide(db, device, accepting(suggestion)) == {"result": "conflict", "applied_fields": ["title"], "conflicted_fields": ["due_at"]}
+    assert decided(await decide(db, device, accepting(suggestion))) == {"result": "conflict", "applied_fields": ["title"], "conflicted_fields": ["due_at"]}
 
     assert rows(await feed(db), "relation")[f"item:{item_id}|evidence|blob:{pdf}"]["locators"] == [page_at(pdf)]
 
 
-async def test_a_patch_item_on_a_deleted_item_is_rejected_as_deleted_and_stays_open(db, device, blob_store, tmp_path):
+async def test_a_patch_item_on_a_deleted_item_is_rejected_as_deleted_and_stays_open_with_no_record(db, device, blob_store, tmp_path):
+    """E3: the open Suggestion keeps what it proposes, so no ConflictRecord keeps it again, however often it is accepted."""
     artifact_id, pdf = await grounds(db, blob_store, tmp_path)
     item_id, create = created_item(due_at="2026-03-16T14:59:00.000Z")
     await apply(db, device, create, {"mutation_id": new_id(), "op": "delete", "entity": "item", "id": item_id})
@@ -390,6 +401,7 @@ async def test_a_patch_item_on_a_deleted_item_is_rejected_as_deleted_and_stays_o
                                [page_at(pdf)])
     before = await feed(db)
 
+    assert await decide(db, device, accepting(suggestion)) == {"result": "rejected", "reason": "deleted"}
     assert await decide(db, device, accepting(suggestion)) == {"result": "rejected", "reason": "deleted"}
 
     assert await feed(db) == before

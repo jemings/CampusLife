@@ -26,7 +26,7 @@ import segno
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from . import devices
+from . import conflict_records, devices
 from .admin_page import page
 from .clock import instant
 from .devices import HUB_PLATFORM, DeviceRecord, DeviceState, HubDeviceRefused, NoPublicUrl, PairingOffer, RevokedDevice, UnknownDevice
@@ -121,6 +121,7 @@ def _row(device: DeviceRecord) -> str:
 async def devices_page(request: Request) -> Response:
     admin = _admin(request)
     listed = await admin.core.db.read(devices.client_devices)
+    open_conflicts = await admin.core.db.read(conflict_records.open_count)
     dormant = sum(device.state == DeviceState.DORMANT for device in listed)
     waiting = (
         f'<p class="warning">{dormant} dormant devices wait for approval: approve only a device you have in hand, and revoke one that was lost.</p>'
@@ -134,7 +135,8 @@ async def devices_page(request: Request) -> Response:
     )
     head = "<tr><th>Device</th><th>Platform</th><th>App</th><th>State</th><th>Last seen</th><th>Last refused</th><th>Reported</th><th></th></tr>"
     table = "<table>" + head + "".join(_row(device) for device in listed) + "</table>" if listed else "<p>No devices yet.</p>"
-    return page("Devices", waiting + adding + table)
+    conflicts = f"<p>{open_conflicts} open conflicts: changes devices sent that the Hub kept aside for you to settle.</p>"
+    return page("Devices", waiting + adding + table + conflicts)
 
 
 def _offer_page(offer: PairingOffer) -> Response:
