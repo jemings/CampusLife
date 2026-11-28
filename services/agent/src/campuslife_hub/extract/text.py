@@ -19,8 +19,9 @@ from .document import LIMIT_REACHED, Outline
 from .extracted import Extracted
 from .limits import Limits
 
-VERSION = "2"
-"""2: a heading longer than max_block_text_chars is cut to it (Outline) rather than failing the body."""
+VERSION = "1"
+"""1 still: Outline cuts a heading longer than max_block_text_chars, which v1 emitted whole and the Hub refused to
+store; every output v1 could store is unchanged (#81 re-review, a differential run over 4,000 random inputs)."""
 
 MAX_BYTES_PER_CHAR = 4
 """Reading max_text_chars times this many bytes reads at least max_text_chars characters in any of the encodings."""
