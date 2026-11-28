@@ -338,8 +338,11 @@ async def test_a_purge_leaves_no_byte_of_what_it_removed_in_the_index_files(defa
     assert await sources(index, "다른") != []
 
 
-KEPT_BLOCKS = 20000
-"""Enough blocks that the FTS5 index has interior pages, whose separators keep the first term of a leaf."""
+KEPT_BLOCKS = 6000
+ROUNDS = 20
+MARKED_PER_ROUND = 10
+"""Each round indexes kept and marked blocks in one transaction, so the markers share every FTS5 segment with kept text
+and a purge deletes from segments it cannot drop whole."""
 KEPT_SYLLABLES = [chr(0xAC00 + 2 * i) for i in range(150)]
 MARKER_SYLLABLES = [chr(0xAC01 + 2 * i) for i in range(150)]
 """Syllables only markers use, falling between the kept text's in the index's term order."""
@@ -357,19 +360,25 @@ def index_terms_holding(index, syllables):
         conn.close()
 
 
-async def test_a_purge_leaves_no_byte_of_what_it_removed_in_an_index_of_many_leaves(default_secure_delete_off, db, blob_store, tmp_path, index):
+async def test_a_purge_leaves_no_byte_of_what_it_removed_from_segments_it_shares_with_kept_text(default_secure_delete_off, db, blob_store, tmp_path, index):
     rng = random.Random(11)
-    await extraction(db, blob_store, tmp_path, [(words(rng, KEPT_SYLLABLES, 25), []) for _ in range(KEPT_BLOCKS)], subject_bytes=b"kept original")
-    markers = [words(rng, MARKER_SYLLABLES, 1, 6, 6) for _ in range(300)]
-    purged_sha, _ = await extraction(db, blob_store, tmp_path, [(f"{words(rng, KEPT_SYLLABLES, 5)} {marker}", []) for marker in markers], subject_bytes=b"purged original")
-    await index.catch_up(db, blob_store)
-    held = cache_bytes(index)
+    markers, purged = [], []
+    for round_ in range(ROUNDS):
+        kept = [(words(rng, KEPT_SYLLABLES, 25), []) for _ in range(KEPT_BLOCKS // ROUNDS)]
+        await extraction(db, blob_store, tmp_path, kept, subject_bytes=f"kept original {round_}".encode())
+        marked_here = [words(rng, MARKER_SYLLABLES, 1, 6, 6) for _ in range(MARKED_PER_ROUND)]
+        sha, _ = await extraction(db, blob_store, tmp_path, [(f"{words(rng, KEPT_SYLLABLES, 5)} {marker}", []) for marker in marked_here], subject_bytes=f"purged original {round_}".encode())
+        markers += marked_here
+        purged.append(sha)
+        await index.catch_up(db, blob_store)
     marker_bigrams = {marker[j : j + 2].encode() for marker in markers for j in range(len(marker) - 1)}
+    held = cache_bytes(index)
     assert all(bigram in held for bigram in marker_bigrams)
     hooks = PurgeHooks()
     hooks.register("search", index.forget)
 
-    assert (await purge.purge_blob(db, blob_store, purged_sha, hooks=hooks)).finished
+    for sha in purged:
+        assert (await purge.purge_blob(db, blob_store, sha, hooks=hooks)).finished
 
     left = cache_bytes(index)
     assert [bigram.decode() for bigram in marker_bigrams if bigram in left] == []
