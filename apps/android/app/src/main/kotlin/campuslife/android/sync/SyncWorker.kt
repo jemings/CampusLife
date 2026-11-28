@@ -30,7 +30,20 @@ class SyncWorker(
     private val runner: SyncRunner,
     private val onLargeWaiting: () -> Unit,
 ) : CoroutineWorker(context, params) {
-    override suspend fun doWork(): Result = TODO()
+    override suspend fun doWork(): Result {
+        val outcome = withContext(Dispatchers.IO) { runner.run(inputData.getBoolean(UNMETERED, false)) }
+        val output = workDataOf(OUTCOME to outcome.toString())
+        return when (outcome) {
+            is SyncOutcome.Synced -> {
+                if (outcome.largeWaiting) onLargeWaiting()
+                if (outcome.deferred) Result.retry() else Result.success(output)
+            }
+            SyncOutcome.NotPaired -> Result.success(output)
+            SyncOutcome.HubNotReached, SyncOutcome.HubFailed, SyncOutcome.Dormant -> Result.retry()
+            SyncOutcome.Unauthorized, SyncOutcome.Revoked, SyncOutcome.WrongHub, SyncOutcome.ContractTooOld ->
+                Result.failure(output)
+        }
+    }
 
     companion object {
         const val OUTCOME = "outcome"
@@ -51,12 +64,26 @@ class SyncWorkerFactory(private val runner: () -> SyncRunner, private val onLarg
 /** The sync work WorkManager keeps: a pass on request, one every 15 minutes, and one for large Blobs on Wi-Fi. */
 class SyncScheduler(private val work: WorkManager) {
     /** A pass soon; queued behind one already running, so a change made during it is not missed. */
-    fun requestSync(): Unit = TODO()
+    fun requestSync() {
+        val request = OneTimeWorkRequestBuilder<SyncWorker>().setConstraints(over(NetworkType.CONNECTED)).build()
+        work.enqueueUniqueWork(SYNC, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+    }
 
-    fun keepPeriodic(): Unit = TODO()
+    fun keepPeriodic() {
+        val request = PeriodicWorkRequestBuilder<SyncWorker>(PERIOD_MINUTES, TimeUnit.MINUTES)
+            .setConstraints(over(NetworkType.CONNECTED))
+            .build()
+        work.enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request)
+    }
 
     /** A pass once the device is on an unmetered network, for the Blobs over [LARGE_BLOB_BYTES] (D7). */
-    fun requestLarge(): Unit = TODO()
+    fun requestLarge() {
+        val request = OneTimeWorkRequestBuilder<SyncWorker>()
+            .setConstraints(over(NetworkType.UNMETERED))
+            .setInputData(workDataOf(SyncWorker.UNMETERED to true))
+            .build()
+        work.enqueueUniqueWork(LARGE, ExistingWorkPolicy.KEEP, request)
+    }
 
     companion object {
         const val SYNC = "sync"
