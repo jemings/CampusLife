@@ -82,6 +82,7 @@ private val typed: Map<String, Codec<*>> = mapOf(
     "common/local_date" to Codec(LocalDay.serializer()),
     "common/local_time_rule" to Codec(LocalTimeRule.serializer()),
     "common/open_name" to Codec(String.serializer()),
+    "common/original_text" to Codec(String.serializer()),
     "common/sha256" to Codec(String.serializer()),
     "common/tz" to Codec(String.serializer()),
     "common/uuid" to Codec(String.serializer()),
