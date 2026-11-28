@@ -28,7 +28,7 @@ composeBom = "2026.06.01"
 activityCompose = "1.13.0"
 room = "2.8.5"
 work = "2.12.0"
-okhttp = "5.5.1"
+okhttp = "5.4.0"
 
 junit = "4.13.2"
 robolectric = "4.18.1"
