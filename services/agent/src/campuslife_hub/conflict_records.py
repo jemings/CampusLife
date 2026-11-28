@@ -21,14 +21,14 @@ def keep(tx: Tx, mutation_id: str, target: EntityRef, changes: dict[str, dict], 
     """Keep the changes of `keys` under mutation_id and return the ids a result names in conflict_record_ids.
 
     A Mutation has one record for good: when a resend is judged again after its result was forgotten, the record it
-    made, open or resolved, stays as it is and is named again. A record purged with its entity is not made again.
+    made, open or resolved, stays as it is and is named again.
     """
     kept = {key: changes[key] for key in keys}
     if not kept:
         return ()
     record = EntityRef(Entity.CONFLICT_RECORD, mutation_id)
     if store.ever_written(tx, record):
-        return () if store.get(tx, record) is None else (mutation_id,)
+        return (mutation_id,)
     store.write(tx, record, {"id": mutation_id, "entity_ref": f"{target.entity.value}:{target.id}", "set": kept})
     return (mutation_id,)
 

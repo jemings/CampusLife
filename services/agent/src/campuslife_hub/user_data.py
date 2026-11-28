@@ -56,7 +56,7 @@ def create_item(tx: Tx, ref: EntityRef, data: dict) -> Outcome:
         return Rejected(Reason.NOT_CANONICAL)
     row = {"id": ref.id, "schema_version": SCHEMA_VERSION, **data}
     forked_from = data["fields"].get("forked_from_artifact") if data["kind"] == "note" else None
-    purged = forked_from and purge.purged_at(tx, forked_from)
+    purged = forked_from and purge.purged_at(tx, EntityRef(Entity.ARTIFACT, forked_from))
     return _create_once(tx, ref, data, {**row, "evidence_purged_at": purged} if purged else row)
 
 
@@ -158,7 +158,8 @@ def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
     lost, it holds back the rest of its BOUND_KEYS group, a group or key that would leave such a row on its own
     is held back too, and the others are written; held-back keys count as conflicted. So beside a key that lost,
     a key that breaks the row on its own shows as a conflict; resent with current froms, it shows as schema.
-    Every conflicted key, and every key sent to an entity that is not live, is kept in the Mutation's ConflictRecord (D24).
+    Every conflicted key, and every key sent to an entity that is not live, is kept in the Mutation's ConflictRecord (D24),
+    except for an entity a purge removed: the user destroyed it, and its text does not come back (D24 decision 2).
     """
     ref = EntityRef(Entity(mutation["entity"]), mutation["id"])
     if ref.entity not in PATCHABLE:
@@ -167,6 +168,8 @@ def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
     if not all(_is_canonical_text(change["to"]) for change in changes.values() if "from_hash" in change):
         return Rejected(Reason.NOT_CANONICAL)
     row = live(tx, ref)
+    if row is None and purge.purged_at(tx, ref) is not None:
+        return Rejected(Reason.DELETED)
     if row is None:
         return Rejected(Reason.DELETED, conflict_records.keep(tx, mutation["mutation_id"], ref, changes, changes))
     lost = {key for key, change in changes.items() if _value(row, key) != change["to"] and not _holds_from(_value(row, key), change)}

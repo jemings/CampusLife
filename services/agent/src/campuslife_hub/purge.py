@@ -298,11 +298,24 @@ async def purge_blob(db: Database, blobs: BlobStore, sha256: str, *, delete_note
     return Purged(journal_id, finish.failed_hooks, finish.kept, finish.wal_kept, target, marked, cancelled)
 
 
-def purged_at(runner: Tx | Snapshot, artifact_id: str) -> str | None:
-    """When a purge removed the Artifact; None when none did. Only a purge removes an Artifact, so this is when its
-    tombstone was written."""
+_JOURNALED = {
+    Entity.ATTACHMENT: "attachments",
+    Entity.ARTIFACT: "artifacts",
+    Entity.SUGGESTION: "suggestions",
+    Entity.RELATION: "relations",
+    Entity.ITEM: "items",
+}
+"""The PurgeTarget member that lists the ids of each kind of entity a purge removes."""
+
+
+def purged_at(runner: Tx | Snapshot, ref: EntityRef) -> str | None:
+    """When a purge removed the entity; None when none did. Only a purge removes an Artifact, so for one this is when
+    its tombstone was written."""
+    member = _JOURNALED.get(ref.entity)
+    if member is None:
+        return None
     (registered_at,) = runner.execute(
-        "SELECT min(registered_at) FROM purge_journal WHERE EXISTS (SELECT 1 FROM json_each(target, '$.artifacts') WHERE value = ?)", (artifact_id,)
+        "SELECT min(registered_at) FROM purge_journal WHERE EXISTS (SELECT 1 FROM json_each(target, ?) WHERE value = ?)", (f"$.{member}", ref.id)
     ).fetchone()
     return registered_at
 
