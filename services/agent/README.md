@@ -103,7 +103,7 @@ CLI 요청은 600초를 기다립니다. 그보다 오래 걸리는 큰 첫 백�
 - Capture가 들어오면 Hub가 파일마다 형식을 판별(identify)하고, 그 형식을 읽는 추출기(지금은 텍스트·Markdown의 `text`)로 extraction Artifact를 만듭니다. 판별·추출은 Hub 밖 child 프로세스에서 상한 표(FILE-INGESTION §10) 안에서 돌고, 하나가 죽거나 멈춰도 Hub와 다른 파일 처리는 계속됩니다.
 - 로컬 UI의 **Captures**가 파일마다 판별 형식, job 상태와 `outcome_code`, 실패 이유를 보여 줍니다. 이름이 바이트와 다른 형식을 말하거나 읽는 추출기가 없으면 그것도 적습니다. 더 자세한 job 목록은 **Jobs**에 있습니다.
 - 가져오기 폼에서 강의 세션을 고르면 가져온 파일이 모두 그 LectureSession에 연결됩니다. CLI는 `import --link item:<id>`입니다.
-- **재처리:** Captures의 **Reprocess**(Capture 하나)나 **Reprocess every Capture**, 또는 `campuslife-hub reprocess --capture <id> | --all`. 판별부터 다시 하고 새 Artifact를 만들며, 원본과 옛 Artifact는 그대로 둡니다. 같은 추출기 버전이면 block id가 같습니다. Hub를 업데이트해 추출기가 바뀌어도 자동으로 다시 처리하지 않으므로, 새 추출기로 읽히고 싶은 Capture는 재처리합니다. Hub가 돌지 않을 때 실행하면 job만 쌓이고 다음 `serve`에서 돕니다.
+- **재처리:** Captures의 **Reprocess**(Capture 하나)나 **Reprocess every Capture**, 또는 `campuslife-hub reprocess --capture <id> | --all`. 판별부터 다시 하고 새 Artifact를 만들며, 원본과 옛 Artifact는 그대로 둡니다. 같은 추출기 버전이면 block id가 같습니다. Hub를 업데이트해 추출기의 버전이 바뀌어도 자동으로 다시 처리하지 않으므로, 새 버전으로 읽히고 싶은 Capture는 재처리합니다. 업데이트로 새 추출기·변환기가 생기면 Hub가 시작할 때 이미 판별된 파일 가운데 그것이 읽는 파일에 job을 넣습니다(D26). Hub가 돌지 않을 때 실행하면 job만 쌓이고 다음 `serve`에서 돕니다.
 - 실패한 job은 **Jobs**의 Retry로 같은 job을 다시 시도합니다. 원본이 purge된 뒤의 job은 Retry가 없습니다.
 
 ### sync 리스너와 tailscale serve (D5, D22)
