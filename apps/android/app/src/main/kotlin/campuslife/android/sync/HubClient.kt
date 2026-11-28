@@ -66,7 +66,8 @@ class HubClient(
      * POST /v1/devices/me/token: another token for this Device. The one sent keeps working until the new one is first
      * used; asking again gives another and ends the one not used yet (D23).
      */
-    fun reissue(): Answer<PairResponse> = TODO()
+    fun reissue(): Answer<PairResponse> =
+        send(at("v1/devices/me/token").post(ByteArray(0).toRequestBody())) { _, text -> read(PairResponse.serializer(), text) }
 
     fun openUpload(sha256: String, size: Long): Answer<Opened> =
         send(at("v1/blobs/uploads").post(json(UploadRequest.serializer(), UploadRequest(sha256, size)))) { status, text ->
