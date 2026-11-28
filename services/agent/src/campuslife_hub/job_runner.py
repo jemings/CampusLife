@@ -302,7 +302,10 @@ class JobRunner:
         recovered = await self.context.db.write(lambda tx: jobs.recover_after_restart(tx, now=now))
         if recovered:
             log.warning("%d jobs were running when the runner last stopped; they wait again or failed", recovered)
-        await self.catch_up()
+        try:
+            await self.catch_up()
+        except Exception:
+            log.exception("planning the readers the Hub gained failed; jobs run on, and the next start tries again")
         serving = asyncio.create_task(self._serve(idle_s))
         stopping = asyncio.create_task(stop.wait())
         try:
