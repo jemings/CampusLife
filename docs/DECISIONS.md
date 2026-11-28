@@ -596,7 +596,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 
 **오케스트레이터 결정: 배치와 기동** (2026-11-26, "결정")
 - **E1. 배치:** `services/agent/`(패키지 `campuslife_hub`), `.python-version` 3.12, `uv.lock` 커밋. 계약 패키지는 editable path 의존입니다(non-editable이면 패키지 밖 `schemas/`를 찾지 못함). 루트 uv workspace는 쓰지 않습니다(#20의 패키지별 lock·CI와 충돌).
-- **E2. SQLite 기동 검사:** 하한 3.35(RETURNING)와 기능 probe(fts5, trigram, json_extract, generated column, FTS5 `secure-delete` 옵션(3.44, D27)). 실패하면 이유를 출력하고 기동을 거부합니다. 빌드의 버전 번호만으로는 어떤 모듈을 넣고 빌드했는지 알 수 없어서 실제로 시도해 봅니다. WAL, `synchronous=FULL`은 항상입니다. `secure_delete`를 켜지 못하는 빌드도 기동을 거부합니다.
+- **E2. SQLite 기동 검사:** 하한 3.35(RETURNING)와 기능 probe(fts5, trigram, json_extract, generated column, FTS5 `secure-delete` 옵션(3.44)과 `contentless_delete`(3.43), D27). 실패하면 이유를 출력하고 기동을 거부합니다. 빌드의 버전 번호만으로는 어떤 모듈을 넣고 빌드했는지 알 수 없어서 실제로 시도해 봅니다. WAL, `synchronous=FULL`은 항상입니다. `secure_delete`를 켜지 못하는 빌드도 기동을 거부합니다.
 - **E3. 마이그레이션:** 번호 붙인 SQL 파일과 `PRAGMA user_version`. DB가 코드보다 새로우면 기동을 거부합니다. alembic·ORM은 쓰지 않습니다.
 - **E11. 단일 인스턴스:** `<root>/hub.lock`(`msvcrt.locking`/`fcntl.flock`). 두 번째 실행은 메시지와 함께 0이 아닌 코드로 끝납니다. 쓰기 CLI는 서빙 중인 Hub의 admin API를 거치고, Hub가 없으면 lock을 직접 잡습니다. restore는 채울 빈 root의 lock을 잡습니다.
   - 읽기 명령(`ls`, `fsck`)은 DB에 쓰지 않습니다(2026-11-26, "PR #28 1차"). migrate·신원 발급을 하지 않고, 스키마가 코드와 다르면 거부합니다. 근거: lock을 쥔 옛 Hub가 있는데 새 checkout의 읽기 명령이 DB를 새 버전으로 올리면 옛 Hub가 깨집니다.
@@ -666,7 +666,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 세대의 Blob 하나라도 없거나 손상됐으면 전체를 거부합니다. `--allow-missing`은 만들지 않습니다(부분 복원은 조용한 데이터 손실). 다른 세대·다른 드라이브를 씁니다.
   - DB를 놓은 뒤 기록 전에 크래시하면 그 세대의 `backups` 행과 `backed_up_at`이 빠집니다. 다음 백업이 다시 찍고 데이터는 잃지 않으므로 받아들입니다.
   - 복원 안내는 "모든 장치를 다시 승인, 분실·revoke한 장치는 승인하지 말 것"과 "백업 뒤에 한 purge는 되돌려졌으니 다시 purge"를 출력합니다.
-- **E16. purge:** durable `purge_journal`과 `purge.register(name, fn)` 훅입니다. 행 삭제와 journal 행을 한 트랜잭션에 commit하고, 그 뒤 훅과 파일 삭제를 멱등으로 실행하며, 기동 때 끝나지 않은 것을 재개합니다(FTS는 별도 DB라 한 트랜잭션에 묶을 수 없음).
+- **E16. purge:** durable `purge_journal`과 `PurgeHooks.register(name, fn)` 훅입니다. 훅 모음은 Core마다 있고, `purge_blob`·`finish_unfinished`는 그것을 꼭 받습니다(기본값 없음, D27). 행 삭제와 journal 행을 한 트랜잭션에 commit하고, 그 뒤 훅과 파일 삭제를 멱등으로 실행하며, 기동 때 끝나지 않은 것을 재개합니다(FTS는 별도 DB라 한 트랜잭션에 묶을 수 없음).
   - 지워지는 Blob·Attachment·Artifact·Suggestion과 고른 fork Note를 끝으로 가진 Relation도 함께 지웁니다(2026-11-27, "PR #36 1차" 경계 메모·"PR7 첫 할 일").
   - 폐쇄는 실제로 지워질 content Blob만 따라가는 고정점입니다. 남는 계보와 바이트를 공유하는 Artifact에서 만든 것은 남습니다.
   - 지워지는 것을 subject로 가진 job과, 지워지는 Blob을 입력으로 가진 job은 취소합니다. `capture.ingest`는 취소하지 않습니다. 실행할 때 live 상태를 다시 읽고, Attachment 없는 Capture도 ingest 대상이기 때문입니다.
@@ -1007,7 +1007,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **근거:**
   - 2음절·조사 결합·합성어 내부·영한 혼합 모두에서 재현율 1.00, 오탐 0입니다(합성 코퍼스 기준, 위 측정).
   - C와 달리 2글자 질의도 색인으로 찾고 bm25로 순위를 매깁니다. 스캔은 1음절 질의만 합니다.
-  - 크기는 C보다 큽니다. contentless로 두면 C보다 작지만, purge 비용 때문에 분석문을 저장하는 표를 골랐습니다(아래 "색인 파일" 절).
+  - 크기는 contentless 표로 두어 C보다 작습니다(아래 "색인 파일" 절).
 - **버린 안:**
   - A·B는 조사와 합성어 내부를 놓칩니다.
   - C는 2글자 질의를 순위 없는 전체 스캔으로 처리합니다.
@@ -1027,37 +1027,47 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 
 ### 색인 파일과 FTS 표 모양 (#11 PR2, 2026-11-28)
 
-**문제:** purge 뒤에는 지운 텍스트의 바이트가 파일에 남으면 안 됩니다(U2). 그런데 `PRAGMA secure_delete`만으로는 FTS5 토큰 바이트가 지워지지 않습니다(PR #69 리뷰, 로컬 합성).
-- 분석문을 저장하는 표는 FTS5의 `secure-delete` 옵션(`INSERT INTO fts(fts, rank) VALUES('secure-delete', 1)`)을 켜야 지운 문서의 토큰 바이트가 0이 됩니다.
-- contentless 표(`content=''`, `contentless_delete=1`)는 그 옵션을 켜도 토큰이 남습니다. 삭제 뒤 `'optimize'`로 색인 전체를 다시 써야 0이 됩니다.
+**문제:** purge 뒤에는 지운 텍스트의 바이트가 파일에 남으면 안 됩니다(U2). 그런데 `PRAGMA secure_delete`만으로는 FTS5 토큰 바이트가 지워지지 않습니다(PR #69·#78 리뷰, 로컬 합성).
+- FTS5의 `secure-delete` 옵션(`INSERT INTO fts(fts, rank) VALUES('secure-delete', 1)`)을 켜도, 색인 내부 페이지의 구분자에 든 항(leaf 첫 항의 접두)은 남습니다. 그래서 여러 leaf에 걸친 색인에서 지운 문서의 토큰 조각이 남습니다(PR #78 리뷰, 오케스트레이터가 3.45.1에서 재현).
+- 삭제 뒤 `'optimize'`로 색인 전체를 다시 쓰면 0이 됩니다. 분석문을 저장하는 표와 contentless 표(`content=''`, `contentless_delete=1`) 둘 다 그렇습니다.
 
 **측정:** `services/agent/tools/search_purge_bench.py`가 **로컬 합성** 코퍼스(`search_bench.py`와 같은 100,000블록, 15.9M자)로 쟀습니다.
-- 두 모양 모두 WAL, `secure_delete=ON`, FTS5 `secure-delete` 옵션을 켜고, `fold_original`을 거친 원문 표를 곁에 둡니다.
-- purge는 표식 문서 하나를 지우고(contentless는 `'optimize'`까지) WAL을 `TRUNCATE`로 비우는 데까지입니다. 표식 토큰은 DB와 WAL 파일 바이트에서 셉니다.
+- 두 모양 모두 WAL, `secure_delete=ON`, FTS5 `secure-delete` 옵션을 켜고, `fold_original`을 거친 원문 표를 곁에 둡니다. 색인은 follower처럼 256블록씩 넣습니다.
+- 블록 300개 끝에 코퍼스가 쓰지 않는 음절로만 된 표식 단어를 붙입니다. 그래서 표식의 bigram이 코퍼스의 항 사이에 끼어 여러 leaf에 흩어집니다.
+- purge는 표식 블록 300개를 한 트랜잭션에 지우고, `'optimize'`를 하고, WAL을 `TRUNCATE`로 비우는 데까지입니다(`forget`과 같음). 남은 표식은 DB·WAL 파일 바이트의 bigram 수와, `fts_idx` 항 가운데 표식 음절을 가진 수로 셉니다.
+- 크기는 purge 전 파일 크기이고, 원문 표가 들어 있습니다.
 
-| 모양 | 크기 | purge (SQLite 3.45.1 / 3.50.4) | 표식 토큰 전 → 뒤 |
-|---|---|---|---|
-| 분석문 저장 | 135.4 MB | 0.016 s / 0.010 s | 11 → 0 |
-| contentless + `'optimize'` | 67.8 MB | 0.253 s / 0.228 s | 8 → 0 |
+| 모양 | 크기 | purge (SQLite 3.45.1 / 3.50.4) | 표식 bigram 전 → 뒤 | `fts_idx`에 남은 표식 항 |
+|---|---|---|---|---|
+| 분석문 저장 | 131.3 MB | 0.603 s / 0.583 s | 1500 → 0 | 0 |
+| 분석문 저장, optimize 없음(대조) | 131.3 MB | 0.404 s / 0.355 s | 1500 → 5 | 171 |
+| contentless | 63.8 MB | 0.345 s / 0.311 s | 1500 → 0 | 0 |
+| contentless, optimize 없음(대조) | 63.8 MB | 0.032 s / 0.027 s | 1500 → 243 | 175 |
 
-- 실행 환경: WSL2 Linux x86_64. 3.45.1은 Python 3.12.3, 3.50.4는 uv CPython 3.13.13입니다. 크기와 토큰 수는 두 빌드가 같습니다.
+- 실행 환경: WSL2 Linux x86_64. 3.45.1은 Python 3.12.3, 3.50.4는 uv CPython 3.13.13입니다. 크기와 남은 표식 수는 두 빌드가 같습니다.
+- `'optimize'`는 색인 전체를 다시 쓰므로 purge 시간은 색인 크기에 비례해 늘어납니다.
 - 실 DB 사본 기준 확인은 [사내] #67입니다.
 
-**결정:** FTS5 표가 분석문을 저장하고 `secure-delete` 옵션을 켭니다(#11 PR2).
-- **근거:** 분석문 저장 표의 purge는 지운 문서만큼만 씁니다. contentless는 purge마다 `'optimize'`로 색인 전체를 다시 쓰므로, 비용이 색인 크기에 비례해 늘어납니다.
-- **버린 안:** contentless. 크기는 절반이지만 위 purge 비용이 들고, SQLite 3.43 이상(`contentless_delete`)이 필요합니다.
-- **받아들이는 단점:** 색인 파일이 약 두 배입니다(100,000블록에서 135 MB 대 68 MB).
-- FTS5 `secure-delete` 옵션은 SQLite 3.44 이상에 있습니다. 그래서 기동 probe가 이 옵션을 시도합니다(E2).
+**결정:** contentless FTS5 표(`content=''`, `contentless_delete=1`)에 `secure-delete` 옵션을 켜고, `forget`은 문서를 지운 뒤 `'optimize'`와 `wal_checkpoint(TRUNCATE)`를 합니다(오케스트레이터 결정 2026-11-28, PR #78 리뷰).
+- **선택 규칙:** 두 모양 모두 표식이 0이면, purge 시간이 상대의 2배를 넘지 않는 한 파일이 작은 쪽을 고릅니다. contentless는 파일이 절반이고 purge도 더 짧습니다.
+- **버린 안:**
+  - 분석문 저장 표. 파일이 두 배이고, purge도 더 깁니다. 이 PR의 첫 판은 이 모양을 골랐지만, 그 근거였던 "contentless만 optimize가 필요하다"는 여러 leaf에 걸친 색인에서 틀렸습니다.
+  - 지운 토큰의 접두를 가진 항이 있을 때만 optimize. 판정 규칙이 FTS5 내부 형식에 기대므로 SQLite 버전마다 깨질 수 있습니다.
+- **받아들이는 단점:**
+  - purge마다 색인 전체를 다시 씁니다(100,000블록에서 약 0.3 s).
+  - SQLite 3.43(`contentless_delete`)과 3.44(FTS5 `secure-delete`) 이상이 필요합니다. 기동 probe가 둘 다 시도합니다(E2).
+  - contentless 표는 `snippet()`·`highlight()`를 쓸 수 없습니다. snippet은 원문 표에서 Python으로 만듭니다(PR3).
 
 **색인 파일 `<root>/cache/search.sqlite3`:**
 - 백업하지 않는 cache입니다(D9). 파일이 없거나 meta의 `hub_id`, `epoch`, `index_version`(스키마 번호, 분석기 id, 색인하는 Artifact type 목록) 가운데 하나가 다르면 파일을 지우고 since=0부터 다시 만듭니다. 그래서 다시 만들려면 Hub를 멈추고 파일을 지우면 됩니다. 추출기 버전이 바뀌는 것은 다시 만들 이유가 아닙니다.
 - 메인 DB와 같은 규칙을 따릅니다(#65).
   - 연결에 `PRAGMA secure_delete=ON`을 켜고, 켜지지 않는 빌드에서는 색인을 쓰지 않습니다(`IndexUnusable`).
-  - purge 훅은 문서를 지운 뒤 WAL을 `TRUNCATE`로 비웁니다. 비우지 못하면 훅이 실패하고, purge는 미완료로 남아 훅을 다시 실행합니다.
+  - purge 훅은 문서를 지운 뒤 `'optimize'`를 하고 WAL을 `TRUNCATE`로 비웁니다. 다른 연결이 읽기 트랜잭션을 쥐고 있어 비우지 못하면(250 ms까지 기다림) 훅이 실패하고, purge는 미완료로 남아 훅을 다시 실행합니다.
+  - 훅은 지운 출처의 행을 "잊음"으로 표시해 남깁니다. 그래서 purge의 tombstone이 오면 follower가 그 출처를 다시 계산합니다. 같은 Blob의 새 extraction 본문만 purge하면 옛 extraction이 다시 색인됩니다.
 - 문서는 출처(`item:`, `attachment:`, `blob:`)마다 둡니다.
   - Item의 title과 body. soft-delete된 Item은 빼고, restore되면 다시 넣습니다.
   - Attachment의 `original_filename`.
-  - Blob의 현재 extraction 블록과 그 refs. "현재"는 `artifacts.current`가 고릅니다(살아 있는 것 가운데 rev가 가장 큰 Artifact).
+  - Blob의 현재 extraction 블록과 그 refs. "현재"는 `artifacts.current`가 고릅니다. 살아 있는 것 가운데 마지막에 기록된 Artifact이고, 기록 순서는 `artifacts` 행의 rowid입니다. rev로 고르면 touch(그 Artifact를 subject로 하는 job)가 옛 Artifact를 current로 되돌립니다(PR #78 리뷰).
   - Suggestion, Capture, Relation, Tag, 그리고 모르는 entity(`conflict_record` 등)의 행은 건너뜁니다.
 - 원문은 `analyze`·`fold_original`과 같은 치환(제어문자, 짝 없는 surrogate → 공백, NFC)을 거쳐 저장합니다.
 
