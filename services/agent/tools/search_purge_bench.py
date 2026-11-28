@@ -4,8 +4,8 @@
 
 Every number comes from local synthetic text (tools/search_bench.py's corpus), never from real data.
 
-Shapes, both under hangul-bigram@1 with the folded original in a plain table beside them, PRAGMA secure_delete on,
-WAL, and FTS5's own secure-delete option on:
+Shapes, both under hangul-bigram@1 with a docs table beside them holding each text as stored and folded, as the
+search index does, PRAGMA secure_delete on, WAL, and FTS5's own secure-delete option on:
   stored       the FTS5 table keeps the analyzed text it indexed
   contentless  content='' with contentless_delete=1
 
@@ -87,12 +87,12 @@ def measure(shape: str, texts: list[str], markers: dict[int, str], directory: Pa
     con.execute("PRAGMA secure_delete = ON")
     con.execute(f"CREATE VIRTUAL TABLE fts USING fts5(body{SHAPES[shape]}, tokenize='{HANGUL_BIGRAM.fts5_tokenize}')")
     con.execute("INSERT INTO fts(fts, rank) VALUES ('secure-delete', 1)")
-    con.execute("CREATE TABLE original(id INTEGER PRIMARY KEY, folded TEXT NOT NULL)")
+    con.execute("CREATE TABLE docs(id INTEGER PRIMARY KEY, original TEXT NOT NULL, folded TEXT NOT NULL)")
     for start in range(0, len(texts), BATCH):
         con.execute("BEGIN")
         for i in range(start, min(start + BATCH, len(texts))):
             con.execute("INSERT INTO fts(rowid, body) VALUES (?, ?)", (i, HANGUL_BIGRAM.analyze(texts[i])))
-            con.execute("INSERT INTO original(id, folded) VALUES (?, ?)", (i, HANGUL_BIGRAM.fold_original(texts[i])))
+            con.execute("INSERT INTO docs(id, original, folded) VALUES (?, ?, ?)", (i, texts[i], HANGUL_BIGRAM.fold_original(texts[i])))
         con.execute("COMMIT")
     con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     size = path.stat().st_size
@@ -103,7 +103,7 @@ def measure(shape: str, texts: list[str], markers: dict[int, str], directory: Pa
     started = time.perf_counter()
     con.execute("BEGIN")
     con.executemany("DELETE FROM fts WHERE rowid = ?", [(i,) for i in markers])
-    con.executemany("DELETE FROM original WHERE id = ?", [(i,) for i in markers])
+    con.executemany("DELETE FROM docs WHERE id = ?", [(i,) for i in markers])
     con.execute("COMMIT")
     if optimize:
         con.execute("INSERT INTO fts(fts) VALUES ('optimize')")
