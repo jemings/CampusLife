@@ -8,6 +8,11 @@ asks plan for each Attachment of a Capture, and the end of identify asks it agai
 Blob, so a Capture that comes before, during or after the Blob's identify reaches the same jobs. Jobs carry no
 Attachment: the same Blob read by the same extractor with the same params is one job (D2).
 
+A Hub that starts with readers it lacked (a new extractor or converter, or one that reads a type it did not) plans
+them, once, for the files it already holds (catch_up, D28): for each Attachment whose Blob the current identify
+pipeline read, each reader refine picks that never read the Blob is queued. A reader whose version or limits changed
+and a Blob identified under other identify rules wait for a reprocess, as status says.
+
 A reprocess's nonce goes into identify's params and every extract and render job's, so each runs again; plan treats a
 Blob as identified for the reprocess only once identify ran under its nonce. The nonce never reaches an extractor or
 a body, so the block ids stay those of the same Blob, extractor, version and params.
@@ -22,6 +27,8 @@ the rendition Artifact, and no Relation is written (D1; D26).
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import shutil
 from collections.abc import Callable, Mapping, Sequence
 from datetime import timedelta
@@ -104,7 +111,7 @@ class Files:
         for extractor in self.extractors.values():
             handler = self.render if extractor.kind == "render" else self.extract
             registry.handle(extractor.job_type, self.pipeline(extractor), handler, timeout=_timeout(extractor.limits))
-        registry.plan(PLANNER, self.planner, status=self.status)
+        registry.plan(PLANNER, self.planner, status=self.status, catch_up=self.catch_up)
 
     def _identified(self, runner: Tx | Snapshot, sha256: str, reprocess: str | None) -> media.Media | None:
         """What identify read from the Blob, when the current identify pipeline read it, and, for a reprocess, read it
@@ -136,6 +143,39 @@ class Files:
     def _plan_blob(self, tx: Tx, registry: JobRegistry, sha256: str, reprocess: str | None) -> None:
         ids = [identifier for (identifier,) in tx.execute("SELECT id FROM attachments WHERE blob_sha256 = ? ORDER BY rowid", (sha256,))]
         enqueue_held(tx, registry, [(PLANNER, spec) for attachment_id in ids for spec in self.plan(tx, attachment_id, reprocess)])
+
+    def rules(self) -> str:
+        """The readers and the types each reads, as a hash: what catch_up last looked through the files with."""
+        readers = {job_type: sorted(extractor.accepts) for job_type, extractor in self.extractors.items()}
+        return hashlib.sha256(json.dumps(readers, sort_keys=True).encode()).hexdigest()
+
+    async def catch_up(self, context: JobContext) -> int:
+        """Queue each reader the Hub gained for the files identified under the current identify pipeline that it
+        never read; nothing when the readers are those catch_up last ran with."""
+        return await context.db.write(lambda tx: self._catch_up(tx, context.registry))
+
+    def _catch_up(self, tx: Tx, registry: JobRegistry) -> int:
+        rules = self.rules()
+        last = tx.execute("SELECT fingerprint FROM planner_rules WHERE planner = ?", (PLANNER,)).fetchone()
+        if last is not None and last[0] == rules:
+            return 0
+        identified = tx.execute(
+            "SELECT attachments.id, attachments.blob_sha256 FROM attachments JOIN blob_media ON blob_media.sha256 = attachments.blob_sha256"
+            " WHERE blob_media.pipeline_version = ? ORDER BY attachments.rowid",
+            (self.identify_pipeline.version,),
+        ).fetchall()
+        planned = []
+        for attachment_id, sha256 in identified:
+            read = {job.job_type for job in jobs.of_subject(tx, f"blob:{sha256}")}
+            planned += [(PLANNER, spec) for spec in self.plan(tx, attachment_id) if spec.job_type not in read]
+        (before,) = tx.execute("SELECT count(*) FROM processing_jobs").fetchone()
+        enqueue_held(tx, registry, planned)
+        tx.execute(
+            "INSERT INTO planner_rules (planner, fingerprint) VALUES (?, ?) ON CONFLICT (planner) DO UPDATE SET fingerprint = excluded.fingerprint",
+            (PLANNER, rules),
+        )
+        (after,) = tx.execute("SELECT count(*) FROM processing_jobs").fetchone()
+        return after - before
 
     def status(self, snap: Snapshot, attachment_id: str) -> FileStatus | None:
         """Where the Attachment stands: the latest identify job of its Blob and, once identified, the latest job of
