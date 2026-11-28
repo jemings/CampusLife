@@ -103,14 +103,14 @@
       }
     },
     "sheet_range": {
-      "description": "A cell or a rectangular range of one sheet.",
+      "description": "A cell or a rectangular range of one sheet. A delimited file (CSV, TSV) is one sheet without a name, and its ranges have no sheet.",
       "type": "object",
-      "required": ["v", "kind", "blob", "sheet", "a1"],
+      "required": ["v", "kind", "blob", "a1"],
       "properties": {
         "v": { "$ref": "#/$defs/version" },
         "kind": { "const": "sheet_range" },
         "blob": { "$ref": "#/$defs/blob" },
-        "sheet": { "description": "The sheet's name, as a spreadsheet allows it: 1 to 31 characters (counted in code points; a spreadsheet counts 31 UTF-16 units), none of \\\\ / ? * [ ] : or a control character, not starting or ending with an apostrophe.", "type": "string", "minLength": 1, "maxLength": 31, "pattern": "^([^'\\\\/?*\\[\\]:\\u0000-\\u001f\\u007f-\\u009f]([^\\\\/?*\\[\\]:\\u0000-\\u001f\\u007f-\\u009f]*[^'\\\\/?*\\[\\]:\\u0000-\\u001f\\u007f-\\u009f])?)?$" },
+        "sheet": { "description": "The sheet's name, absent for a delimited file and never empty, as a spreadsheet allows it: 1 to 31 characters (counted in code points; a spreadsheet counts 31 UTF-16 units), none of \\\\ / ? * [ ] : or a control character, not starting or ending with an apostrophe.", "type": "string", "minLength": 1, "maxLength": 31, "pattern": "^([^'\\\\/?*\\[\\]:\\u0000-\\u001f\\u007f-\\u009f]([^\\\\/?*\\[\\]:\\u0000-\\u001f\\u007f-\\u009f]*[^'\\\\/?*\\[\\]:\\u0000-\\u001f\\u007f-\\u009f])?)?$" },
         "a1": { "description": "A cell or a first:last range in A1 notation, uppercase, without $, inside the grid (columns to XFD, rows to 1048576), from the top-left cell to the bottom-right one (rule a1_order).", "type": "string", "pattern": "^(?:[A-Z]{1,2}|[A-W][A-Z]{2}|X[A-E][A-Z]|XF[A-D])(?:[1-9][0-9]{0,5}|10[0-3][0-9]{4}|104[0-7][0-9]{3}|1048[0-4][0-9]{2}|10485[0-6][0-9]|104857[0-6])(?::(?:[A-Z]{1,2}|[A-W][A-Z]{2}|X[A-E][A-Z]|XF[A-D])(?:[1-9][0-9]{0,5}|10[0-3][0-9]{4}|104[0-7][0-9]{3}|1048[0-4][0-9]{2}|10485[0-6][0-9]|104857[0-6]))?$", "x-a1-order": true }
       }
     },
