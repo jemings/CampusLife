@@ -99,9 +99,9 @@ async def open_core(
             layout.admin_port.unlink()
         db = await Database.open(layout, lock=lock, create=create)
         search = SearchIndex.open(layout)
-        hooks = purge.PurgeHooks() if purge_hooks is None else purge_hooks
-        hooks.register(SEARCH_HOOK, search.forget)
         try:
+            hooks = purge.PurgeHooks() if purge_hooks is None else purge_hooks
+            hooks.register(SEARCH_HOOK, search.forget)
             identity, hub_device = await db.write(_issue_identity_and_hub_device)
             blobs = BlobStore(db, blobs_dir=layout.blobs, staging_dir=layout.staging, uploads_dir=layout.uploads)
             now = datetime.now(UTC)
