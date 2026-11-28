@@ -39,15 +39,15 @@ class SyncStore(
 
     /**
      * The Hub answered 409 epoch_changed, as after a restore (D24): the cache goes, the feed is read from 0 under
-     * [epoch], and every Mutation the Hub answered goes to it again ahead of the unsent ones, each group in its
-     * first order. The restored Hub then tells which it still has (duplicate) from those it lost.
+     * [epoch], and every Mutation the Hub answered or that was set aside as rejected goes to it again ahead of the
+     * unsent ones, each group in its first order. The restored Hub then tells which it still has (duplicate) from
+     * those it lost, and may take what an earlier Hub refused, as a commit whose Blob only this backup holds.
      */
     fun epochChanged(epoch: String): Unit = db.inTransaction {
         check(db.syncMeta().restart(epoch) == 1) { "the epoch changed before the Hub is known" }
         db.cache().clear()
         val unsent = db.outbox().inStates(UNSENT)
         for (row in db.outbox().inStates(ANSWERED)) {
-            if (row.state == TransferState.REJECTED.column && !refusedByHub(row)) continue
             db.outbox().requeue(row.seq, TransferState.of(row.state).after(OutboxEvent.EPOCH_CHANGED).column)
         }
         for (row in unsent) {
@@ -190,10 +190,6 @@ class SyncStore(
     }
 
     private fun encode(result: MutationResult): String = wireJson.encodeToString(MutationResult.serializer(), result)
-
-    /** A rejected row the Hub refused, as against one set aside here (a lost copy, a batch the Hub could not read). */
-    private fun refusedByHub(row: OutboxRow): Boolean =
-        row.result?.let { wireJson.decodeFromString(MutationResult.serializer(), it).decided().result } == MutationOutcome.REJECTED
 
     companion object {
         const val MAX_BATCH = 200
