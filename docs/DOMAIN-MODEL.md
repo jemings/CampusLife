@@ -102,7 +102,7 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 - `kind`는 `^[a-z][a-z_]*$`인 열린 값입니다.
 - event·announcement·opportunity·organization(#9 결정 8)
   - `category`는 닫힌 enum이 아니라 `common/open_name`(`^[a-z][a-z_]*$`)인 열린 이름입니다. kind마다 `examples`는 클라이언트가 고르기 목록으로 내놓는 값이고, 그 밖의 값도 보존합니다.
-  - 여러 kind가 함께 쓰는 field(`category`, `organization_id`, `url`)는 정의 하나를 `$ref`합니다. patch의 `fields.<key>`는 그 키를 정의한 kind 가운데 하나에만 맞아도 통과하므로, 한 kind만 느슨해지면 모든 kind의 patch가 느슨해지기 때문입니다.
+  - 둘 이상의 kind가 정의한 field(`category`, `organization_id`, `url`, `course_id`, `due_text` 등)는 공유 정의 하나를 `$ref`합니다. 시험이 이런 이름을 스스로 찾으므로, 다음 kind가 기존 이름을 쓰는 순간 같은 규칙이 걸립니다. patch의 `fields.<key>`는 그 키를 정의한 kind 가운데 하나에만 맞아도 통과하므로, 한 kind만 느슨해지면 모든 kind의 patch가 느슨해지기 때문입니다.
   - 소속은 `organization_id`(organization Item의 id)로 가리킵니다. `course.term_id`와 같은 방식입니다.
   - `url`은 Capture `url`과 같은 규칙(`http(s)://`, 공백·제어문자 없음)입니다.
   - 날짜는 공통 열을 씁니다(D10). 행사 끝 시각과 알림(reminders)은 #10이 정합니다.
