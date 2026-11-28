@@ -5,7 +5,8 @@ from campuslife_contracts import validate
 from conftest import contract_fixture
 from test_capture_commit import apply, blob_store, device, feed, new_id, store_bytes
 
-from campuslife_hub import artifacts, jobs, store, suggestions
+from campuslife_hub import artifacts, backup, jobs, mutations, store, suggestions
+from campuslife_hub.core import open_core
 from campuslife_hub.jobs import JobSpec, Pipeline
 from campuslife_hub.store import Entity, EntityRef
 
@@ -586,3 +587,26 @@ async def test_a_suggestion_of_an_action_this_hub_does_not_know_is_dismissed_but
     assert await decide(db, device, dismissing(unknown)) == {"result": "applied"}
 
     assert await state_of(db, unknown) == "dismissed"
+
+
+async def test_an_accept_resent_to_a_hub_restored_from_before_it_makes_the_same_item(tmp_path):
+    """D24 decision 5a: the accept names the Item it makes, so after a restore the client's kept Mutations, resent
+    in order, find the Item their later patches name."""
+    drive = tmp_path / "drive"
+    async with open_core(tmp_path / "root", create=True, sync_roots=[]) as core:
+        artifact_id, _ = await grounds(core.db, core.blobs, tmp_path)
+        suggestion = await propose(core.db, artifact_id)
+        await backup.back_up(core, drive)
+        accept = accepting(suggestion)
+        await mutations.apply(core.db, [accept], core.hub_device)
+        [item_id] = rows(await feed(core.db), "item")
+        retitle = {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": item_id, "set": {"title": {"from": "과제 2", "to": "과제 2 제출"}}}
+        await mutations.apply(core.db, [retitle], core.hub_device)
+    await backup.restore(drive, tmp_path / "restored", sync_roots=[])
+
+    async with open_core(tmp_path / "restored", create=False, sync_roots=[]) as core:
+        results = await mutations.apply(core.db, [accept, retitle], core.hub_device)
+        items = rows(await feed(core.db), "item")
+
+    assert [result["result"] for result in results] == ["applied", "applied"]
+    assert {identifier: item["title"] for identifier, item in items.items()} == {item_id: "과제 2 제출"}
