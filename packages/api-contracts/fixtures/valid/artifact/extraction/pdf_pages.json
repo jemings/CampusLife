@@ -1,0 +1,54 @@
+{
+  "v": 1,
+  "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "extractor": {
+    "id": "pdf",
+    "version": "1",
+    "params": {}
+  },
+  "blocks": [
+    {
+      "id": "333827fca0bff2f9aab679ebbff1e0e6ad6d06e342dad974fe47c2af2bc57849",
+      "block_type": "page",
+      "text": "1주차 강의 개요\n운영체제의 역할",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "pdf_page",
+          "page": 1
+        }
+      ]
+    },
+    {
+      "id": "11872a4bdb33fb822ad38ec701e2d825de62dfc982b72d26e4193640185808da",
+      "block_type": "page",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "pdf_page",
+          "page": 2
+        }
+      ]
+    },
+    {
+      "id": "0c95a7cba1080382ad187f865b8eb7b1a9ba407ca1738fc2a0802ce9c4970448",
+      "block_type": "page",
+      "text": "과제: 3월 14일까지",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "pdf_page",
+          "page": 3
+        }
+      ]
+    }
+  ],
+  "warnings": [
+    {
+      "code": "no_text_layer"
+    }
+  ]
+}

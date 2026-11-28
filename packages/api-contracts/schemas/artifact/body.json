@@ -13,18 +13,49 @@
     "block": {
       "type": "object",
       "required": ["id", "block_type", "refs"],
+      "allOf": [{ "$ref": "#/$defs/payload_of_type" }],
       "properties": {
         "id": { "description": "Derived by the Hub, the same for the same input, and unique within the body; the body schema says how (extraction: rule block_id, which also makes it unique; #8 adds the check for its types). An LLM cites a block only by this id, and the Hub turns the id into the block's refs (D13).", "$ref": "../common/sha256.json" },
         "block_type": {
-          "description": "Known types are the examples; a newer Hub may send others, which a client shows by their text.",
+          "description": "Known types are the examples; a newer Hub may send others, which a client shows by their text. heading: a heading, payload heading_payload. paragraph: running text. page: one page of a PDF, its ref usually that page's pdf_page; without text when the page has no text layer (extraction warning no_text_layer). table: a table inside a document, its text the rows joined by a line feed and each row's cells by a tab, a tab or line break inside a cell written as a space, a merged cell written once at its top-left cell; a long table is split between rows into several blocks; no payload. table_row: one row of a sheet or of a delimited file, its ref usually one sheet_range from the row's first cell with a value to its last; its text the cells of that range joined by a tab, an empty cell an empty field and a tab or line break inside a cell written as a space, so the nth field (from 0) is the range's first column + n; payload table_row_payload. table_header: a row that heads the columns below it, otherwise as table_row, without a payload. notes: the speaker notes of a slide, its ref usually that slide. A block whose place the extractor cannot be sure of (a delimited row past the grid's 1048576 rows or column XFD, a sheet name it cannot read) cites document instead (D13); then a row's fields map to no columns.",
           "type": "string",
           "pattern": "^[a-z][a-z_]*$",
-          "examples": ["heading", "paragraph"],
+          "examples": ["heading", "paragraph", "page", "table", "table_row", "table_header", "notes"],
           "x-open": true
         },
         "text": { "description": "The block's text; absent for a block that has none.", "type": "string" },
-        "payload": { "description": "Structured content whose shape the block_type names; no known type defines one yet.", "type": "object" },
+        "payload": { "description": "Structured content whose shape the block_type names: heading and table_row define one (payload_of_type). Open: a client ignores members it does not know, and the payload of a block_type it does not know.", "type": "object" },
         "refs": { "description": "Where in the originals the block rests; empty for a block with no evidence, which a client shows as unsupported.", "type": "array", "items": { "$ref": "../locator/locator.json" } }
+      }
+    },
+    "payload_of_type": {
+      "description": "Checks the payload of a block_type that defines one, when the block has a payload; a block_type without a payload shape keeps any object.",
+      "allOf": [
+        { "if": { "$ref": "#/$defs/block_type_is/heading" }, "then": { "properties": { "payload": { "$ref": "#/$defs/heading_payload" } } } },
+        { "if": { "$ref": "#/$defs/block_type_is/table_row" }, "then": { "properties": { "payload": { "$ref": "#/$defs/table_row_payload" } } } }
+      ]
+    },
+    "block_type_is": {
+      "heading": { "properties": { "block_type": { "const": "heading" } }, "required": ["block_type"] },
+      "table_row": { "properties": { "block_type": { "const": "table_row" } }, "required": ["block_type"] }
+    },
+    "heading_payload": {
+      "type": "object",
+      "required": ["level"],
+      "properties": {
+        "level": { "description": "The heading's depth in the document's outline, from 1 for the outermost.", "$ref": "../common/int64.json", "minimum": 1 }
+      }
+    },
+    "table_row_payload": {
+      "type": "object",
+      "properties": {
+        "formulas": {
+          "description": "The formulas of the row's cells that have one, keyed by the cell's absolute address in A1 notation (one cell, uppercase, without $), also when the block cites document; each is the formula text as the workbook stores it, which does not start with =. The text holds the cell's cached value. Absent when no cell of the row has a formula. That a key is a cell of the block's row the contract does not check; the Hub's extractor tests do (#6 PR3).",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "../locator/locator.json#/$defs/sheet_range/properties/a1", "pattern": "^[^:]*$" },
+          "additionalProperties": { "type": "string", "minLength": 1, "pattern": "^(?:[^=]|$)" }
+        }
       }
     }
   }
