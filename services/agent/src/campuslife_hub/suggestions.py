@@ -9,24 +9,22 @@ lost, as a conflict on state, except that dismissing again is already done.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import unicodedata
 import uuid
 from collections.abc import Callable, Iterable
 from datetime import datetime
+from typing import NamedTuple
 
-from campuslife_contracts import contract_root, validate
+from campuslife_contracts import SchemaViolation, canonical_json, validate
 
 from . import refs, store
 from .db import Tx
 from .devices import DeviceId
 from .outcomes import Applied, Conflict, Outcome, Reason, Rejected
 from .store import Entity, EntityRef
-from .user_data import FIELDS_PREFIX, ITEM_DATA, TEXT_COLUMNS, could_be_created, create_item, create_relation, live, patch, with_value
-
-_KNOWN = json.loads((contract_root() / "schemas" / "suggestion" / "suggestion.json").read_text(encoding="utf-8"))["$defs"]["known"]
-
-KNOWN_ACTIONS = frozenset(_KNOWN["properties"]["action"]["enum"])
-"""The actions this Hub proposes and accepts; a Suggestion of another action is shown and dismissed only."""
+from .user_data import FIELDS_PREFIX, ITEM_DATA, ITEM_KINDS, MUTATION_DEFS, TEXT_COLUMNS, create_item, create_relation, live, patch, with_value
 
 DECIDED = frozenset({"accepted", "dismissed"})
 
@@ -34,6 +32,14 @@ LOCATOR_ANCHORS = (("blob", "blob:"), ("capture", "capture:"))
 """What a Locator rests on, in the order rule locator_anchor reads them."""
 
 STATE_LOST = Conflict((), ("state",))
+
+KIND_FIELDS = {kind: frozenset(closed["properties"]) for kind, closed in MUTATION_DEFS["closed_fields"].items()}
+
+CHANGE_MEMBERS = tuple(MUTATION_DEFS["change"]["properties"])
+"""from, from_hash and to: what a patch's set entry carries; a proposed one is open and may carry more."""
+
+FINGERPRINT_TO_FILL = SchemaViolation("/fingerprint", "required")
+"""A producer's proposal has no fingerprint: propose computes it (#9 decision 6)."""
 
 
 class InvalidSuggestion(ValueError):
@@ -63,6 +69,34 @@ def _with_lf_text(action: str, proposed: dict) -> dict:
     return proposed
 
 
+def _title_key(title: str) -> str:
+    """NFC, casefolded, without spaces, punctuation or invisible format characters: a model that words the title a
+    little otherwise proposes the same."""
+    return "".join(
+        char for char in unicodedata.normalize("NFC", title).casefold()
+        if not (char.isspace() or unicodedata.category(char)[0] in "PZ" or unicodedata.category(char) == "Cf")
+    )
+
+
+def _create_item_key(proposed: dict, evidence: list[dict]) -> list:
+    date = proposed.get("due_at", proposed.get("starts_at"))
+    return [proposed["kind"], sorted(_anchors(evidence)), date, _title_key(proposed["title"])]
+
+
+def _patch_item_key(proposed: dict, evidence: list[dict]) -> list:
+    return [proposed["id"], sorted([key, change["to"]] for key, change in proposed["set"].items())]
+
+
+def _add_relation_key(proposed: dict, evidence: list[dict]) -> list:
+    return [proposed["id"]]
+
+
+def fingerprint(action: str, proposed: dict, evidence: list[dict]) -> str:
+    """#9 decision 6: proposals with one fingerprint are the same one, so a decision on one holds for the other.
+    Changing a key reopens every fingerprint the user decided."""
+    return hashlib.sha256(canonical_json([action, *ACTIONS[action].key(proposed, evidence)])).hexdigest()
+
+
 def _recorded_at(artifact: dict) -> datetime:
     return datetime.fromisoformat(artifact["created_at"])
 
@@ -73,38 +107,40 @@ def _recorded_no_earlier(tx: Tx, artifact_id: str, than: datetime) -> bool:
 
 
 def propose(
-    tx: Tx, artifact_id: str, action: str, proposed: dict, evidence: Iterable[dict], fingerprint: str, *, conflicts_with: Iterable[str] = ()
+    tx: Tx, artifact_id: str, action: str, proposed: dict, evidence: Iterable[dict], *, conflicts_with: Iterable[str] = ()
 ) -> dict | None:
-    """The open Suggestion of fingerprint from the Artifact: a new one, or the one this Artifact proposed before.
+    """The open Suggestion of the proposal's fingerprint from the Artifact: a new one, or the one this Artifact proposed before.
 
     None when the user already accepted or dismissed that fingerprint, from any Artifact: it does not open again. None
     too when an Artifact recorded no earlier than this one has it open, so a job run again under an older pipeline does
     not push out a newer proposal. An open one from an older Artifact is superseded by the new one, so reprocessing
     leaves one open per fingerprint. Repeated evidence is kept once, and x-text with LF line ends.
     """
-    suggestion = {
-        "id": str(uuid.uuid4()),
-        "source_artifact_id": artifact_id,
-        "action": action,
-        "proposed": proposed,
-        "evidence": _each_once(evidence),
-        "fingerprint": fingerprint,
-        "state": "open",
-    }
+    draft = {"id": str(uuid.uuid4()), "source_artifact_id": artifact_id, "action": action, "proposed": proposed,
+             "evidence": _each_once(evidence), "state": "open"}
     conflicts_with = list(conflicts_with)
     if conflicts_with:
-        suggestion["conflicts_with"] = conflicts_with
-    violations = validate("suggestion/suggestion", suggestion)
-    if violations or action not in KNOWN_ACTIONS:
-        raise InvalidSuggestion(f"this Hub cannot propose that {action}: {violations}")
+        draft["conflicts_with"] = conflicts_with
+    violations = [violation for violation in validate("suggestion/suggestion", draft) if violation != FINGERPRINT_TO_FILL]
+    if violations:
+        raise InvalidSuggestion(f"the proposal breaks the contract: {violations}")
+    proposed = _with_lf_text(action, proposed)
+    if accepted_write(tx, action, proposed, {}, draft["id"]) is None:
+        raise InvalidSuggestion(f"the proposal cannot be accepted as proposed: no client could write it as a {action}")
+    suggestion = {**draft, "proposed": proposed, "fingerprint": fingerprint(action, proposed, draft["evidence"])}
     artifact = store.get(tx, EntityRef(Entity.ARTIFACT, artifact_id))
     if artifact is None:
         raise InvalidSuggestion(f"no Artifact {artifact_id} is recorded")
     missing = [anchor for anchor in _anchors(suggestion["evidence"]) if not refs.exists(tx, anchor)]
     if missing:
         raise InvalidSuggestion(f"the evidence rests on what the Hub does not hold: {missing}")
-    suggestion["proposed"] = _with_lf_text(action, proposed)
-    same = [json.loads(data) for (data,) in tx.execute("SELECT data FROM suggestions WHERE fingerprint = ? ORDER BY rowid", (fingerprint,))]
+    gone = [target for target in _targets(action, proposed) if refs.ever_existed(tx, target) and not refs.exists(tx, target)]
+    if gone:
+        raise InvalidSuggestion(f"the proposal is on what is gone for good: {gone}")
+    same = [
+        json.loads(data)
+        for (data,) in tx.execute("SELECT data FROM suggestions WHERE fingerprint = ? ORDER BY rowid", (suggestion["fingerprint"],))
+    ]
     if any(row["state"] in DECIDED for row in same):
         return None
     still_open = [row for row in same if row["state"] == "open"]
@@ -117,6 +153,16 @@ def propose(
         store.write(tx, EntityRef(Entity.SUGGESTION, row["id"]), {**row, "state": "superseded"})
     store.write(tx, EntityRef(Entity.SUGGESTION, suggestion["id"]), suggestion)
     return suggestion
+
+
+def _targets(action: str, proposed: dict) -> list[str]:
+    """What the write would change or link to. One purged away cannot come back, unlike one the Hub does not hold
+    yet or an Item in the trash; a purge writes its tombstones in the transaction that journals it."""
+    if action == "patch_item":
+        return [f"item:{proposed['id']}"]
+    if action == "add_relation":
+        return [proposed["from"], proposed["to"]]
+    return []
 
 
 def _anchors(evidence: list[dict]) -> dict[str, list[dict]]:
@@ -146,72 +192,112 @@ def _copy_evidence(tx: Tx, item_ref: str, anchors: dict[str, list[dict]]) -> Non
         _join_locators(tx, {"id": relation_id, "from": item_ref, "type": "evidence", "to": anchor}, locators)
 
 
-def _proposes(proposed: dict, key: str) -> bool:
-    if key.startswith(FIELDS_PREFIX):
-        return key.removeprefix(FIELDS_PREFIX) in proposed["fields"]
-    return key in proposed and key in ITEM_DATA
-
-
-def _accept_create_item(tx: Tx, suggestion: dict, edits: dict, mutation: dict, device: DeviceId) -> Outcome:
-    """The Item a client could create with the proposed columns, edits in their place; the Hub picks its id."""
-    proposed = suggestion["proposed"]
-    if not all(_proposes(proposed, key) for key in edits):
-        return Rejected(Reason.SCHEMA)
+def _create_item_write(tx: Tx, proposed: dict, edits: dict, mutation_id: str) -> dict | None:
+    """The create a client would send with the proposed columns and the edits over them; the Hub picks the Item's id.
+    An edit may add a column or a field the proposal left out (#9 decision 3): the create judges the result."""
     data = {name: proposed[name] for name in ITEM_DATA if name in proposed}
     for key, value in edits.items():
         data = with_value(data, key, value)
-    anchors = _anchors(suggestion["evidence"])
-    if not all(refs.exists(tx, anchor) for anchor in anchors):
-        return Rejected(Reason.LINK_TARGET_MISSING)
-    ref = EntityRef(Entity.ITEM, str(uuid.uuid4()))
-    if not could_be_created(Entity.ITEM, {"id": ref.id, **data}, mutation["mutation_id"]):
-        return Rejected(Reason.SCHEMA)
-    created = create_item(tx, ref, data)
-    if isinstance(created, Applied):
-        _copy_evidence(tx, f"item:{ref.id}", anchors)
-    return created
+    if data["kind"] not in ITEM_KINDS:
+        return None
+    return {"mutation_id": mutation_id, "op": "create", "entity": "item", "id": str(uuid.uuid4()), "data": data}
 
 
-def _accept_patch_item(tx: Tx, suggestion: dict, edits: dict, mutation: dict, device: DeviceId) -> Outcome:
-    """The proposed patch, an edit in place of its key's to, compare-and-set like a client's (D18). Its keys that lose
-    are kept in a ConflictRecord as a client's are; refused because the Item is not live, it keeps none, as the open
-    Suggestion still holds what it proposes (D24 decision 1, E3)."""
-    proposed = suggestion["proposed"]
+def _patch_item_write(tx: Tx, proposed: dict, edits: dict, mutation_id: str) -> dict | None:
+    """The proposed patch, an edit in place of its key's to. Only the members a patch's change has are kept.
+
+    A field the Item's kind does not define can only be left out, never given a value: an Item keeps its kind
+    (decision 4). An Item the Hub does not hold is left to the patch to answer."""
     if not edits.keys() <= proposed["set"].keys():
-        return Rejected(Reason.SCHEMA)
-    changes = {key: {**change, "to": edits[key]} if key in edits else change for key, change in proposed["set"].items()}
-    item_patch = {"mutation_id": mutation["mutation_id"], "op": "patch", "entity": "item", "id": proposed["id"], "set": changes}
+        return None
+    changes = {
+        key: {**{member: change[member] for member in CHANGE_MEMBERS if member in change}, **({"to": edits[key]} if key in edits else {})}
+        for key, change in proposed["set"].items()
+    }
+    item = store.get(tx, EntityRef(Entity.ITEM, proposed["id"]))
+    fields = {key.removeprefix(FIELDS_PREFIX) for key, change in changes.items() if key.startswith(FIELDS_PREFIX) and change["to"] is not None}
+    if item is not None and not fields <= KIND_FIELDS.get(item["kind"], frozenset()):
+        return None
+    return {"mutation_id": mutation_id, "op": "patch", "entity": "item", "id": proposed["id"], "set": changes}
+
+
+def _add_relation_write(tx: Tx, proposed: dict, edits: dict, mutation_id: str) -> dict | None:
+    if edits:
+        return None
+    data = {name: proposed[name] for name in ("from", "type", "to")}
+    return {"mutation_id": mutation_id, "op": "create", "entity": "relation", "id": proposed["id"], "data": data}
+
+
+def accepted_write(tx: Tx, action: str, proposed: dict, edits: dict, mutation_id: str) -> dict | None:
+    """The client Mutation accepting with edits writes, or None when it cannot be accepted so: the one "can be accepted"
+    test propose (with no edits) and accept share (#9 decision 12). It must be one a client could send, closed fields
+    included, of an action this Hub accepts. What is judged against rows that can still change (compare-and-set, link
+    targets, a deleted Item) is left to the write."""
+    write = ACTIONS[action].write(tx, proposed, edits, mutation_id) if action in ACTIONS else None
+    if write is None or validate("mutation/mutation", write):
+        return None
+    return write
+
+
+class Accepted(NamedTuple):
+    """What accepting wrote, and the members the accepted Suggestion records beside its state."""
+
+    outcome: Outcome
+    recorded: dict
+
+
+def _accept_create_item(tx: Tx, suggestion: dict, write: dict, device: DeviceId) -> Accepted:
+    """The Suggestion records the Item it became (#9 decision 5)."""
     anchors = _anchors(suggestion["evidence"])
     if not all(refs.exists(tx, anchor) for anchor in anchors):
-        return Rejected(Reason.LINK_TARGET_MISSING)
-    if live(tx, EntityRef(Entity.ITEM, proposed["id"])) is None:
-        return Rejected(Reason.DELETED)
-    patched = patch(tx, item_patch, device)
+        return Accepted(Rejected(Reason.LINK_TARGET_MISSING), {})
+    created = create_item(tx, EntityRef(Entity.ITEM, write["id"]), write["data"])
+    if not isinstance(created, Applied):
+        return Accepted(created, {})
+    _copy_evidence(tx, f"item:{write['id']}", anchors)
+    return Accepted(created, {"created_item_id": write["id"]})
+
+
+def _accept_patch_item(tx: Tx, suggestion: dict, write: dict, device: DeviceId) -> Accepted:
+    """Compare-and-set like a client's patch (D18); the evidence is added when at least one key was written. Its keys
+    that lose are kept in a ConflictRecord as a client's are; refused because the Item is not live, it keeps none, as
+    the open Suggestion still holds what it proposes (D24 decision 1, E3)."""
+    anchors = _anchors(suggestion["evidence"])
+    if not all(refs.exists(tx, anchor) for anchor in anchors):
+        return Accepted(Rejected(Reason.LINK_TARGET_MISSING), {})
+    if live(tx, EntityRef(Entity.ITEM, write["id"])) is None:
+        return Accepted(Rejected(Reason.DELETED), {})
+    patched = patch(tx, write, device)
     if isinstance(patched, Applied) or (isinstance(patched, Conflict) and patched.applied_fields):
-        _copy_evidence(tx, f"item:{proposed['id']}", anchors)
-    return patched
+        _copy_evidence(tx, f"item:{write['id']}", anchors)
+    return Accepted(patched, {})
 
 
-def _accept_add_relation(tx: Tx, suggestion: dict, edits: dict, mutation: dict, device: DeviceId) -> Outcome:
-    """The proposed Relation as a client would create it. Only an evidence Relation carries Locators, those resting
-    on its to (rule locator_anchor), so the evidence of another type stays on the Suggestion."""
-    if edits:
-        return Rejected(Reason.SCHEMA)
-    proposed = suggestion["proposed"]
-    data = {name: proposed[name] for name in ("from", "type", "to")}
-    if validate("mutation/mutation", {"mutation_id": mutation["mutation_id"], "op": "create", "entity": "relation", "id": proposed["id"], "data": data}):
-        return Rejected(Reason.SCHEMA)
-    created = create_relation(tx, EntityRef(Entity.RELATION, proposed["id"]), data)
+def _accept_add_relation(tx: Tx, suggestion: dict, write: dict, device: DeviceId) -> Accepted:
+    """Only an evidence Relation carries Locators, those resting on its to (rule locator_anchor), so the evidence of
+    another type stays on the Suggestion."""
+    data = write["data"]
+    created = create_relation(tx, EntityRef(Entity.RELATION, write["id"]), data)
     if isinstance(created, Applied) and data["type"] == "evidence":
-        _join_locators(tx, {"id": proposed["id"], **data}, _anchors(suggestion["evidence"]).get(data["to"], []))
-    return created
+        _join_locators(tx, {"id": write["id"], **data}, _anchors(suggestion["evidence"]).get(data["to"], []))
+    return Accepted(created, {})
 
 
-ACCEPTS: dict[str, Callable[[Tx, dict, dict, dict, DeviceId], Outcome]] = {
-    "create_item": _accept_create_item,
-    "patch_item": _accept_patch_item,
-    "add_relation": _accept_add_relation,
+class Action(NamedTuple):
+    key: Callable[[dict, list[dict]], list]
+    """What fingerprint hashes."""
+    write: Callable[[Tx, dict, dict, str], dict | None]
+    """The client Mutation accepting with edits writes, or None when it is not one this action takes."""
+    accept: Callable[[Tx, dict, dict, DeviceId], Accepted]
+    """Writes that Mutation with the Suggestion's evidence."""
+
+
+ACTIONS: dict[str, Action] = {
+    "create_item": Action(_create_item_key, _create_item_write, _accept_create_item),
+    "patch_item": Action(_patch_item_key, _patch_item_write, _accept_patch_item),
+    "add_relation": Action(_add_relation_key, _add_relation_write, _accept_add_relation),
 }
+"""The actions this Hub proposes and accepts: the contract's known ones. A Suggestion of another is shown and dismissed only."""
 
 
 def accept(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
@@ -224,12 +310,12 @@ def accept(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
         return Rejected(Reason.DELETED)
     if suggestion["state"] != "open":
         return STATE_LOST
-    accepting = ACCEPTS.get(suggestion["action"])
-    if accepting is None:
+    write = accepted_write(tx, suggestion["action"], suggestion["proposed"], mutation.get("edits", {}), mutation["mutation_id"])
+    if write is None:
         return Rejected(Reason.SCHEMA)
-    outcome = accepting(tx, suggestion, mutation.get("edits", {}), mutation, device)
+    outcome, recorded = ACTIONS[suggestion["action"]].accept(tx, suggestion, write, device)
     if not isinstance(outcome, Rejected):
-        store.write(tx, EntityRef(Entity.SUGGESTION, suggestion["id"]), {**suggestion, "state": "accepted"})
+        store.write(tx, EntityRef(Entity.SUGGESTION, suggestion["id"]), {**suggestion, "state": "accepted", **recorded})
     return outcome
 
 

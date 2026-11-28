@@ -56,8 +56,12 @@ jobs:
           git add --intent-to-add app/schemas
           git diff --exit-code -- app/schemas
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        if: ${{ !cancelled() }}
       - name: Compare the harness output with the contract fixtures
         working-directory: packages/api-contracts
         run: |
           uv sync --frozen
           uv run campuslife-contracts compare fixtures/valid ../../apps/android/wire/build/contract-harness
+      - name: The sync engine against a Hub served on 127.0.0.1 (decision 4)
+        if: ${{ !cancelled() }}
+        run: uv run --frozen --project ../../services/agent python e2e/hub_session.py -- gradle --warning-mode all :app:testDebugUnitTest

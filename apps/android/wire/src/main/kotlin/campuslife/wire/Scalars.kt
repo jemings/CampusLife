@@ -27,6 +27,13 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonUnquotedLiteral
 import kotlinx.serialization.json.jsonPrimitive
 
+/** common/uuid: a lowercase UUIDv4, the form of every entity id and of the Hub's epoch. */
+const val UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+
+private val uuidRegex = Regex(UUID_PATTERN)
+
+fun isUuid(text: String): Boolean = uuidRegex.matches(text)
+
 /** A java.time value written as exactly one pattern, which is also the only form it reads. */
 abstract class PatternSerializer<T : TemporalAccessor>(
     name: String,

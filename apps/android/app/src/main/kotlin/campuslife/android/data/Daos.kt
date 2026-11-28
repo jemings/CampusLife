@@ -48,6 +48,23 @@ interface OutboxDao {
     @Query("SELECT * FROM mutation_outbox WHERE state = :state ORDER BY seq")
     fun inState(state: String): List<OutboxRow>
 
+    @Query("SELECT * FROM mutation_outbox WHERE state IN (:states) ORDER BY seq")
+    fun inStates(states: List<String>): List<OutboxRow>
+
+    @Query("SELECT COUNT(*) FROM mutation_outbox WHERE state IN (:states)")
+    fun count(states: List<String>): Long
+
+    /** Sends a Mutation again: its old answer goes with the state it moves out of. */
+    @Query("UPDATE mutation_outbox SET state = :state, result = NULL, acked_at_ms = NULL WHERE seq = :seq")
+    fun requeue(seq: Long, state: String)
+
+    @Query("DELETE FROM mutation_outbox WHERE seq = :seq")
+    fun remove(seq: Long)
+
+    /** Forgets settled Mutations answered before [before]; a capture.commit stays as long as its originals (D24). */
+    @Query("DELETE FROM mutation_outbox WHERE state = 'settled' AND op <> 'capture.commit' AND acked_at_ms < :before")
+    fun forget(before: Long): Int
+
     @Query(
         """
         SELECT * FROM mutation_outbox WHERE entity = :entity AND entity_id = :entityId
@@ -82,6 +99,15 @@ interface CacheDao {
 
     @Query("SELECT * FROM entity_cache WHERE entity = :entity AND id = :id")
     fun get(entity: String, id: String): CachedRow?
+
+    @Query("SELECT * FROM entity_cache WHERE entity = :entity ORDER BY id")
+    fun rowsOf(entity: String): List<CachedRow>
+
+    @Query("DELETE FROM entity_cache")
+    fun clear()
+
+    @Query("SELECT COALESCE(SUM(LENGTH(CAST(data AS BLOB))), 0) FROM entity_cache")
+    fun bytes(): Long
 }
 
 @Dao
@@ -100,6 +126,9 @@ interface BlobDao {
 
     @Query("SELECT * FROM blob_transfer WHERE state <> 'stored' ORDER BY rowid")
     fun unstored(): List<BlobRow>
+
+    @Query("SELECT COALESCE(SUM(size), 0) FROM blob_transfer")
+    fun bytes(): Long
 }
 
 /** A local Capture with what its transfer state is read from. */
@@ -145,6 +174,17 @@ interface CaptureDao {
         """,
     )
     fun stillNeed(sha256: String): Boolean
+
+    /** Captures the Hub has not acknowledged and still may: open, or whose capture.commit is held or pending. */
+    @Query(
+        """
+        SELECT COUNT(*) FROM local_capture c WHERE c.seal = 'open' OR EXISTS (
+            SELECT 1 FROM mutation_outbox o
+            WHERE o.entity = 'capture' AND o.entity_id = c.id AND o.state IN ('held', 'pending')
+        )
+        """,
+    )
+    fun unacknowledged(): Long
 
     @Query(
         """
