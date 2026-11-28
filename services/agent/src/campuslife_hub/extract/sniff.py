@@ -1,7 +1,9 @@
 """identify (S9): the media type family a Blob's bytes show, read in the child.
 
 Magic bytes at the start first, then a PDF header anywhere in the first 1024 bytes, as PDF readers take it, when the
-bytes are no text: a note or code that mentions %PDF- is text. A ZIP is
+bytes are no text: a note or code that mentions %PDF- is text. So is, accepted for that, a PDF after other bytes
+whose sample all decodes: one all ASCII, or a small one whose only other bytes are the binary comment line, which
+CP949 decodes. A PDF header right after a text BOM is a PDF when the rest is no text in the BOM's encoding. A ZIP is
 opened through safe_zip for its member names to tell OOXML and HWPX from a plain archive, so an archive whose names
 are dangerous ends identify with unsafe_input, while one too large to read is left to its extractor. An OLE compound
 file is opened through cfb for the entries of its root storage (CFB_ROOTS), so a word in a stream's bytes says
@@ -30,7 +32,8 @@ PDF_HEADER = b"%PDF-"
 PDF_HEADER_WITHIN = 1024
 MIMETYPE_MAX_BYTES = 256
 """An HWPX mimetype member says application/hwp+zip; a larger one is not read."""
-BOMS = (codecs.BOM_UTF8, codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)
+BOM_ENCODINGS = ((codecs.BOM_UTF8, "utf-8"), (codecs.BOM_UTF16_LE, "utf-16-le"), (codecs.BOM_UTF16_BE, "utf-16-be"))
+BOMS = tuple(bom for bom, _ in BOM_ENCODINGS)
 """A text BOM comes before every signature: FF FE would otherwise read as an MPEG audio frame."""
 CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 ENCRYPTED_ROOTS = frozenset({"EncryptedPackage", "\x06DataSpaces"})
@@ -72,18 +75,24 @@ def _cfb_family(path: Path) -> str:
 
 
 def _is_text(sample: bytes, whole: bool) -> bool:
-    if sample.startswith(BOMS):
-        return True
+    """Bytes without a BOM that decode as UTF-8 or CP949 and hold no NUL."""
     if b"\x00" in sample:
         return False
-    for encoding in ("utf-8", "cp949"):
-        decoder = codecs.getincrementaldecoder(encoding)()
-        try:
-            decoder.decode(sample, final=whole)
-        except UnicodeDecodeError:
-            continue
-        return True
-    return False
+    return any(_decodes(sample, encoding, whole) for encoding in ("utf-8", "cp949"))
+
+
+def _decodes(sample: bytes, encoding: str, whole: bool) -> bool:
+    try:
+        codecs.getincrementaldecoder(encoding)().decode(sample, final=whole)
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def _pdf_after_bom(sample: bytes, whole: bool) -> bool:
+    bom, encoding = next((bom, encoding) for bom, encoding in BOM_ENCODINGS if sample.startswith(bom))
+    rest = sample[len(bom):]
+    return rest.startswith(PDF_HEADER) and not _decodes(rest, encoding, whole)
 
 
 def _signature(head: bytes) -> str | None:
@@ -113,7 +122,9 @@ def identify(path: Path, limits: Limits) -> str:
     with open(path, "rb") as source:
         sample = source.read(TEXT_SAMPLE_BYTES)
         whole = not source.read(1)
-    family = None if sample.startswith(BOMS) else _signature(sample[:HEAD_BYTES])
+    if sample.startswith(BOMS):
+        return formats.PDF if _pdf_after_bom(sample, whole) else formats.TEXT
+    family = _signature(sample[:HEAD_BYTES])
     if family == formats.ZIP:
         return _zip_family(path, limits)
     if family == formats.CFB:
