@@ -36,7 +36,7 @@ from ..store import Entity, EntityRef
 from . import bodies, sniff
 from .extractors import Extractor
 from .formats import refine
-from .limits import Limits
+from .limits import IDENTIFY_LIMITS, Limits
 from .running import Answer, run_child, unsafe
 
 if TYPE_CHECKING:
@@ -54,6 +54,10 @@ def can_read(job_type: str) -> str:
     return f"this Hub can now read it with {job_type}; reprocess it to read it"
 HANDLER_SLACK = timedelta(seconds=60)
 """S5: a handler's time is the child's and this, for reading the Blob and storing the body."""
+
+
+def _timeout(limits: Limits) -> timedelta:
+    return timedelta(seconds=limits.timeout_s) + HANDLER_SLACK
 
 
 RENDITION = "rendition.pdf"
@@ -76,9 +80,10 @@ def identify_spec(sha256: str, reprocess: str | None = None) -> JobSpec:
 
 
 class Files:
-    """The identify and extract handlers and the planner, for one set of extractors under one limits table."""
+    """The identify and extract handlers and the planner, for one set of extractors, each under its own limits, and
+    identify under identify_limits."""
 
-    def __init__(self, extractors: Sequence[Extractor], limits: Limits):
+    def __init__(self, extractors: Sequence[Extractor], identify_limits: Limits = IDENTIFY_LIMITS):
         types = [extractor.job_type for extractor in extractors]
         if len(set(types)) != len(types):
             raise ValueError(f"two extractors share a job type: {types}")
@@ -87,18 +92,18 @@ class Files:
                 raise ValueError(f"{extractor.job_type} takes a param named {REPROCESS}, which a reprocess uses for its nonce")
         self.extractors = {extractor.job_type: extractor for extractor in extractors}
         self.readers = tuple(extractor.reader() for extractor in extractors)
-        self.limits = limits
-        self.identify_pipeline = Pipeline(f"{IDENTIFIER_ID}-{sniff.VERSION}+L{limits.hash8()}")
+        self.identify_limits = identify_limits
+        self.identify_pipeline = Pipeline(f"{IDENTIFIER_ID}-{sniff.VERSION}+L{identify_limits.hash8()}")
 
-    def pipeline(self, extractor: Extractor) -> Pipeline:
-        return Pipeline(f"{extractor.id}-{extractor.version}+L{self.limits.hash8()}")
+    @staticmethod
+    def pipeline(extractor: Extractor) -> Pipeline:
+        return Pipeline(f"{extractor.id}-{extractor.version}+L{extractor.limits.hash8()}")
 
     def register(self, registry: JobRegistry) -> None:
-        timeout = timedelta(seconds=self.limits.timeout_s) + HANDLER_SLACK
-        registry.handle(IDENTIFY, self.identify_pipeline, self.identify, timeout=timeout)
+        registry.handle(IDENTIFY, self.identify_pipeline, self.identify, timeout=_timeout(self.identify_limits))
         for extractor in self.extractors.values():
             handler = self.render if extractor.kind == "render" else self.extract
-            registry.handle(extractor.job_type, self.pipeline(extractor), handler, timeout=timeout)
+            registry.handle(extractor.job_type, self.pipeline(extractor), handler, timeout=_timeout(extractor.limits))
         registry.plan(PLANNER, self.planner, status=self.status)
 
     def _identified(self, runner: Tx | Snapshot, sha256: str, reprocess: str | None) -> media.Media | None:
@@ -171,23 +176,24 @@ class Files:
 
     async def _read(
         self, job: Job, context: JobContext, request: dict, made: Callable[[str, dict], tuple[bytes | Path, Callable[[Tx, str], object]]],
-        *, whole: bool = True,
+        limits: Limits, *, whole: bool = True,
     ) -> Finished:
-        """Run the child on the job's Blob and record what made builds from its answer. A child that reads the whole
-        Blob (whole) is not handed one larger than input_max_bytes; identify never holds a whole Blob (sniff)."""
+        """Run the child on the job's Blob under limits and record what made builds from its answer. A child that
+        reads the whole Blob (whole) is not handed one larger than input_max_bytes; identify never holds a whole Blob
+        (sniff)."""
         sha256 = job.inputs[0]
         size = await context.db.read(lambda snap: snap.execute("SELECT size FROM blobs WHERE sha256 = ?", (sha256,)).fetchone())
         if size is None:
             raise FileNotFoundError(f"the Hub holds no Blob {sha256}")
-        if whole and size[0] > self.limits.input_max_bytes:
-            return unsafe(f"the Blob holds {size[0]} bytes, more than {self.limits.input_max_bytes}")
+        if whole and size[0] > limits.input_max_bytes:
+            return unsafe(f"the Blob holds {size[0]} bytes, more than {limits.input_max_bytes}")
         path = context.blobs.path_of(sha256)
         if not path.is_file():
             raise FileNotFoundError(f"the file of Blob {sha256} is missing")
         work = context.work_dir(job)
         shutil.rmtree(work, ignore_errors=True)
         try:
-            judged = await run_child(job, {**request, "path": str(path)}, self.limits, work)
+            judged = await run_child(job, {**request, "path": str(path)}, limits, work)
             if not isinstance(judged, Answer):
                 return judged
             try:
@@ -206,7 +212,7 @@ class Files:
         identifier = {"id": IDENTIFIER_ID, "version": sniff.VERSION}
 
         def made(sha256: str, result: dict):
-            media_type, stored = bodies.identification(sha256, identifier, result, self.limits)
+            media_type, stored = bodies.identification(sha256, identifier, result, self.identify_limits)
 
             def record(tx: Tx, content: str) -> None:
                 artifact = artifacts.record(tx, job, "identify", content)
@@ -215,7 +221,7 @@ class Files:
 
             return stored, record
 
-        return await self._read(job, context, {"op": "identify"}, made, whole=False)
+        return await self._read(job, context, {"op": "identify"}, made, self.identify_limits, whole=False)
 
     async def extract(self, job: Job, context: JobContext) -> Finished:
         extractor = self.extractors[job.job_type]
@@ -223,10 +229,10 @@ class Files:
         named = {"id": extractor.id, "version": extractor.version, "params": params}
 
         def made(sha256: str, result: dict):
-            stored = bodies.extraction(sha256, named, result, self.limits)
+            stored = bodies.extraction(sha256, named, result, extractor.limits)
             return stored, lambda tx, content: artifacts.record(tx, job, "extraction", content)
 
-        return await self._read(job, context, {"op": "extract", "entry": extractor.entry, "params": params}, made)
+        return await self._read(job, context, {"op": "extract", "entry": extractor.entry, "params": params}, made, extractor.limits)
 
     async def render(self, job: Job, context: JobContext) -> Finished:
         """The converter writes a PDF in the work directory; that file, as it is, is the content of the job's rendition
@@ -238,13 +244,13 @@ class Files:
             if out.is_symlink() or not out.is_file():
                 raise bodies.Rejected(f"the converter wrote no {RENDITION}")
             size = out.stat().st_size
-            if size > self.limits.rendition_max_bytes:
-                raise bodies.TooLarge(f"the rendition holds {size} bytes, more than {self.limits.rendition_max_bytes}")
+            if size > converter.limits.rendition_max_bytes:
+                raise bodies.TooLarge(f"the rendition holds {size} bytes, more than {converter.limits.rendition_max_bytes}")
             with out.open("rb") as handle:
                 if handle.read(len(PDF_MAGIC)) != PDF_MAGIC:
                     raise bodies.Rejected(f"the converter's {RENDITION} is not a PDF")
             return out, lambda tx, content: artifacts.record(tx, job, "rendition", content)
 
         request = {"op": "render", "entry": converter.entry, "params": reading(job.params), "out": str(out)}
-        return await self._read(job, context, request, made)
+        return await self._read(job, context, request, made, converter.limits)
 
