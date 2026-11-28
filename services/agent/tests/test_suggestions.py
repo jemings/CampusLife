@@ -119,6 +119,10 @@ SAME_PROPOSAL_WORDED_OTHERWISE = {
     "title in other spacing and punctuation": ({**ASSIGNMENT, "title": " 과제-2. "}, [page_at(PDF), SPOKEN]),
     "evidence in another order": (ASSIGNMENT, [SPOKEN, page_at(PDF)]),
     "other places on the same anchors": (ASSIGNMENT, [page_at(PDF, 5), page_at(PDF, 9), {**SPOKEN, "start_ms": 0}]),
+    "title over two lines": ({**ASSIGNMENT, "title": "과제\n2"}, [page_at(PDF), SPOKEN]),
+    "title split by a tab": ({**ASSIGNMENT, "title": "과제\t2"}, [page_at(PDF), SPOKEN]),
+    "title with format characters": ({**ASSIGNMENT, "title": "\ufeff과제\u200b 2\u200d"}, [page_at(PDF), SPOKEN]),
+    "another start beside the same due date": ({**ASSIGNMENT, "starts_at": "2026-03-10T00:00:00.000Z"}, [page_at(PDF), SPOKEN]),
     "other columns and fields": ({**ASSIGNMENT, "body": "조별 과제", "fields": {"course_id": COURSE}}, [page_at(PDF), SPOKEN]),
 }
 
@@ -133,6 +137,20 @@ def test_a_create_item_title_in_other_case_keeps_its_fingerprint():
 
     assert suggestions.fingerprint("create_item", {**ASSIGNMENT, "title": "Lab Report 2"}, evidence) == suggestions.fingerprint(
         "create_item", {**ASSIGNMENT, "title": "LAB REPORT 2"}, evidence)
+
+
+def test_without_a_due_date_the_start_is_the_date_in_the_fingerprint():
+    undated = {key: value for key, value in ASSIGNMENT.items() if key != "due_at"}
+
+    assert suggestions.fingerprint("create_item", undated, []) != suggestions.fingerprint(
+        "create_item", {**undated, "starts_at": "2026-03-10T00:00:00.000Z"}, [])
+
+
+@pytest.mark.parametrize(("title", "other"), [("C# lab", "C lab"), ("Week 3.1", "Week 31")])
+def test_decision_6_accepts_that_titles_apart_only_by_punctuation_share_a_fingerprint(title, other):
+    """The cost decision 6 took on: dropping punctuation joins these. #8 measures how often it bites."""
+    assert suggestions.fingerprint("create_item", {**ASSIGNMENT, "title": title}, []) == suggestions.fingerprint(
+        "create_item", {**ASSIGNMENT, "title": other}, [])
 
 
 ANOTHER_PROPOSAL = {
@@ -679,11 +697,70 @@ async def test_a_patch_item_setting_a_field_its_items_kind_does_not_define_is_re
     assert await feed(db) == before
 
 
+async def test_a_patch_item_leaving_out_a_field_its_items_kind_does_not_define_is_proposed_and_applied(db, device, blob_store, tmp_path):
+    """Setting such a field to null writes nothing to it, so the patch can be accepted (#9 decision 12)."""
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+    task_id, create = created_item(due_at="2026-03-16T14:59:00.000Z")
+    await apply(db, device, create)
+    proposal = due_at_patch(task_id, "2026-03-16T14:59:00.000Z", "2026-03-23T14:59:00.000Z", **{"fields.room": {"from": None, "to": None}})
+
+    suggestion = await propose(db, artifact_id, "patch_item", proposal)
+
+    assert (await decide(db, device, accepting(suggestion)))["result"] == "applied"
+    assert rows(await feed(db), "item")[task_id]["due_at"] == "2026-03-23T14:59:00.000Z"
+
+
+async def gone_for_good(db, blob_store, tmp_path, device):
+    """An Item purged away (its tombstone) and a Blob a purge removed: neither can come back."""
+    item_id, create = created_item()
+    await apply(db, device, create)
+    await db.write(lambda tx: store.write(tx, EntityRef(Entity.ITEM, item_id), None))
+    purged = "d" * 64
+    await db.write(lambda tx: tx.execute("INSERT INTO purge_journal (id, target, registered_at) VALUES (?, ?, ?)",
+                                         (new_id(), json.dumps({"blobs": [purged]}), "2026-03-02T00:00:00.000Z")))
+    return f"item:{item_id}", f"blob:{purged}"
+
+
+def relation(source, relation_type, target):
+    return {"id": f"{source}|{relation_type}|{target}", "from": source, "type": relation_type, "to": target}
+
+
+@pytest.mark.parametrize("target", ["patch_item on a purged Item", "relation from a purged Item", "relation to a purged Item",
+                                    "relation to a purged Blob"])
+async def test_a_proposal_on_what_is_gone_for_good_is_refused_and_nothing_is_written(db, device, blob_store, tmp_path, target):
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+    item, blob = await gone_for_good(db, blob_store, tmp_path, device)
+    action, proposal = {
+        "patch_item on a purged Item": ("patch_item", due_at_patch(item.removeprefix("item:"), None, "2026-03-23T14:59:00.000Z")),
+        "relation from a purged Item": ("add_relation", relation(item, "about", f"capture:{CAPTURE}")),
+        "relation to a purged Item": ("add_relation", relation(f"capture:{CAPTURE}", "about", item)),
+        "relation to a purged Blob": ("add_relation", relation(f"capture:{CAPTURE}", "about", blob)),
+    }[target]
+    before = await feed(db)
+
+    with pytest.raises(suggestions.InvalidSuggestion, match="gone for good"):
+        await propose(db, artifact_id, action, proposal)
+
+    assert await feed(db) == before
+
+
+async def test_a_relation_to_what_the_hub_does_not_hold_yet_is_proposed(db, device, blob_store, tmp_path):
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+
+    suggestion = await propose(db, artifact_id, "add_relation", relation(f"capture:{CAPTURE}", "about", f"item:{new_id()}"))
+
+    assert suggestion["state"] == "open"
+
+
 async def test_a_patch_item_on_an_item_the_hub_does_not_hold_is_proposed_and_its_accept_answers_deleted(db, device, blob_store, tmp_path):
     artifact_id, _ = await grounds(db, blob_store, tmp_path)
     suggestion = await propose(db, artifact_id, "patch_item", due_at_patch(new_id(), None, "2026-03-23T14:59:00.000Z"))
+    before = await feed(db)
 
     assert await decide(db, device, accepting(suggestion)) == {"result": "rejected", "reason": "deleted"}
+
+    assert await feed(db) == before
+    assert await db.read(lambda snap: snap.execute("SELECT count(*) FROM conflict_records").fetchone()[0]) == 0
 
 
 async def test_a_patch_item_change_with_members_a_patch_does_not_take_is_accepted_without_them(db, device, blob_store, tmp_path):

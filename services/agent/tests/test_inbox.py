@@ -151,3 +151,11 @@ async def test_unclassified_captures_come_the_last_taken_in_first(db, device, bl
     taken = [await committed(db, device, await text_capture(blob_store, tmp_path, bytes([index]))) for index in range(3)]
 
     assert await unclassified(db) == [capture["id"] for capture in reversed(taken)]
+
+
+async def test_open_suggestions_come_the_last_proposed_first(db, device, blob_store, tmp_path):
+    capture = await committed(db, device, await text_capture(blob_store, tmp_path))
+    artifact_id = await an_artifact(db, blob_store, tmp_path, capture)
+    made = [await proposed(db, artifact_id, f"review {index}") for index in range(3)]
+
+    assert [suggestion["id"] for suggestion in (await db.read(inbox.compute)).suggestions] == [each["id"] for each in reversed(made)]
