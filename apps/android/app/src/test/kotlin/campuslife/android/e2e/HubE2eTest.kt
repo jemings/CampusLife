@@ -34,6 +34,10 @@ import java.time.Clock
 import java.util.Collections
 import kotlinx.serialization.json.JsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType
+import okhttp3.RequestBody
+import okio.Buffer
+import okio.BufferedSink
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -76,7 +80,7 @@ class HubE2eTest {
 
     /** One pairing secret pairs once, so this is one walk through the decision 4 steps and then a stale epoch. */
     @Test
-    fun `a phone pairs, uploads a capture across a cut, commits it once, reads it back and follows an epoch change`() {
+    fun `a phone pairs, uploads a capture across a cut mid-chunk, commits it once, reads it back and follows an epoch change`() {
         val paired = Pairing().pair(url, PairRequest(offer.secret, Platform.ANDROID, "e2e phone", APP_VERSION), expectedHubId = offer.hubId)
         val course = items.create(ItemData(kind = ItemKind.COURSE, title = "자료구조", fields = JsonObject(emptyMap())))
         val capture = captures.open(Origin(OriginType.CAMERA))
@@ -88,14 +92,13 @@ class HubE2eTest {
         var cut = true
         val http = HubHttp.client().newBuilder().addInterceptor { chain ->
             val request = chain.request()
-            if (request.method == "PUT") {
-                puts += request.url.encodedPath
-                if (cut && request.url.encodedPath == chunk(large, 1)) {
-                    cut = false
-                    throw IOException("connection cut")
-                }
+            if (request.method == "PUT") puts += request.url.encodedPath
+            if (cut && request.url.encodedPath == chunk(large, 1)) {
+                cut = false
+                chain.proceed(request.newBuilder().put(HalfThenCut(request.body!!)).build())
+            } else {
+                chain.proceed(request)
             }
-            chain.proceed(request)
         }.build()
         val hub = HubClient(url, paired.hubId, paired.token, http)
         val engine = SyncEngine(store, hub, clock, APP_VERSION)
@@ -132,6 +135,22 @@ class HubE2eTest {
     }
 
     private fun chunk(sha256: String, index: Int) = "/v1/blobs/uploads/$sha256/chunks/$index"
+
+    /** Sends the first half of [body] to the Hub and then drops the connection, as a phone leaving coverage mid-chunk would. */
+    private class HalfThenCut(private val body: RequestBody) : RequestBody() {
+        override fun contentType(): MediaType? = body.contentType()
+
+        override fun contentLength(): Long = body.contentLength()
+
+        override fun isOneShot(): Boolean = true
+
+        override fun writeTo(sink: BufferedSink) {
+            val bytes = Buffer().also(body::writeTo)
+            sink.write(bytes, bytes.size / 2)
+            sink.flush()
+            throw IOException("connection cut")
+        }
+    }
 
     private companion object {
         const val APP_VERSION = "0.1.0"
