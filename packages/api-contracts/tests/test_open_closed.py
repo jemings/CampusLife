@@ -193,26 +193,31 @@ def test_every_place_that_names_the_kinds_names_each_with_its_own_fields_schema(
     assert KIND_PLACES[place] == {kind: kind for kind in KINDS}
 
 
-SHARED_FIELDS = {
-    "category": "../../common/open_name.json",
-    "organization_id": "../../common/uuid.json",
-    "url": "../../capture/capture.json#/properties/url",
-}
-"""Fields several kinds define with one meaning (#9 decision 8). A patch's fields.<key> passes when it fits any kind
-that defines the key (rule set_type), so one kind's looser copy would loosen the patch of every kind."""
+def fields_by_name():
+    """Each member name of the item/fields schemas -> {kind: its member node}."""
+    found = {}
+    for path in (contract_root() / "schemas" / "item" / "fields").glob("*.json"):
+        for name, member in read_strict(path).get("properties", {}).items():
+            found.setdefault(name, {})[path.stem] = member
+    return found
+
+
+SHARED_FIELDS = {name: defining for name, defining in fields_by_name().items() if len(defining) >= 2}
+"""Fields several kinds define, found rather than listed so a name becomes shared the moment a second kind uses it. A
+patch's fields.<key> passes when it fits any kind that defines the key (rule set_type), so one kind's looser copy would
+loosen the patch of every kind."""
+
+
+def test_the_shared_fields_include_the_ones_the_later_kinds_were_built_on():
+    assert {"category", "organization_id", "url", "course_id", "due_text"} <= set(SHARED_FIELDS)
 
 
 @pytest.mark.parametrize("name", sorted(SHARED_FIELDS))
 def test_a_field_several_kinds_share_is_one_definition_they_refer_to(name):
-    defining = {
-        path.stem: member
-        for path in (contract_root() / "schemas" / "item" / "fields").glob("*.json")
-        if (member := read_strict(path).get("properties", {}).get(name)) is not None
-    }
-    assert len(defining) >= 2
+    defining = SHARED_FIELDS[name]
+    assert len({member.get("$ref") for member in defining.values()}) == 1, defining
     for kind, member in defining.items():
-        assert member.get("$ref") == SHARED_FIELDS[name], kind
-        assert set(member) <= {"$ref", "description", "examples"}, kind
+        assert "$ref" in member and set(member) <= {"$ref", "description", "examples"}, kind
 
 
 def test_create_writes_the_relation_and_tag_columns_minus_the_id():
