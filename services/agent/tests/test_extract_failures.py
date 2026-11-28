@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -392,7 +393,7 @@ def test_a_hub_without_console_streams_still_reads_its_childs_result(tmp_path):
 
 
 async def test_a_blob_larger_than_the_input_limit_is_identified_and_only_its_extract_is_unsafe(db, device, blob_store, tmp_path):
-    limits = Limits(**{**TEST_LIMITS.to_json(), "input_max_bytes": 1 << 20})
+    limits = replace(TEST_LIMITS, input_max_bytes=1 << 20)
     reader = fake("echo", {"text/plain": {}, "application/octet-stream": {}})
     hub = hub_with(db, blob_store, device, tmp_path, reader, base=(), limits=limits)
     large = tmp_path / "lecture.bin"
@@ -430,7 +431,7 @@ def stored_zip(path, member_bytes):
     ids=["member over the member limit", "members over the total limit", "a zip bomb"],
 )
 async def test_an_archive_over_a_byte_limit_is_identified_and_only_reading_its_members_is_unsafe(db, device, blob_store, tmp_path, limits, make_file):
-    limited = Limits(**{**TEST_LIMITS.to_json(), **limits})
+    limited = replace(TEST_LIMITS, **limits)
     hub = hub_with(db, blob_store, device, tmp_path, fake("zip_walk", {"application/zip": {}}), base=(), limits=limited)
     capture = await hub.capture(("lecture.zip", make_file(tmp_path / "input.zip")))
 
@@ -445,7 +446,7 @@ async def test_an_archive_over_a_byte_limit_is_identified_and_only_reading_its_m
 
 
 async def test_an_ole_file_larger_than_the_childs_memory_is_identified(db, device, blob_store, tmp_path):
-    limits = Limits(**{**TEST_LIMITS.to_json(), "mem_bytes": 256 << 20, "input_max_bytes": 64 << 20})
+    limits = replace(TEST_LIMITS, mem_bytes=256 << 20, input_max_bytes=64 << 20)
     hub = hub_with(db, blob_store, device, tmp_path, fake("echo", {"application/x-cfb": {}}), base=(), limits=limits)
     large = cfb_writer.write(tmp_path / "lecture.ole", {"Contents": b"c"}, trailing=300 << 20)
 

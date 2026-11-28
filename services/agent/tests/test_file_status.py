@@ -1,5 +1,7 @@
 """What the file pipeline tells the local UI about each Attachment (S13)."""
 
+from dataclasses import replace
+
 import pytest
 from extract_harness import TEST_LIMITS, hub_with
 from test_capture_commit import blob_store, device
@@ -7,7 +9,6 @@ from test_capture_commit import blob_store, device
 from campuslife_hub import ingest
 from campuslife_hub.extract.fakes import fake
 from campuslife_hub.extract.framework import IDENTIFY, RULES_CHANGED, can_read
-from campuslife_hub.extract.limits import Limits
 from campuslife_hub.ingest import REPROCESS
 from campuslife_hub.jobs import JobState, OutcomeCode
 
@@ -126,7 +127,7 @@ async def test_after_the_rules_change_the_last_reading_is_shown_with_the_change_
     capture = await hub.capture(("a.md", NOTES), ("b.txt", NOTES))
     await hub.settle()
     queued = len(await hub.jobs())
-    changed = hub_with(db, blob_store, device, tmp_path, refusing, limits=Limits(**{**TEST_LIMITS.to_json(), "rendition_max_bytes": 1 << 20}))
+    changed = hub_with(db, blob_store, device, tmp_path, refusing, limits=replace(TEST_LIMITS, rendition_max_bytes=1 << 20))
 
     markdown, plain = [await status(changed, attachment) for attachment in capture["attachments"]]
     await changed.settle()

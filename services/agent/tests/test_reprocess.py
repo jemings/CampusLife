@@ -9,7 +9,6 @@ from campuslife_hub.extract import framework
 from campuslife_hub.extract.extractors import TEXT
 from campuslife_hub.extract.fakes import fake
 from campuslife_hub.extract.framework import IDENTIFY, Files
-from campuslife_hub.extract.limits import DEFAULT_LIMITS
 from campuslife_hub.ingest import INGEST, REPROCESS, NoSuchCapture
 from campuslife_hub.jobs import JobState
 from campuslife_hub.purge import PurgeHooks
@@ -210,4 +209,4 @@ def test_an_extractor_that_takes_the_reprocess_param_is_refused():
     taking = fake("echo", {"text/plain": {REPROCESS: "mine"}})
 
     with pytest.raises(ValueError, match=REPROCESS):
-        Files((TEXT, taking), DEFAULT_LIMITS)
+        Files((TEXT, taking))

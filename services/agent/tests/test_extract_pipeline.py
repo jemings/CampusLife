@@ -358,3 +358,25 @@ async def test_a_blob_identified_under_another_identify_pipeline_is_identified_a
     assert [job.pipeline.version for job in await hub.jobs(IDENTIFY)] == [hub.files.identify_pipeline.version, stricter.files.identify_pipeline.version]
     assert (await hub.media(sha(NOTES))).pipeline_version == stricter.files.identify_pipeline.version
     assert len(await hub.artifacts("identify")) == 2
+
+
+async def test_an_extractor_reads_its_own_limits_in_the_child_and_identify_its_own(db, device, blob_store, tmp_path):
+    """The common decision: each extractor carries its limits, a type of its own with bounds of its format included."""
+    from dataclasses import replace
+
+    from campuslife_hub.extract.fakes import PagedLimits, fake
+    from campuslife_hub.extract.limits import IDENTIFY_LIMITS
+
+    paged = replace(fake("limits_seen", {"text/plain": {}}), limits=PagedLimits(max_pages=7, timeout_s=29.0))
+    hub = hub_with(db, blob_store, device, tmp_path, paged, base=(), limits=None)
+
+    await hub.capture(("a.txt", NOTES))
+    await hub.settle()
+
+    [extraction] = await hub.artifacts("extraction")
+    [block] = (await hub.body(extraction))[0]["blocks"]
+    assert block["text"] == f"PagedLimits {PagedLimits(max_pages=7, timeout_s=29.0)!r}"
+    [identify_job] = await hub.jobs(IDENTIFY)
+    [extract_job] = await hub.jobs("extract.fake_limits_seen")
+    assert identify_job.pipeline.version.endswith(f"+L{IDENTIFY_LIMITS.hash8()}")
+    assert extract_job.pipeline.version == f"fake_limits_seen-1+L{paged.limits.hash8()}"

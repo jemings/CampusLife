@@ -10,6 +10,7 @@ import os
 import sys
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from .extracted import Extracted
@@ -19,6 +20,18 @@ from .protocol import Refused, Status
 from .safe_zip import SafeZip, open_zip
 
 ENTRY = "campuslife_hub.extract.fakes"
+
+
+@dataclass(frozen=True)
+class PagedLimits(Limits):
+    """A format's own table, with a bound only it has, as a PDF extractor's would be."""
+
+    max_pages: int = 500
+
+
+def limits_seen(path: Path, params: Mapping, limits: Limits) -> Extracted:
+    """One block naming the type and the bounds of the table the child rebuilt."""
+    return Extracted([{"block_type": "paragraph", "text": f"{type(limits).__name__} {limits!r}", "refs": [{"kind": "document"}]}])
 
 
 def echo(path: Path, params: Mapping, limits: Limits) -> Extracted:
