@@ -21,7 +21,11 @@ def rows(changes, entity):
     return {row["id"]: row for row in changes if row["entity"] == entity}
 
 
-@pytest.mark.parametrize("case", ["create_course", "create_task", "create_all_day_exam"])
+@pytest.mark.parametrize(
+    "case",
+    ["create_course", "create_task", "create_all_day_exam", "create_event", "create_announcement", "create_opportunity",
+     "create_organization"],
+)
 async def test_a_created_item_reaches_the_feed_with_its_id_schema_version_and_rev(db, device, case):
     create = mutation(case)
 
