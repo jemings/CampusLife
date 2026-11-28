@@ -26,8 +26,9 @@ def new_id():
 
 
 async def imported(admin, tmp_path, name="handout.pdf", content=b"%PDF synthetic handout"):
-    """A Capture the local import took in, and its one Attachment."""
-    done = await import_files(admin.core, [source(tmp_path, name, content)])
+    """A Capture the local import took in, and its one Attachment, named as the import form names a file: name need
+    not be one the file system allows."""
+    done = await import_files(admin.core, [source(tmp_path, f"{new_id()}.bin", content)], names=[name])
     attachment = await admin.core.db.read(
         lambda snap: snap.execute("SELECT data FROM attachments WHERE capture_id = ?", (done.capture_id,)).fetchone()[0])
     return done.capture_id, json.loads(attachment)
@@ -102,6 +103,7 @@ async def test_what_a_suggestion_and_a_file_name_carry_is_escaped(tmp_path):
         assert "<script>alert(1)</script>" not in page.text and "&lt;script&gt;alert(1)&lt;/script&gt;" in page.text
         assert "<img src=x" not in page.text
     assert '"><b>bold</b>' not in detail.text
+    assert "&lt;img src=x onerror=alert(2)&gt;.txt" in listed.text
 
 
 async def test_accepting_from_the_inbox_makes_the_item_and_leads_to_it(tmp_path):
