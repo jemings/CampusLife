@@ -12,6 +12,8 @@ import warnings
 import zipfile
 from pathlib import Path
 
+import cfb_writer
+
 CONTENT_TYPES = '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>'
 
 
@@ -139,17 +141,18 @@ def nul_in_name(path: Path) -> Path:
 
 
 def encrypted_ooxml(path: Path) -> Path:
-    """The shape of a password-protected .docx: an OLE compound file holding an EncryptedPackage stream."""
-    header = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + bytes(504)
-    directory = "EncryptedPackage".encode("utf-16-le") + bytes(128 - 32)
-    path.write_bytes(header + directory + bytes(4096))
-    return path
+    """The shape of a password-protected .docx ([MS-OFFCRYPTO]): a compound file whose root holds EncryptionInfo,
+    EncryptedPackage and the \\x06DataSpaces storage."""
+    return cfb_writer.write(path, {
+        "EncryptionInfo": b"\x04\x00\x04\x00\x40\x00\x00\x00",
+        "EncryptedPackage": bytes(8) + bytes(range(256)) * 32,
+        "\x06DataSpaces": {"Version": b"\x3c\x00\x00\x00", "DataSpaceMap": b"\x08\x00\x00\x00"},
+    })
 
 
 def ole_document(path: Path) -> Path:
-    """An OLE compound file without encryption, as a .doc or .hwp is."""
-    path.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + bytes(504) + "WordDocument".encode("utf-16-le") + bytes(4096))
-    return path
+    """A compound file without encryption, as a .doc is: a WordDocument and a 1Table stream at its root."""
+    return cfb_writer.write(path, {"WordDocument": "본문".encode("utf-16-le"), "1Table": b"\x00" * 16})
 
 
 def pdf(path: Path) -> Path:
