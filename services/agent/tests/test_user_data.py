@@ -5,7 +5,6 @@ from conftest import contract_fixture
 from campuslife_contracts import SENT_RETENTION_DAYS, text_hash, validate
 from campuslife_hub import mutations
 from campuslife_hub.clock import instant
-from campuslife_hub.conflict_stash import kept
 from test_capture_commit import apply, blob_store, commit, device, feed, new_id, store_bytes, text_capture
 
 __all__ = ["blob_store", "device"]
@@ -21,7 +20,11 @@ def rows(changes, entity):
     return {row["id"]: row for row in changes if row["entity"] == entity}
 
 
-@pytest.mark.parametrize("case", ["create_course", "create_task", "create_all_day_exam"])
+@pytest.mark.parametrize(
+    "case",
+    ["create_course", "create_task", "create_all_day_exam", "create_event", "create_announcement", "create_opportunity",
+     "create_organization"],
+)
 async def test_a_created_item_reaches_the_feed_with_its_id_schema_version_and_rev(db, device, case):
     create = mutation(case)
 
@@ -300,6 +303,15 @@ def outcome(result):
     return {name: value for name, value in result.items() if name != "mutation_id"}
 
 
+def decided(result):
+    """What compare-and-set decided, without the ConflictRecords it named; test_conflict_records checks those."""
+    return {name: value for name, value in outcome(result).items() if name != "conflict_record_ids"}
+
+
+def without_records(changes):
+    return [row for row in changes if row["entity"] != "conflict_record"]
+
+
 async def test_a_patch_whose_from_holds_is_applied_with_its_fields(db, device):
     await apply(db, device, task())
     before = await item_row(db)
@@ -346,7 +358,7 @@ async def test_the_second_of_two_patches_of_one_field_from_the_same_state_is_a_c
     results = await apply(db, device, patch_item(**{key: first}), patch_item(**{key: second}))
 
     wire_key = key.replace("__", ".")
-    assert [outcome(result) for result in results] == [
+    assert [decided(result) for result in results] == [
         {"result": "applied", "applied_fields": [wire_key]},
         {"result": "conflict", "applied_fields": [], "conflicted_fields": [wire_key]},
     ]
@@ -359,7 +371,7 @@ async def test_a_patch_with_a_stale_field_applies_its_other_fields(db, device):
 
     [result] = await apply(db, device, patch_item(title={"from": "과제 제출", "to": "과제 2"}, fields__progress={"from": "planned", "to": "completed"}))
 
-    assert outcome(result) == {"result": "conflict", "applied_fields": ["fields.progress"], "conflicted_fields": ["title"]}
+    assert decided(result) == {"result": "conflict", "applied_fields": ["fields.progress"], "conflicted_fields": ["title"]}
     data = (await item_row(db))["data"]
     assert (data["title"], data["fields"]["progress"]) == ("과제 1", "completed")
 
@@ -463,12 +475,12 @@ DUE_DATE = {"date": "2026-03-09", "tz": "Asia/Seoul"}
 
 async def test_a_date_patch_from_before_the_item_went_all_day_is_a_conflict_not_a_schema_rejection(db, device):
     await apply(db, device, task(starts_at=MORNING), mutation("patch_all_day_dates"))
-    before = await feed(db)
+    before = without_records(await feed(db))
 
     [result] = await apply(db, device, patch_item(starts_at={"from": MORNING, "to": "2026-03-03T00:30:00.000Z"}))
 
-    assert outcome(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["starts_at"]}
-    assert await feed(db) == before
+    assert decided(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["starts_at"]}
+    assert without_records(await feed(db)) == before
 
 
 async def test_a_patch_from_before_the_item_went_all_day_conflicts_on_its_date_and_applies_its_body(db, device):
@@ -477,7 +489,7 @@ async def test_a_patch_from_before_the_item_went_all_day_conflicts_on_its_date_a
 
     [result] = await apply(db, device, patch_item(body={"from_hash": text_hash("a"), "to": "b"}, due_at={"from": DUE, "to": "2026-03-10T14:59:00.000Z"}))
 
-    assert outcome(result) == {"result": "conflict", "applied_fields": ["body"], "conflicted_fields": ["due_at"]}
+    assert decided(result) == {"result": "conflict", "applied_fields": ["body"], "conflicted_fields": ["due_at"]}
     after = await item_row(db)
     assert after["data"] == {**before["data"], "body": "b", "rev": after["rev"]}
 
@@ -499,7 +511,7 @@ async def test_a_conflict_in_the_dates_holds_back_the_other_dates_and_nothing_el
 
     [result] = await apply(db, device, late)
 
-    assert outcome(result) == {"result": "conflict", "applied_fields": ["title", "body"], "conflicted_fields": ["all_day", "starts_at"]}
+    assert decided(result) == {"result": "conflict", "applied_fields": ["title", "body"], "conflicted_fields": ["all_day", "starts_at"]}
     after = await item_row(db)
     assert after["data"] == {**before["data"], "title": "과제 1", "body": "b", "rev": after["rev"]}
 
@@ -508,44 +520,44 @@ async def test_a_conflict_in_the_dates_holds_back_the_other_dates_and_nothing_el
 async def test_a_date_that_won_is_held_back_when_the_other_date_lost(db, device, moved, to):
     dates = {"starts_at": MORNING, "due_at": DUE}
     await apply(db, device, task(**dates), patch_item(**{moved: {"from": dates[moved], "to": to}}))
-    before = await feed(db)
+    before = without_records(await feed(db))
 
     [result] = await apply(db, device, patch_item(starts_at={"from": MORNING, "to": "2026-03-02T03:00:00.000Z"}, due_at={"from": DUE, "to": "2026-03-10T14:59:00.000Z"}))
 
-    assert outcome(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["starts_at", "due_at"]}
-    assert await feed(db) == before
+    assert decided(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["starts_at", "due_at"]}
+    assert without_records(await feed(db)) == before
 
 
 async def test_all_day_that_won_is_held_back_when_its_date_lost(db, device):
     await apply(db, device, task(starts_at=MORNING), patch_item(starts_at={"from": MORNING, "to": None}))
-    before = await feed(db)
+    before = without_records(await feed(db))
 
     [result] = await apply(db, device, mutation("patch_all_day_dates"))
 
-    assert outcome(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["all_day", "starts_at"]}
-    assert await feed(db) == before
+    assert decided(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["all_day", "starts_at"]}
+    assert without_records(await feed(db)) == before
 
 
 async def test_a_field_the_kind_lacks_conflicts_instead_of_being_written_when_another_key_lost(db, device):
     await apply(db, device, task(), patch_item(title={"from": "과제 제출", "to": "과제 1"}))
-    before = await feed(db)
+    before = without_records(await feed(db))
 
     [result] = await apply(db, device, patch_item(title={"from": "과제 제출", "to": "과제 2"}, fields__course_id={"from": None, "to": OTHER_ITEM}))
 
-    assert outcome(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["title", "fields.course_id"]}
-    assert await feed(db) == before
+    assert decided(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["title", "fields.course_id"]}
+    assert without_records(await feed(db)) == before
 
 
 @pytest.mark.parametrize("deleted", ["soft-deleted", "absent"])
 async def test_a_patch_of_an_item_that_is_not_live_is_rejected_as_deleted(db, device, deleted):
     if deleted == "soft-deleted":
         await apply(db, device, task(), op("delete", "item", ITEM))
-    before = await feed(db)
+    before = without_records(await feed(db))
 
     [result] = await apply(db, device, patch_item(title={"from": "과제 제출", "to": "과제 1"}))
 
-    assert outcome(result) == {"result": "rejected", "reason": "deleted"}
-    assert await feed(db) == before
+    assert decided(result) == {"result": "rejected", "reason": "deleted"}
+    assert without_records(await feed(db)) == before
 
 
 async def test_the_first_create_resent_after_a_patch_is_still_applied(db, device):
@@ -594,39 +606,6 @@ async def test_a_batch_applies_in_order_so_a_patch_sees_the_create_before_it(db,
     ]
 
 
-async def stashed(db):
-    return [
-        {"device_id": value.device_id, "mutation_id": value.mutation_id, "entity": value.entity, "entity_id": value.entity_id,
-         "field": value.field, "change": value.change, "theirs_rev": value.theirs_rev}
-        for value in await db.read(kept)
-    ]
-
-
-async def test_a_body_that_loses_compare_and_set_is_kept_in_the_stash_and_not_synced(db, device):
-    await apply(db, device, task(body="첫 줄"), patch_item(body={"from_hash": text_hash("첫 줄"), "to": "둘째 줄"}))
-    theirs = await item_row(db)
-    before = await feed(db)
-    losing = patch_item(body={"from_hash": text_hash("첫 줄"), "to": "다른 줄"}, title={"from": "과제 제출", "to": "과제 1"})
-
-    [result] = await apply(db, device, losing)
-
-    assert outcome(result) == {"result": "conflict", "applied_fields": ["title"], "conflicted_fields": ["body"]}
-    assert await stashed(db) == [
-        {"device_id": device, "mutation_id": losing["mutation_id"], "entity": "item", "entity_id": ITEM,
-         "field": "body", "change": losing["set"]["body"], "theirs_rev": theirs["rev"]}
-    ]
-    assert [row for row in await feed(db) if row["entity"] != "item"] == [row for row in before if row["entity"] != "item"]
-
-
-async def test_a_scalar_that_loses_and_a_body_that_converges_are_not_stashed(db, device):
-    await apply(db, device, task(body="첫 줄"), patch_item(body={"from_hash": text_hash("첫 줄"), "to": "둘째 줄"}, title={"from": "과제 제출", "to": "과제 1"}))
-
-    results = await apply(db, device, patch_item(body={"from_hash": text_hash("첫 줄"), "to": "둘째 줄"}, title={"from": "과제 제출", "to": "과제 2"}))
-
-    assert outcome(results[0]) == {"result": "conflict", "applied_fields": ["body"], "conflicted_fields": ["title"]}
-    assert await stashed(db) == []
-
-
 async def entity_with(db, device, blob_store, tmp_path, entity):
     """A live entity of each patchable kind, and its id."""
     if entity == "attachment":
@@ -638,74 +617,6 @@ async def entity_with(db, device, blob_store, tmp_path, entity):
         return TAG
     await apply(db, device, task(due_at=DUE))
     return ITEM
-
-
-@pytest.mark.parametrize(
-    ("entity", "key", "was", "theirs", "ours"),
-    [
-        ("item", "title", "과제 제출", "과제 1", "과제 2"),
-        ("item", "due_at", DUE, "2026-03-10T14:59:00.000Z", "2026-03-11T14:59:00.000Z"),
-        ("item", "fields.progress", "planned", "in_progress", "completed"),
-        ("attachment", "cloud_policy", "local_only", "cloud_allowed", "blocked"),
-        ("tag", "name", "시험", "기말", "중간"),
-    ],
-)
-async def test_a_column_that_is_not_x_text_and_loses_is_not_stashed(db, device, blob_store, tmp_path, entity, key, was, theirs, ours):
-    identifier = await entity_with(db, device, blob_store, tmp_path, entity)
-    await apply(db, device, patch(entity, identifier, **{key: {"from": was, "to": theirs}}))
-
-    [result] = await apply(db, device, patch(entity, identifier, **{key: {"from": was, "to": ours}}))
-
-    assert outcome(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": [key]}
-    assert await stashed(db) == []
-
-
-async def test_every_value_of_a_patch_of_a_deleted_item_is_kept_in_the_stash(db, device):
-    await apply(db, device, task(), op("delete", "item", ITEM))
-    deleted = await item_row(db)
-    late = patch_item(title={"from": "과제 제출", "to": "과제 1"}, body={"from_hash": None, "to": "메모"})
-
-    [result] = await apply(db, device, late)
-
-    assert outcome(result) == {"result": "rejected", "reason": "deleted"}
-    assert [(value["field"], value["change"], value["theirs_rev"]) for value in await stashed(db)] == [
-        ("title", late["set"]["title"], deleted["rev"]),
-        ("body", late["set"]["body"], deleted["rev"]),
-    ]
-
-
-async def test_a_patch_of_an_entity_the_hub_never_had_is_stashed_without_a_rev(db, device):
-    late = patch("tag", TAG, color={"from": "#ff8800", "to": "#0088ff"})
-
-    await apply(db, device, late)
-
-    assert [(value["entity"], value["field"], value["theirs_rev"]) for value in await stashed(db)] == [("tag", "color", None)]
-
-
-async def test_a_rejected_patch_of_a_live_item_stashes_nothing(db, device):
-    await apply(db, device, task())
-
-    await apply(db, device, patch_item(fields__course_id={"from": None, "to": OTHER_ITEM}), patch_item(body={"from_hash": None, "to": "a\rb"}))
-
-    assert await stashed(db) == []
-
-
-async def test_a_body_that_loses_beside_a_date_from_before_all_day_is_kept_in_the_stash(db, device):
-    went_all_day = {"all_day": {"from": None, "to": True}, "due_at": {"from": DUE, "to": DUE_DATE}}
-    await apply(db, device, task(due_at=DUE, body="a"), patch_item(**went_all_day, body={"from_hash": text_hash("a"), "to": "c"}))
-    late = patch_item(body={"from_hash": text_hash("a"), "to": "b"}, due_at={"from": DUE, "to": "2026-03-10T14:59:00.000Z"})
-
-    [result] = await apply(db, device, late)
-
-    assert outcome(result) == {"result": "conflict", "applied_fields": [], "conflicted_fields": ["body", "due_at"]}
-    assert [(value["field"], value["change"]) for value in await stashed(db)] == [("body", late["set"]["body"])]
-
-
-async def test_keys_held_back_with_the_dates_are_not_stashed_and_the_others_apply(db, device):
-    [result] = await apply(db, device, await p13(db, device))
-
-    assert result["applied_fields"] == ["title", "body"]
-    assert await stashed(db) == []
 
 
 async def test_a_result_is_answered_as_duplicate_for_ninety_days_and_then_judged_again(db, device):

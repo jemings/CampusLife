@@ -27,7 +27,7 @@ import uuid
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, fields
 
-from . import jobs, store
+from . import conflict_records, jobs, store
 from .blobs import BLOB_REFERENCES, BlobStore, KeptLeftover, has_blob
 from .clock import now_instant
 from .db import Database, Snapshot, Tx
@@ -246,7 +246,9 @@ def _purge(tx: Tx, sha256: str, chosen: tuple[str, ...]) -> tuple[str, PurgeTarg
     ):
         for identifier in ids:
             store.write(tx, EntityRef(entity, identifier), None)
-    tx.execute("DELETE FROM conflict_stash WHERE entity_id IN (SELECT value FROM json_each(?))", (_listed([*target.attachments, *target.items]),))
+    conflict_records.purge_with(
+        tx, [*(EntityRef(Entity.ATTACHMENT, identifier) for identifier in target.attachments), *(EntityRef(Entity.ITEM, identifier) for identifier in target.items)]
+    )
     marked = tuple(note["id"] for note in notes if note["id"] not in target.items)
     for note in notes:
         if note["id"] in marked:
@@ -292,11 +294,24 @@ async def purge_blob(db: Database, blobs: BlobStore, sha256: str, *, delete_note
     return Purged(journal_id, finish.failed_hooks, finish.kept, finish.wal_kept, target, marked, cancelled)
 
 
-def purged_at(runner: Tx | Snapshot, artifact_id: str) -> str | None:
-    """When a purge removed the Artifact; None when none did. Only a purge removes an Artifact, so this is when its
-    tombstone was written."""
+_JOURNALED = {
+    Entity.ATTACHMENT: "attachments",
+    Entity.ARTIFACT: "artifacts",
+    Entity.SUGGESTION: "suggestions",
+    Entity.RELATION: "relations",
+    Entity.ITEM: "items",
+}
+"""The PurgeTarget member that lists the ids of each kind of entity a purge removes."""
+
+
+def purged_at(runner: Tx | Snapshot, ref: EntityRef) -> str | None:
+    """When a purge removed the entity; None when none did. Only a purge removes an Artifact, so for one this is when
+    its tombstone was written."""
+    member = _JOURNALED.get(ref.entity)
+    if member is None:
+        return None
     (registered_at,) = runner.execute(
-        "SELECT min(registered_at) FROM purge_journal WHERE EXISTS (SELECT 1 FROM json_each(target, '$.artifacts') WHERE value = ?)", (artifact_id,)
+        "SELECT min(registered_at) FROM purge_journal WHERE EXISTS (SELECT 1 FROM json_each(target, ?) WHERE value = ?)", (f"$.{member}", ref.id)
     ).fetchone()
     return registered_at
 

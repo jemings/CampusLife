@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/item/fields/organization.json",
+  "title": "organization fields",
+  "description": "A group the user deals with: a department, student council, club, study group or company. Other kinds name it by fields.organization_id. Open.",
+  "type": "object",
+  "properties": {
+    "category": { "description": "What sort of organization it is.", "$ref": "../../common/open_name.json", "examples": ["department", "student_council", "club", "study_group", "company"] },
+    "url": { "description": "Its web page, as a capture url.", "$ref": "../../capture/capture.json#/properties/url" }
+  }
+}

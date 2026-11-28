@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/item/fields/opportunity.json",
+  "title": "opportunity fields",
+  "description": "Something to apply for: a scholarship, contest, internship or job. Applications open at the Item's starts_at and close at its due_at. Open.",
+  "type": "object",
+  "properties": {
+    "category": { "description": "What sort of opportunity it is.", "$ref": "../../common/open_name.json", "examples": ["scholarship", "contest", "internship", "job", "lab_recruitment"] },
+    "eligibility_text": { "description": "Who may apply, as worded by the notice.", "type": "string", "minLength": 1 },
+    "due_text": { "description": "The deadline as originally worded, such as 3월 16일 18시까지 (D11).", "$ref": "../../common/original_text.json" },
+    "organization_id": { "description": "id of the organization Item behind it.", "$ref": "../../common/uuid.json" },
+    "url": { "description": "Where it is published, as a capture url.", "$ref": "../../capture/capture.json#/properties/url" }
+  }
+}

@@ -3,15 +3,17 @@ admin app as test_admin serves it."""
 
 import json
 import re
+import uuid
 from datetime import timedelta
 
 import pytest
 import segno
 from test_admin import ORIGIN, SIGNED, Clock, hub, log_in, submitted
 
-from campuslife_hub import audit, devices
+from campuslife_hub import audit, devices, mutations, store
 from campuslife_hub.audit import AuditEvent
 from campuslife_hub.devices import ClientPlatform, DeviceSettings, DeviceState, PairingLimiter, PairRequest
+from campuslife_hub.store import Entity, EntityRef
 
 PUBLIC_URL = "https://campus-laptop.tail0a1b2c.ts.net"
 WITH_URL = {"device_settings": DeviceSettings(public_url=PUBLIC_URL)}
@@ -113,6 +115,35 @@ async def test_the_api_reports_the_device_settings_the_hub_serves_with(tmp_path)
     assert status["devices"] == {"public_url": PUBLIC_URL, "dormant_after_days": 30}
 
 
+TAG = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
+
+async def conflicts(admin, *, resolved=0, still_open=0):
+    """Tag patches that lose to the Hub's first one: still_open records left open, then `resolved` more marked resolved."""
+    hub_device = admin.core.hub_device
+    create = {"mutation_id": str(uuid.uuid4()), "op": "create", "entity": "tag", "id": TAG, "data": {"name": "시험", "color": "#ff8800"}}
+    won = {"mutation_id": str(uuid.uuid4()), "op": "patch", "entity": "tag", "id": TAG, "set": {"color": {"from": "#ff8800", "to": "#0088ff"}}}
+    await mutations.apply(admin.core.db, [create, won], hub_device)
+    for count in range(still_open + resolved):
+        lost = {"mutation_id": str(uuid.uuid4()), "op": "patch", "entity": "tag", "id": TAG, "set": {"color": {"from": "#ff8800", "to": f"#00000{count}"}}}
+        await mutations.apply(admin.core.db, [lost], hub_device)
+        if count >= still_open:
+            settled = {"id": lost["mutation_id"], "entity_ref": f"tag:{TAG}", "resolved": {"at": "2026-03-03T09:15:00.000Z", "mutation_id": str(uuid.uuid4())}}
+            await admin.core.db.write(lambda tx, settled=settled: store.write(tx, EntityRef(Entity.CONFLICT_RECORD, settled["id"]), settled))
+
+
+async def test_the_api_and_the_device_page_report_the_open_conflict_records_the_hub_counts(tmp_path):
+    """D24 decision 6: the Hub counts its open ConflictRecords; no device reports them."""
+    async with hub(tmp_path, **WITH_URL) as (client, admin):
+        await log_in(client)
+        await conflicts(admin, still_open=2, resolved=1)
+        status = (await client.get("/api/status", auth=SIGNED)).json()
+        shown = (await client.get("/devices")).text
+
+    assert status["conflicts"] == {"open": 2}
+    assert "2 open conflicts" in shown
+
+
 async def test_the_device_api_takes_only_requests_signed_with_the_admin_token(tmp_path):
     async with hub(tmp_path) as (client, admin):
         phone = await paired(admin)
@@ -149,8 +180,7 @@ async def test_the_device_page_shows_the_counts_a_device_last_reported(tmp_path)
         await devices.heartbeat(admin.core, phone.device_id, status, now=admin.clock())
         shown = (await client.get("/devices")).text
 
-    assert "3 uploads and 2 changes waiting, 1 refused" in shown
-    assert "conflict" not in shown
+    assert "3 uploads and 2 changes waiting, 1 refused</td>" in shown
 
 
 async def test_what_a_device_reports_about_itself_is_escaped_on_the_device_page(tmp_path):

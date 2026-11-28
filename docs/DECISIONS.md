@@ -614,7 +614,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 위반 우선순위는 schema > owner > not_canonical입니다(2026-11-26, "PR #28 1차", 구현자 결정 받아들임).
   - 적용기가 아직 처리하지 않는 계약 op가 배치에 있으면 아무것도 쓰기 전에 배치 전체를 거부합니다(배치 일부만 commit되고 결과가 사라지지 않게). op가 문자열이 아니거나 계약에 없으면 지금처럼 `rejected{schema}`입니다(2026-11-26, "PR #28 1차·2차").
 - **E7. 멱등 단위:** capture.commit·create는 엔터티 id 기준이고, 처음 payload의 `canonical_json` sha256을 행에 저장해 비교합니다(현재 행과 비교하면 뒤의 patch 때문에 거짓 `id_reuse`가 남). mutation_id가 달라도 내용이 같으면 `applied`(no-op)입니다. `from_hash`는 `text_hash()` 하나로 계산합니다.
-- **E8. #18 전의 x-text 충돌값:** 제출값을 동기화하지 않는 내부 `conflict_stash`에 보존합니다. #18이 ConflictRecord로 옮깁니다.
+- **E8. #18 전의 x-text 충돌값:** 제출값을 동기화하지 않는 내부 `conflict_stash`에 보존합니다. #18이 ConflictRecord로 옮깁니다. *(D24로 대체됨: `0011_conflict_records.sql`이 stash를 Mutation당 ConflictRecord 하나로 옮기고 테이블을 지웠습니다)*
 - **CAS가 먼저, schema는 마지막** (2026-11-27, "PR #30 1차"): patch는 키마다 CAS를 먼저 판정합니다. `rejected{schema}`는 모든 키의 `from`이 맞는데 결과 행이 계약을 깰 때만입니다. 행 적합성이 함께 걸린 키 묶음(`all_day`·`starts_at`·`due_at`)은 한 단위로 판정하고, 묶음 밖 키는 각자의 CAS대로 적용합니다. 진 키가 있는 patch에서 묶음 밖의 이긴 키가 혼자 행을 깨면 그 키만 충돌로 돌립니다(구현자 결정 받아들임).
 - **E15. 로컬 import:** NFC 파일명(다르면 `original_filename_raw`), cloud_policy 해석, Hub 자신의 `windows_hub` Device 행으로 payload를 만들고 같은 `apply()`를 부릅니다(#20 A7). import 한 번이 Capture 하나입니다. 파일명이 UTF-8로 인코딩되지 않으면 Blob을 저장하기 전에 그 파일을 거부합니다(2026-11-26, "PR #28 1차").
 - **E22.** `suggestion.accept`·`dismiss`는 이 적용기가 구현합니다(판정 지점 하나). `edits`의 `fields.<key>`가 kind 스키마에 맞는지, 제안에 있는 키인지는 적용기가 Suggestion을 읽고 판정해 `rejected{schema}`로 답합니다.
@@ -623,7 +623,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - Relation의 끝이나 commit `links[]`의 대상이 없거나 tombstone이면 `rejected{link_target_missing}`입니다. soft-delete된 Item은 있는 것으로 봅니다(2026-11-26 "PR #28 1차", Relation create까지 넓힌 것은 2026-11-27 "PR #30 1차").
 - 계약이 fields를 정하지 않은 kind의 Item create는 `rejected{schema}`입니다(2026-11-27, "PR3(#30) 범위 메모"에서 제안, "PR #30 1차"에서 받아들임). 이 아래 넷의 출처도 같습니다.
 - 지울 것이 없는 delete(이미 지워졌거나 없는 대상)는 `applied`입니다. 대상은 결국 없는 상태가 됩니다.
-- 없거나 soft-delete된 Item에 온 patch는 `rejected{deleted}`이고 제출값은 `conflict_stash`에 남깁니다. 없는 Item의 restore도 `rejected{deleted}`이며, 남길 값이 없으므로 stash하지 않습니다.
+- 없거나 soft-delete된 Item에 온 patch는 `rejected{deleted}`이고 제출값은 `conflict_stash`에 남깁니다. 없는 Item의 restore도 `rejected{deleted}`이며, 남길 값이 없으므로 stash하지 않습니다. *(D24로 대체됨: 제출값은 그 Mutation의 ConflictRecord에 남고 결과의 `conflict_record_ids`가 가리킵니다. `suggestion.accept`의 `rejected{deleted}`와 purge한 Item에 온 patch는 기록하지 않습니다)*
 - Tag를 지우면 그 Tag를 끝으로 가진 Relation도 tombstone이 됩니다.
 - 이미 `to` 값을 가진 키는 수렴으로 보고 `applied`로 답하며 아무것도 쓰지 않습니다(D18).
 - 한 commit 안에서 Attachment id가 겹치면 `rejected{schema}`입니다(2026-11-26, "PR #28 1차").
@@ -865,6 +865,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - 닫힌 `state` enum을 두지 않습니다. 기록을 닫는 새 방식은 `resolved` 안의 멤버(예: `resolved.how`)로 더하므로, 첫 배포 뒤에도 옛 클라이언트가 열림과 해소를 가립니다(D20). `set`도 `resolved`도 없는 제3의 상태는 허용하지 않습니다(옛 클라이언트가 열림·해소를 가를 수 없음).
   - 해소된 작은 행은 무기한 남아 중복을 막습니다. 90일 넘은 재전송은 CAS가 다시 `conflict`로 판정하되, `conflict_record_ids`에 기존 id를 싣고 기록을 다시 열지 않습니다.
   - 휴지통 만료는 열린 기록이 있는 Item을 건너뜁니다. 즉시 purge는 사용자의 명시적 파괴이므로 그 엔터티의 기록을 같은 트랜잭션에서 tombstone으로 만듭니다. 복구 없이 사라진 대상(Tag 등)의 열린 기록은 `set` 없는 `conflict.resolve`로 닫습니다.
+  - purge한 엔터티에 purge 뒤 도착한 patch는 다른 Mutation이어도 `rejected{deleted}`이고 기록을 쓰지 않습니다(`conflict_record_ids` 없음). Hub는 `purge_journal`의 대상 목록으로 그 엔터티가 purge됐음을 압니다. 한 번도 없던 엔터티(Hub가 모르는 Tag 등)에 온 patch는 지금처럼 기록합니다. 근거: 기록에 남기면 지운 글이 다시 purge할 수 없는 채로 되살아나 피드로 퍼집니다. 잃는 것은 purge한 대상에 대한 오프라인 편집이고, 클라이언트는 `rejected{deleted}`로 압니다. 버린 안: 기록을 남기고 `set` 없는 `conflict.resolve`로만 닫기(그사이 피드로 퍼짐). (오케스트레이터 결정, 2026-11-28, PR #71 리뷰)
   - 버린 안: 값 영구 보존(진 본문이 모든 캐시와 백업에 남음), 해소할 때 tombstone(91일 재전송이 되살림), 닫힌 `state` enum.
 - **해소 (#18 결정 3):** 전용 원자 op `conflict.resolve {mutation_id, op, conflict_record_id, entity, set?}`이고 한 트랜잭션입니다.
   1. 기록이 없거나 tombstone이면 `rejected{deleted}`이고 쓰지 않습니다.
@@ -898,6 +899,8 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **결과:**
 - 계약은 `schemas/conflict_record/conflict_record.json`, `sync/changes_page`의 conflict_record 행, `sync/request_headers`의 `CampusLife-Epoch`, `common/error`의 `epoch_changed`, `device/status`의 `rejected_mutation_count`, `campuslife_contracts.SENT_RETENTION_DAYS`이고, 하네스 규칙은 `HARNESS.md`의 "ConflictRecord"와 "HTTP 표면"에 있습니다. Hub는 `sync_envelope.py`가 기준 epoch을 판정합니다.
 - D3의 epoch 감지 문장, D18의 ConflictRecord·해소 문장, D20 E12의 409 문장, DOMAIN-MODEL의 ConflictRecord 행은 이 항목을 따릅니다.
+- 기록(#18 PR2): Hub의 `conflict_records.py`가 patch의 진 키와 지워진 대상에 온 patch의 키를 Mutation의 기록에 남기고(`user_data.py`), 즉시 purge가 그 엔터티의 기록을 tombstone으로 만듭니다(`purge.py`). purge된 대상에 온 patch는 `purge.purged_at`으로 가려 기록하지 않습니다. `0011_conflict_records.sql`이 `conflict_stash`를 옮깁니다. 열린 기록 수는 admin `/api/status`의 `conflicts.open`과 장치 화면에 나옵니다. `strictest_submitted_cloud_policy`는 #8의 ProviderGateway가 유효 정책을 계산할 때 읽습니다(결정 11).
+  - 이주한 기록의 키 순서는 canonical이 아닐 수 있습니다. SQL 이주(D21 E3)가 JSON 키를 정렬하지 못하기 때문이고, 값은 같으며 다음 쓰기가 canonical로 다시 씁니다.
 - 범위: 이 항목은 #18 PR1(계약과 경계)에서 적습니다. 기록 생성과 이주, 해소 op, 휴지통 만료, 시험용 모의 장치, Windows `/conflicts`, 클라이언트 규칙 문서(MULTI-DEVICE §3.2·§3.3·§8)는 #18의 뒤 PR입니다. 클라이언트 쪽(기준 epoch 헤더, 409 처리, 60일 보관, `rejected_mutation_count`)은 #3·#16이 구현합니다.
 
 ---

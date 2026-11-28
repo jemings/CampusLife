@@ -7,7 +7,7 @@
   "required": ["course_id"],
   "properties": {
     "course_id": { "description": "id of the course Item.", "$ref": "../../common/uuid.json" },
-    "due_text": { "description": "The deadline as originally worded, such as 23:59까지 (D11).", "type": "string", "minLength": 1 },
+    "due_text": { "description": "The deadline as originally worded, such as 23:59까지 (D11).", "$ref": "../../common/original_text.json" },
     "submission": { "description": "How to hand it in, as worded by the course.", "type": "string", "minLength": 1 }
   }
 }

@@ -68,7 +68,8 @@ OWNERS = {
         ["id", "artifact_type", "subject_ref", "job_key", "provider", "model", "prompt_version", "pipeline_version",
          "input_hashes", "content_blob", "created_at", "fetched"], HUB),
     "suggestion/suggestion": dict.fromkeys(
-        ["id", "source_artifact_id", "action", "proposed", "evidence", "fingerprint", "state", "conflicts_with"], HUB),
+        ["id", "source_artifact_id", "action", "proposed", "evidence", "fingerprint", "state", "conflicts_with",
+         "created_item_id"], HUB),
     "conflict_record/conflict_record": dict.fromkeys(["id", "entity_ref", "set", "resolved"], HUB),
     "capture/attachment": {
         "id": "client", "capture_id": "hub", "blob_sha256": "hub", "role": "client", "seq": "client",

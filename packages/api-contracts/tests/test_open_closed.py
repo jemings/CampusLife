@@ -151,10 +151,73 @@ def test_create_closes_exactly_the_members_of_each_kind(kind):
     assert names(MUTATION["closed_fields"][kind]) == names(schema(f"item/fields/{kind}"))
 
 
-def test_create_and_patch_know_the_same_kinds_as_the_item():
-    dispatched = {branch["if"]["$ref"].rsplit("/", 1)[1] for branch in MUTATION["closed_fields_of_kind"]["allOf"]}
-    patched = {ref.rsplit("/", 1)[1].removesuffix(".json") for ref in MUTATION["patch"]["x-set-targets"]["item"]["fields"]}
-    assert dispatched == patched == set(KINDS) == set(MUTATION["closed_fields"])
+MVP_KINDS = {"term", "course", "lecture_session", "note", "task", "assignment", "exam"}
+LATER_KINDS = {"event", "announcement", "opportunity", "organization"}
+"""#9 decision 8; person and place wait for a consumer."""
+
+
+def test_the_item_knows_the_mvp_and_the_later_kinds():
+    assert set(KINDS) == MVP_KINDS | LATER_KINDS
+
+
+def last_segment(ref):
+    return ref.rsplit("/", 1)[-1].removesuffix(".json")
+
+
+def dispatch(branches):
+    """kind -> the name its fields go to, from an allOf of `if kind_is/<kind> then fields $ref`."""
+    return {last_segment(b["if"]["$ref"]): last_segment(b["then"]["properties"]["fields"]["$ref"]) for b in branches}
+
+
+def listed(refs):
+    return {last_segment(ref): last_segment(ref) for ref in refs}
+
+
+KIND_PLACES = {
+    "item/fields/*.json": listed(path.name for path in (contract_root() / "schemas" / "item" / "fields").glob("*.json")),
+    "item kind_is": {kind: test["properties"]["kind"]["const"] for kind, test in ITEM["$defs"]["kind_is"].items()},
+    "item fields_of_kind": dispatch(ITEM["$defs"]["fields_of_kind"]["allOf"]),
+    "mutation closed_fields_of_kind": dispatch(MUTATION["closed_fields_of_kind"]["allOf"]),
+    "mutation closed_fields": {kind: last_segment(view["$ref"]) for kind, view in MUTATION["closed_fields"].items()},
+    "mutation patch x-set-targets": listed(MUTATION["patch"]["x-set-targets"]["item"]["fields"]),
+    "suggestion item_patch x-set-targets": listed(
+        schema("suggestion/suggestion")["$defs"]["item_patch"]["x-set-targets"]["item"]["fields"]
+    ),
+}
+"""Every place that names the known Item kinds, as kind -> the fields schema it means there."""
+
+
+@pytest.mark.parametrize("place", sorted(KIND_PLACES))
+def test_every_place_that_names_the_kinds_names_each_with_its_own_fields_schema(place):
+    """A kind missing from one place would leave its fields unchecked there: one list, checked in one test."""
+    assert KIND_PLACES[place] == {kind: kind for kind in KINDS}
+
+
+def fields_by_name():
+    """Each member name of the item/fields schemas -> {kind: its member node}."""
+    found = {}
+    for path in (contract_root() / "schemas" / "item" / "fields").glob("*.json"):
+        for name, member in read_strict(path).get("properties", {}).items():
+            found.setdefault(name, {})[path.stem] = member
+    return found
+
+
+SHARED_FIELDS = {name: defining for name, defining in fields_by_name().items() if len(defining) >= 2}
+"""Fields several kinds define, found rather than listed so a name becomes shared the moment a second kind uses it. A
+patch's fields.<key> passes when it fits any kind that defines the key (rule set_type), so one kind's looser copy would
+loosen the patch of every kind."""
+
+
+def test_the_shared_fields_include_the_ones_the_later_kinds_were_built_on():
+    assert {"category", "organization_id", "url", "course_id", "due_text"} <= set(SHARED_FIELDS)
+
+
+@pytest.mark.parametrize("name", sorted(SHARED_FIELDS))
+def test_a_field_several_kinds_share_is_one_definition_they_refer_to(name):
+    defining = SHARED_FIELDS[name]
+    assert len({member.get("$ref") for member in defining.values()}) == 1, defining
+    for kind, member in defining.items():
+        assert "$ref" in member and set(member) <= {"$ref", "description", "examples"}, kind
 
 
 def test_create_writes_the_relation_and_tag_columns_minus_the_id():
