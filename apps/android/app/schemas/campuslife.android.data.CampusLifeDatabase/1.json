@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "5f3fcca672ec9390f2a68b4cf59f80ff",
+    "identityHash": "f35369405672e78e81b51068e204fbfb",
     "entities": [
       {
         "tableName": "meta",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `hub_id` TEXT NOT NULL, `epoch` TEXT NOT NULL, `cursor` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `hub_id` TEXT NOT NULL, `epoch` TEXT NOT NULL, `cursor` INTEGER NOT NULL, `stopped` TEXT, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -31,6 +31,11 @@
             "columnName": "cursor",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "stopped",
+            "columnName": "stopped",
+            "affinity": "TEXT"
           }
         ],
         "primaryKey": {
@@ -301,7 +306,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '5f3fcca672ec9390f2a68b4cf59f80ff')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f35369405672e78e81b51068e204fbfb')"
     ]
   }
 }
