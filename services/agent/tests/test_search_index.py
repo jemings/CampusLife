@@ -180,7 +180,7 @@ async def test_a_changed_body_replaces_the_item_s_documents_and_a_touch_writes_n
 async def test_entities_the_index_does_not_know_or_hold_are_passed_over(db, device, blob_store, tmp_path, index):
     def unknown_row(tx):
         (rev,) = tx.execute("UPDATE hub_state SET change_seq = change_seq + 1 RETURNING change_seq").fetchone()
-        tx.execute("INSERT INTO sync_index (entity, id, rev, deleted) VALUES ('conflict_record', ?, ?, 0)", (new_id(), rev))
+        tx.execute("INSERT INTO sync_index (entity, id, rev, deleted) VALUES ('later_entity', ?, ?, 0)", (new_id(), rev))
 
     await db.write(unknown_row)
     await apply(db, device, {"mutation_id": new_id(), "op": "create", "entity": "tag", "id": new_id(), "data": {"name": "시험범위"}})
