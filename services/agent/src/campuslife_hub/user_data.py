@@ -152,35 +152,46 @@ def _with_changes(row: dict, changes: dict[str, dict], keys: Iterable[str]) -> d
 
 
 def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
-    """Per-key compare-and-set (D18): a key wins when the row still holds its from, or already holds its to.
-
-    When every key won, a row a client could not create means the client broke the contract: schema. When a key
-    lost, it holds back the rest of its BOUND_KEYS group, a group or key that would leave such a row on its own
-    is held back too, and the others are written; held-back keys count as conflicted. So beside a key that lost,
-    a key that breaks the row on its own shows as a conflict; resent with current froms, it shows as schema.
-    Every conflicted key, and every key sent to an entity that is not live, is kept in the Mutation's ConflictRecord (D24),
-    except for an entity a purge removed: the user destroyed it, and its text does not come back (D24 decision 2).
+    """A client's patch: compare-and-set on a live entity (_compare_and_set). Every key sent to an entity that is not
+    live is kept in the Mutation's ConflictRecord (D24), except for an entity a purge removed: the user destroyed it,
+    and its text does not come back (D24 decision 2).
     """
     ref = EntityRef(Entity(mutation["entity"]), mutation["id"])
     if ref.entity not in PATCHABLE:
         return Rejected(Reason.UNSUPPORTED_ENTITY)
     changes: dict[str, dict] = mutation["set"]
-    if not all(_is_canonical_text(change["to"]) for change in changes.values() if "from_hash" in change):
+    if not _all_canonical(changes):
         return Rejected(Reason.NOT_CANONICAL)
     row = live(tx, ref)
     if row is None and purge.purged_at(tx, ref) is not None:
         return Rejected(Reason.DELETED)
     if row is None:
         return Rejected(Reason.DELETED, conflict_records.keep(tx, mutation["mutation_id"], ref, changes, changes))
+    return _compare_and_set(tx, ref, row, mutation["mutation_id"], changes)
+
+
+def _all_canonical(changes: dict[str, dict]) -> bool:
+    return all(_is_canonical_text(change["to"]) for change in changes.values() if "from_hash" in change)
+
+
+def _compare_and_set(tx: Tx, ref: EntityRef, row: dict, mutation_id: str, changes: dict[str, dict]) -> Outcome:
+    """Per-key compare-and-set (D18): a key wins when the row still holds its from, or already holds its to.
+
+    When every key won, a row a client could not create means the client broke the contract: schema. When a key
+    lost, it holds back the rest of its BOUND_KEYS group, a group or key that would leave such a row on its own
+    is held back too, and the others are written; held-back keys count as conflicted. So beside a key that lost,
+    a key that breaks the row on its own shows as a conflict; resent with current froms, it shows as schema.
+    Every conflicted key is kept in the ConflictRecord of mutation_id (D24).
+    """
     lost = {key for key, change in changes.items() if _value(row, key) != change["to"] and not _holds_from(_value(row, key), change)}
     if lost:
         standing = {
             key
             for unit in _units(changes)
-            if lost.isdisjoint(unit) and could_be_created(ref.entity, _with_changes(row, changes, unit), mutation["mutation_id"])
+            if lost.isdisjoint(unit) and could_be_created(ref.entity, _with_changes(row, changes, unit), mutation_id)
             for key in unit
         }
-    elif could_be_created(ref.entity, _with_changes(row, changes, changes), mutation["mutation_id"]):
+    elif could_be_created(ref.entity, _with_changes(row, changes, changes), mutation_id):
         standing = set(changes)
     else:
         return Rejected(Reason.SCHEMA)
@@ -191,7 +202,37 @@ def patch(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
         store.write(tx, ref, updated)
     if not conflicted:
         return Applied(applied)
-    return Conflict(applied, conflicted, conflict_records.keep(tx, mutation["mutation_id"], ref, changes, conflicted))
+    return Conflict(applied, conflicted, conflict_records.keep(tx, mutation_id, ref, changes, conflicted))
+
+
+def resolve(tx: Tx, mutation: dict, device: DeviceId) -> Outcome:
+    """conflict.resolve (D24 decision 3): set, when sent, then the record resolved, in one transaction.
+
+    A record that is gone, tombstoned by a purge with its entity included, refuses as deleted. set is a patch of the
+    record's entity and entity names it; another entity makes the Mutation malformed. A refused set resolves
+    nothing; keys of set that lose are kept in a record of this Mutation's own. A resolved record stays resolved.
+    """
+    record = store.get(tx, EntityRef(Entity.CONFLICT_RECORD, mutation["conflict_record_id"]))
+    if record is None:
+        return Rejected(Reason.DELETED)
+    ref = conflict_records.target(record)
+    if ref.entity.value != mutation["entity"]:
+        return Rejected(Reason.SCHEMA)
+    outcome = _patch_resolving(tx, ref, mutation) if "set" in mutation else Applied()
+    if not isinstance(outcome, Rejected):
+        conflict_records.resolve(tx, record, mutation["mutation_id"], device)
+    return outcome
+
+
+def _patch_resolving(tx: Tx, ref: EntityRef, mutation: dict) -> Outcome:
+    """A resolve's set, judged in a client's patch order; sent to an entity that is not live it keeps nothing."""
+    changes: dict[str, dict] = mutation["set"]
+    if not _all_canonical(changes):
+        return Rejected(Reason.NOT_CANONICAL)
+    row = live(tx, ref)
+    if row is None:
+        return Rejected(Reason.DELETED)
+    return _compare_and_set(tx, ref, row, mutation["mutation_id"], changes)
 
 
 def _delete_item(tx: Tx, ref: EntityRef) -> Outcome:

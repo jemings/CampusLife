@@ -20,7 +20,7 @@ from .db import Database, Tx
 from .devices import DeviceId
 from .outcomes import Outcome, Reason, Rejected, outcome_json
 from .suggestions import accept, dismiss
-from .user_data import create, delete, patch, restore
+from .user_data import create, delete, patch, resolve, restore
 
 REASON_BY_RULE: dict[Rule, Reason] = {Rule.NFC: Reason.NOT_CANONICAL, Rule.OWNER: Reason.OWNER}
 """Rules with a reason of their own; every other violation, and any rule added later, is schema."""
@@ -57,6 +57,7 @@ HANDLERS: dict[str, Handler] = {
     "restore": restore,
     "suggestion.accept": accept,
     "suggestion.dismiss": dismiss,
+    "conflict.resolve": resolve,
 }
 
 CONTRACT_OPS = frozenset(
