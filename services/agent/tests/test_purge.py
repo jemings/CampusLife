@@ -84,8 +84,8 @@ async def lecture(db, device, blob_store, tmp_path) -> Lecture:
     summary = await made(db, blob_store, tmp_path, "summarize", f"artifact:{transcript['id']}", [transcript["content_blob"]], b"summary")
     audio_notes = await made(db, blob_store, tmp_path, "transcribe", f"attachment:{audio_attachment}", [audio], b"spoken words")
     assignment = {"kind": "task", "title": "과제 2", "fields": {"progress": "inbox"}}
-    suggestion = await db.write(lambda tx: suggestions_propose(tx, summary["id"], assignment, [page_at(pdf)], "a"))
-    kept_suggestion = await db.write(lambda tx: suggestions_propose(tx, audio_notes["id"], {**assignment, "title": "복습"}, [], "b"))
+    suggestion = await db.write(lambda tx: suggestions_propose(tx, summary["id"], assignment, [page_at(pdf)]))
+    kept_suggestion = await db.write(lambda tx: suggestions_propose(tx, audio_notes["id"], {**assignment, "title": "복습"}, []))
     assert (await apply(db, device, {"mutation_id": new_id(), "op": "suggestion.accept", "suggestion_id": suggestion["id"]}))[0]["result"] == "applied"
     [item] = [row["id"] for row in await feed(db) if row["entity"] == "item" and row["data"]["title"] == "과제 2"]
     note_id, create_note = note(summary["id"])
@@ -100,10 +100,10 @@ async def lecture(db, device, blob_store, tmp_path) -> Lecture:
                    kept_suggestion, item, note_id, kept_note_id)
 
 
-def suggestions_propose(tx, artifact_id, proposed, evidence, fingerprint):
+def suggestions_propose(tx, artifact_id, proposed, evidence):
     from campuslife_hub import suggestions
 
-    return suggestions.propose(tx, artifact_id, "create_item", proposed, evidence, fingerprint * 64)
+    return suggestions.propose(tx, artifact_id, "create_item", proposed, evidence)
 
 
 def live(changes, entity):
