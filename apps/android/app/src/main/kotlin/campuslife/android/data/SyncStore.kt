@@ -64,7 +64,7 @@ class SyncStore(
         db.syncMeta().setStopped(reason)
     }
 
-    /** The user acted on a stop, as by pairing again or updating the app: the next pass asks the Hub again. */
+    /** The user acted on a stop, as by pairing again, or the stop no longer holds: the next pass asks the Hub again. */
     fun resume() {
         db.syncMeta().setStopped(null)
     }

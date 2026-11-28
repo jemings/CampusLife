@@ -42,7 +42,7 @@ sealed interface SyncOutcome {
     /** The Hub has not seen this Device for its dormant period; it syncs again once approved on the Hub (D23). */
     data object Dormant : SyncOutcome
 
-    /** The Hub does not know the token: pair again. */
+    /** The Hub does not take the token: the next pass tries again, as with a newer token; pair again if it keeps refusing. */
     data object Unauthorized : SyncOutcome
 
     /** The Device was revoked: pair again as a new Device. */
@@ -73,10 +73,15 @@ class SyncEngine(
 
     /**
      * [allowLarge]: the network is unmetered, or the user lets large Blobs go over any network. An outcome only the
-     * user can mend is kept, and later passes answer with it without asking the Hub until [SyncStore.resume].
+     * user can mend is kept, and later passes answer with it without asking the Hub until [SyncStore.resume]. A kept
+     * reason this app does not write, as contract_too_old under another contract version, is dropped instead.
      */
     fun run(allowLarge: Boolean): SyncOutcome = passing.withLock {
-        store.standing()?.stopped?.let { stopped -> return@withLock STOPS.entries.first { it.value == stopped }.key }
+        val stopped = store.standing()?.stopped
+        if (stopped != null) {
+            STOPS.entries.firstOrNull { it.value == stopped }?.let { return@withLock it.key }
+            store.resume()
+        }
         val outcome = try {
             Pass(allowLarge).run()
         } catch (stop: Stop) {
@@ -325,12 +330,14 @@ class SyncEngine(
 
         const val UPLOAD_ROUNDS = 2
 
-        /** What [SyncStore.stop] keeps for each outcome only the user can mend. */
+        /**
+         * What [SyncStore.stop] keeps for each outcome only the user can mend. Unauthorized is not one: a task made
+         * with a token since replaced gets it, and the next pass with the new token goes through (#19).
+         */
         val STOPS = mapOf(
-            SyncOutcome.Unauthorized to ErrorCode.UNAUTHORIZED.value,
             SyncOutcome.Revoked to ErrorCode.DEVICE_REVOKED.value,
             SyncOutcome.WrongHub to "wrong_hub",
-            SyncOutcome.ContractTooOld to ErrorCode.CONTRACT_TOO_OLD.value,
+            SyncOutcome.ContractTooOld to "${ErrorCode.CONTRACT_TOO_OLD.value}:$CONTRACT_VERSION",
         )
 
         /** Refusals besides 401 that speak for every request of the pass, whichever operation drew them. */

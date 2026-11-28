@@ -28,7 +28,7 @@ interface SyncSchedule {
     /** Blobs over [LARGE_BLOB_BYTES] wait: a pass once the device is on an unmetered network (D7). */
     fun requestLarge()
 
-    /** The sync stopped until the user acts: no pass runs by itself until then. */
+    /** The pass needs the user or a newer token: no pass runs by itself until the app or the user asks for one. */
     fun stopUntilUserActs()
 }
 
