@@ -364,12 +364,12 @@ def _surface(suggestion: dict) -> dict[str, object]:
 
 
 def edits_from(form: FormData, surface: dict[str, object]) -> dict[str, object]:
-    """The keys whose field the user changed, with their new values. An emptied field is null; text in place of text
-    stays text, and other text is JSON when it reads as JSON."""
+    """Each key's field as the form sends it. An empty field is null; text in place of text stays text, and other text
+    is JSON when it reads as JSON. A field left as the page drew it gives the value proposed."""
     edits = {}
     for key, proposed in surface.items():
         sent = form.get(f"edit.{key}")
-        if sent is None or normalized(str(sent)) == normalized(_shown(proposed)):
+        if sent is None:
             continue
         text = normalized(str(sent))
         if text == "":
