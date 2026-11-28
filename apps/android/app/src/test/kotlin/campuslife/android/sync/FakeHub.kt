@@ -59,6 +59,9 @@ class FakeHub(
     val statuses = mutableListOf<JsonObject>()
     val stored = mutableMapOf<String, ByteArray>()
     var token = TOKEN
+
+    /** The token POST /v1/devices/me/token gave last; its first use makes it [token] and ends the one before (D23). */
+    var pendingToken: String? = null
     var minContractVersion = 1L
     var storageFull = false
 
@@ -69,6 +72,7 @@ class FakeHub(
     private val results = mutableMapOf<String, JsonObject>()
     private val rows = linkedMapOf<Pair<String, String>, Row>()
     private var seq = 0L
+    private var reissues = 0
     private val overrides = mutableListOf<Pair<(Asked) -> Boolean, (Request) -> Response>>()
 
     /** The next request [match] takes is answered by [answer], which may throw to cut the connection. */
@@ -127,7 +131,12 @@ class FakeHub(
         if (asked.headers["CampusLife-Contract"] != "1") return refusal(request, 400, "invalid_request")
         if (asked.path == "/v1/pair") return pair(request, asked)
         refuseToken?.let { return refusal(request, 401, it) }
-        if (asked.headers["Authorization"] != "Bearer $token") return refusal(request, 401, "unauthorized")
+        val bearer = asked.headers["Authorization"]?.takeIf { it.startsWith("Bearer ") }?.removePrefix("Bearer ")
+        if (bearer != null && bearer == pendingToken) {
+            token = bearer
+            pendingToken = null
+        }
+        if (bearer != token) return refusal(request, 401, "unauthorized")
         if (asked.path == "/v1/changes" || asked.path == "/v1/mutations") {
             val base = asked.headers["CampusLife-Epoch"]
             if (base == null || !EPOCH_FORM.matches(base)) return refusal(request, 400, "invalid_request")
@@ -150,6 +159,14 @@ class FakeHub(
             asked.method == "POST" && parts.size == 5 && parts[4] == "finalize" -> finish(request, parts[3])
             asked.method == "POST" && asked.path == "/v1/mutations" -> mutations(request, asked.text())
             asked.method == "GET" && asked.path == "/v1/changes" -> changes(request, asked.query.getValue("since").toLong(), asked.query.getValue("limit").toInt())
+            asked.method == "POST" && asked.path == "/v1/devices/me/token" -> {
+                val issued = "$TOKEN-${++reissues}"
+                pendingToken = issued
+                ok(request, 200, buildJsonObject {
+                    put("device_id", DEVICE_ID)
+                    put("token", issued)
+                })
+            }
             asked.method == "POST" && asked.path == "/v1/devices/me/status" -> {
                 statuses += asked.json()
                 empty(request, 204)

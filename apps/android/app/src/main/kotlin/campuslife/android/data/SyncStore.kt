@@ -57,6 +57,20 @@ class SyncStore(
     }
 
     /**
+     * The user confirmed pairing with a Hub other than the one this store synced with (decision B): the meta and the
+     * cache go, and so do the Mutations the previous Hub answered; those it refused go to the new Hub with the unsent.
+     * The next pass takes the new Hub's epoch as the base epoch.
+     */
+    fun changeHub(): Unit = db.inTransaction {
+        db.syncMeta().clear()
+        db.cache().clear()
+        db.outbox().removeIn(listOf(TransferState.ACKED.column, TransferState.PULLING.column, TransferState.SETTLED.column))
+        for (row in db.outbox().inState(TransferState.REJECTED.column)) {
+            db.outbox().requeue(row.seq, TransferState.REJECTED.after(OutboxEvent.HUB_CHANGED).column)
+        }
+    }
+
+    /**
      * Keeps why the sync stopped until the user acts; passes answer with it and ask the Hub nothing until [resume].
      * Before the first GET /v1/hub there is no standing to keep it with, so nothing is kept.
      */

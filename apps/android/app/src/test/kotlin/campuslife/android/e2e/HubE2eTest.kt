@@ -19,6 +19,7 @@ import campuslife.android.sync.SyncEngine
 import campuslife.android.sync.SyncOutcome
 import campuslife.wire.AttachmentRole
 import campuslife.wire.CloudPolicy
+import campuslife.wire.ErrorCode
 import campuslife.wire.ItemData
 import campuslife.wire.ItemKind
 import campuslife.wire.MutationOutcome
@@ -41,6 +42,7 @@ import okio.BufferedSink
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -80,7 +82,7 @@ class HubE2eTest {
 
     /** One pairing secret pairs once, so this is one walk through the decision 4 steps and then a stale epoch. */
     @Test
-    fun `a phone pairs, uploads a capture across a cut mid-chunk, commits it once, reads it back and follows an epoch change`() {
+    fun `a phone pairs, uploads a capture across a cut mid-chunk, commits it once, reads it back, follows an epoch change and reissues its token`() {
         val paired = Pairing().pair(url, PairRequest(offer.secret, Platform.ANDROID, "e2e phone", APP_VERSION), expectedHubId = offer.hubId)
         val course = items.create(ItemData(kind = ItemKind.COURSE, title = "자료구조", fields = JsonObject(emptyMap())))
         val capture = captures.open(Origin(OriginType.CAMERA))
@@ -123,6 +125,11 @@ class HubE2eTest {
         assertEquals(TransferState.SETTLED.column, commitOf(capture).state)
         assertEquals(listOf(chunk(large, 1), chunk(small, 0)), puts)
         assertFed(course, capture)
+
+        val reissued = (hub.reissue() as Answer.Ok).value
+        assertEquals(paired.deviceId, reissued.deviceId)
+        assertTrue(HubClient(url, paired.hubId, reissued.token, HubHttp.client()).hub() is Answer.Ok)
+        assertEquals(ErrorCode.UNAUTHORIZED, (hub.hub() as Answer.Refused).code)
     }
 
     private fun commitOf(captureId: String) =

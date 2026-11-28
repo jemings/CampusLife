@@ -145,6 +145,37 @@ class SyncStoreTest {
     }
 
     @Test
+    fun `a confirmed change of Hub forgets what the previous Hub answered and sends the new one what it refused`() {
+        val settled = create("settled")
+        answer(settled, MutationOutcome.APPLIED)
+        sync.beginPull()
+        sync.applyPage(lastPage(cursor = 3))
+        val pulling = create("pulling")
+        answer(pulling, MutationOutcome.APPLIED)
+        sync.beginPull()
+        val acked = create("acked")
+        answer(acked, MutationOutcome.APPLIED)
+        val refused = create("refused")
+        answer(refused, MutationOutcome.REJECTED)
+        val waiting = create("waiting")
+        val held = commitOf(sealedCapture(ABC))
+        db.cache().put(CachedRow("item", "x", 1, "{}"))
+        sync.stop("wrong_hub")
+
+        sync.changeHub()
+
+        assertNull(sync.standing())
+        assertNull(db.cache().get("item", "x"))
+        for (gone in listOf(settled, pulling, acked)) assertNull(gone, db.outbox().byMutationId(gone))
+        val resent = db.outbox().byMutationId(refused)!!
+        assertEquals(listOf(TransferState.PENDING.column, null), listOf(resent.state, resent.result))
+        assertEquals(TransferState.HELD.column, db.outbox().byMutationId(held)?.state)
+        assertEquals(listOf(refused, waiting), sync.nextBatch().map { it.mutationId })
+        sync.knowHub(OTHER_HUB_ID, EPOCH_2)
+        assertEquals(SyncMeta(hubId = OTHER_HUB_ID, epoch = EPOCH_2, cursor = 0), sync.standing())
+    }
+
+    @Test
     fun `an answered Mutation is forgotten SENT_RETENTION_DAYS after its answer, a capture commit is kept`() {
         val edit = create("edit")
         val capture = sealedCapture(ABC)
@@ -219,6 +250,7 @@ class SyncStoreTest {
         const val HUB_ID = "8a1d6f0e-3c2b-4e5f-9a7b-1c2d3e4f5a6b"
         const val EPOCH = "0d9c8b7a-6f5e-4d3c-8b2a-1f0e9d8c7b6a"
         const val EPOCH_2 = "1e2d3c4b-5a69-4788-9a0b-c1d2e3f4a5b6"
+        const val OTHER_HUB_ID = "9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a"
         const val ABC = "abc"
         const val ABC_SHA = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         const val NIST_448 = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"

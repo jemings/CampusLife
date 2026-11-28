@@ -38,11 +38,15 @@ class TransferTableTest {
     }
 
     @Test
-    fun `only a changed epoch takes a row out of settled or rejected`() {
-        for (event in events - OutboxEvent.EPOCH_CHANGED) {
-            assertEquals("$event", SETTLED, SETTLED.after(event))
-            assertEquals("$event", REJECTED, REJECTED.after(event))
-        }
+    fun `only a changed epoch takes a row out of settled, and only it or a changed Hub out of rejected`() {
+        for (event in events - OutboxEvent.EPOCH_CHANGED) assertEquals("$event", SETTLED, SETTLED.after(event))
+        for (event in events - OutboxEvent.EPOCH_CHANGED - OutboxEvent.HUB_CHANGED) assertEquals("$event", REJECTED, REJECTED.after(event))
+    }
+
+    @Test
+    fun `a changed Hub sends the rejected to it and moves no other row`() {
+        assertEquals(PENDING, REJECTED.after(OutboxEvent.HUB_CHANGED))
+        for (state in blobStates + outboxStates - REJECTED) assertEquals("$state", state, state.after(OutboxEvent.HUB_CHANGED))
     }
 
     @Test

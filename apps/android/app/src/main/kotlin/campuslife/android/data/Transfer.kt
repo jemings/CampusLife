@@ -73,6 +73,9 @@ enum class OutboxEvent : TransferEvent {
 
     /** The Hub answered 409 epoch_changed: a Mutation it answered before goes to it again (D24). */
     EPOCH_CHANGED,
+
+    /** The device paired with another Hub: a Mutation the previous Hub refused goes to the new one (decision B). */
+    HUB_CHANGED,
 }
 
 /** The one table every transfer row moves by; a pair it does not list leaves the row where it is. */
@@ -101,4 +104,5 @@ val TRANSITIONS: Map<Pair<TransferState, TransferEvent>, TransferState> = mapOf(
     (PULLING to OutboxEvent.EPOCH_CHANGED) to PENDING,
     (SETTLED to OutboxEvent.EPOCH_CHANGED) to PENDING,
     (REJECTED to OutboxEvent.EPOCH_CHANGED) to PENDING,
+    (REJECTED to OutboxEvent.HUB_CHANGED) to PENDING,
 )

@@ -28,6 +28,9 @@ interface SyncMetaDao {
     @Query("SELECT * FROM meta")
     fun get(): SyncMeta?
 
+    @Query("DELETE FROM meta")
+    fun clear()
+
     @Query("UPDATE meta SET cursor = :cursor WHERE id = 0")
     fun setCursor(cursor: Long): Int
 
