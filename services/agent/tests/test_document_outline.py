@@ -96,3 +96,26 @@ def test_a_heading_cut_at_the_limit_opens_no_section():
     assert outline.result.blocks == [
         {"block_type": "heading", "text": "제목입", "refs": [{"kind": "doc_path", "heading_path": [], "block_index": 0}], "payload": {"level": 1}}
     ]
+
+
+def test_an_empty_heading_is_left_out_and_closes_nothing():
+    outline = Outline(Limits())
+    outline.heading(1, "장")
+    outline.heading(2, "절")
+
+    assert outline.heading(1, " \t ")
+    outline.block("paragraph", "본문")
+
+    assert [(block["block_type"], block["refs"][0]["heading_path"]) for block in outline.result.blocks] == [
+        ("heading", []), ("heading", ["장"]), ("paragraph", ["장", "절"]),
+    ]
+
+
+def test_a_heading_longer_than_a_block_is_cut_and_names_its_section_as_cut():
+    outline = Outline(Limits(max_block_text_chars=3))
+
+    assert outline.heading(1, "제목입니다")
+    outline.block("paragraph", "본문")
+
+    assert [(block["text"], block["refs"][0]["heading_path"]) for block in outline.result.blocks] == [("제목입", []), ("본문", ["제목입"])]
+    assert not outline.result.partial

@@ -97,7 +97,9 @@ def write(path, data):
         (lambda path: cfb_writer.write(path, {"FileHeader": b"HWP Document File", "BodyText": {"Section0": b"s"}}), "application/x-hwp"),
         (lambda path: cfb_writer.write(path, {"__substg1.0_0037001F": b"m"}), formats.CFB),
         (lambda path: write(path, b"\x00" * 1019 + b"%PDF-1.7\n"), formats.PDF),
-        (lambda path: write(path, b"junk before the header\r\n%PDF-1.4\n"), formats.PDF),
+        (lambda path: write(path, b"junk before the header\r\n%PDF-1.4\n%\xe2\xe3\xcf\xd3\n" + bytes(range(256))), formats.PDF),
+        (lambda path: write(path, b"junk before the header\r\n%PDF-1.4\n"), formats.TEXT),
+        (lambda path: cfb_writer.write(path, {"WordDocument": b"w", "Workbook": b"b"}), "application/msword"),
         (lambda path: write(path, "# 제목\n본문".encode()), formats.TEXT),
         (lambda path: write(path, codecs.BOM_UTF16_LE + "본문".encode("utf-16-le")), formats.TEXT),
         (lambda path: write(path, "한글 문서".encode("cp949")), formats.TEXT),
@@ -126,10 +128,11 @@ def test_identify_reads_the_family_from_the_bytes(tmp_path, make_file, media_typ
     [
         (make.encrypted_ooxml, Status.PASSWORD_REQUIRED),
         (lambda path: cfb_writer.write(path, {"\x06DataSpaces": {"Version": b"v"}}), Status.PASSWORD_REQUIRED),
+        (lambda path: cfb_writer.write(path, {"WordDocument": b"w", "\x06DataSpaces": {"Version": b"v"}}), Status.PASSWORD_REQUIRED),
         (make.traversal, Status.UNSAFE_INPUT),
         (lambda path: write(path, cfb_writer.MAGIC + bytes(600)), Status.CORRUPT),
     ],
-    ids=["encrypted_package", "data_spaces", "traversal", "damaged_cfb"],
+    ids=["encrypted_package", "data_spaces", "encrypted_beside_a_word_stream", "traversal", "damaged_cfb"],
 )
 def test_identify_refuses_an_encrypted_office_file_a_dangerous_archive_and_a_damaged_container(tmp_path, make_file, status):
     with pytest.raises(Refused) as refused:
@@ -144,6 +147,16 @@ def test_a_word_document_whose_text_says_encrypted_package_is_a_word_document(tm
     path = cfb_writer.write(tmp_path / "input", {"WordDocument": text * 300, "1Table": text})
 
     assert sniff.identify(path, Limits()) == "application/msword"
+
+
+@pytest.mark.parametrize(
+    "data",
+    ["# PDF 파일 구조\n\nPDF 파일은 %PDF-1.7 으로 시작합니다.\n".encode(), b"def is_pdf(data):\n    return data.startswith(b'%PDF-')\n"],
+    ids=["markdown_note", "python_code"],
+)
+def test_text_that_mentions_the_pdf_header_is_text(tmp_path, data):
+    """A PDF header after other bytes counts only when those bytes are no text: a note or code about PDF is text."""
+    assert sniff.identify(write(tmp_path / "input", data), Limits()) == formats.TEXT
 
 
 @pytest.mark.parametrize("offset", [1020, 4000])

@@ -2,6 +2,7 @@ from dataclasses import replace
 
 import pytest
 
+from campuslife_hub.extract import sniff
 from campuslife_hub.extract.extractors import ALL, TEXT, Extractor
 from campuslife_hub.extract.fakes import PagedLimits, fake
 from campuslife_hub.extract.limits import DEFAULT_LIMITS, IDENTIFY_LIMITS, RENDITION_LIMITS, Limits
@@ -80,6 +81,12 @@ def test_an_extractor_and_a_converter_start_from_their_own_default_limits():
     assert fake("pdf", {"text/csv": {}}, kind="render").limits is RENDITION_LIMITS
 
 
+def test_identify_reads_by_the_second_version_of_its_rules():
+    """Version 2: a compound file by its root entries, a PDF header within 1024 bytes."""
+    assert sniff.VERSION == "2"
+    assert default_registry().pipeline("identify").version == f"identify-2+L{IDENTIFY_LIMITS.hash8()}"
+
+
 def test_the_default_table_keeps_the_hash_it_had_before_tables_had_types():
     """text keeps VERSION 1 through the Outline move, so its pipeline must not change with the table's JSON."""
     assert DEFAULT_LIMITS.hash8() == IDENTIFY_LIMITS.hash8() == "92874ddf"
@@ -94,7 +101,10 @@ def test_an_extractors_own_limits_type_keeps_its_bounds_through_json():
 
 @pytest.mark.parametrize(
     "type_name",
-    ["os:PathLike", "campuslife_hub.extract.extractors:Extractor", "campuslife_hub.extract.limits:nothing", "campuslife_hub.pipelines:Limits"],
+    [
+        "os:PathLike", "campuslife_hub.extract.extractors:Extractor", "campuslife_hub.extract.limits:nothing", "campuslife_hub.pipelines:Limits",
+        "campuslife_hub.extract.extractors:Limits", "campuslife_hub.extract.no_such_module:Limits", "",
+    ],
 )
 def test_limits_from_json_take_only_a_limits_type_of_the_extractor_package(type_name):
     with pytest.raises(ValueError):

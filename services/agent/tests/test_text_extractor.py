@@ -166,3 +166,9 @@ def test_a_character_cut_where_the_reading_stops_is_left_out_not_replaced(tmp_pa
 
     assert [block["text"] for block in result.blocks] == ["a"]
     assert (result.partial, result.warnings) == (True, ["limit_reached"])
+
+
+def test_a_markdown_heading_longer_than_a_block_is_cut(tmp_path):
+    result = extracted(tmp_path, "# 아주 긴 제목입니다\n본문\n".encode(), limits=Limits(max_block_text_chars=5))
+
+    assert places(result) == [("heading", "아주 긴 제", [], 0), ("paragraph", "본문", ["아주 긴 제"], 0)]

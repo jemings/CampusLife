@@ -10,6 +10,7 @@ import pytest
 from extract_harness import TEST_LIMITS, hub_with
 from test_capture_commit import blob_store, device
 
+from campuslife_hub.extract import formats
 from campuslife_hub.extract.extractors import TEXT
 from campuslife_hub.extract.fakes import fake
 from campuslife_hub.extract.framework import IDENTIFY, RULES_CHANGED, can_read
@@ -149,3 +150,61 @@ async def test_the_runner_catches_up_when_it_starts(db, device, blob_store, tmp_
 
     async with asyncio.timeout(60):
         await asyncio.gather(after.runner.run_forever(stop, idle_s=0.05), read_then_stop())
+
+
+async def test_a_catch_up_that_fails_leaves_the_jobs_running_and_runs_again_at_the_next_start(db, device, blob_store, tmp_path, monkeypatch):
+    """T1: one file the catch-up cannot plan does not stop the Hub's processing, and the readers are not recorded."""
+    await read_by(db, blob_store, device, tmp_path, TEXT)
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, ECHO, base=())
+
+    def broken(self, tx, registry):
+        raise RuntimeError("a file the catch-up cannot plan")
+
+    monkeypatch.setattr(type(after.files), "_catch_up", broken)
+    await after.capture(("b.txt", b"another note"))
+    stop = asyncio.Event()
+
+    async def read_then_stop():
+        while not [job for job in await after.jobs("extract.fake_echo") if job.state is JobState.SUCCEEDED]:
+            await asyncio.sleep(0.05)
+        stop.set()
+
+    async with asyncio.timeout(60):
+        await asyncio.gather(after.runner.run_forever(stop, idle_s=0.05), read_then_stop())
+    monkeypatch.undo()
+
+    assert await hub_with(db, blob_store, device, tmp_path, TEXT, ECHO, base=()).runner.catch_up() == 1
+
+
+@pytest.mark.parametrize(("kind", "job_type"), [("extract", "extract.fake_echo"), ("render", "render.fake_convert")])
+async def test_a_reader_that_reads_another_type_of_bytes_it_read_reads_them_as_that_type(db, device, blob_store, tmp_path, kind, job_type):
+    """T2: the same Blob as a .txt and a .md; a reader that read it as plain text and now reads Markdown too reads it
+    as Markdown, with Markdown's params."""
+    name = "pdf" if kind == "render" else "echo"
+    plain = fake(name, {"text/plain": {"as": "plain"}}, extractor_id="fake_convert" if kind == "render" else None, kind=kind)
+    both = fake(name, {"text/plain": {"as": "plain"}, "text/markdown": {"as": "markdown"}}, extractor_id=plain.id, kind=kind)
+    hub = hub_with(db, blob_store, device, tmp_path, TEXT, plain, base=())
+    await hub.runner.catch_up()
+    await hub.capture(("a.txt", NOTES), ("a.md", NOTES))
+    await hub.settle()
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, both, base=())
+
+    assert await after.runner.catch_up() == 1
+
+    assert [job.params for job in await after.jobs(job_type)] == [{"as": "plain"}, {"as": "markdown"}]
+
+
+async def test_a_type_the_format_table_gained_is_read_by_the_reader_of_it(db, device, blob_store, tmp_path, monkeypatch):
+    """The readers stay; the format table now names a type by the file's extension, so refine picks a reader it did
+    not before."""
+    notes = fake("echo", {"text/x-notes": {}})
+    hub, _ = await read_by(db, blob_store, device, tmp_path, TEXT, notes)
+    await hub.capture(("a.notes", b"plain words"))
+    await hub.settle()
+    assert await hub.jobs("extract.fake_echo") == []
+    gained = formats.Format("text/x-notes", formats.TEXT, (".notes",))
+    monkeypatch.setattr(formats, "FORMATS", (*formats.FORMATS, gained))
+    monkeypatch.setattr(formats, "BY_MEDIA_TYPE", {**formats.BY_MEDIA_TYPE, gained.media_type: gained})
+    monkeypatch.setattr(formats, "BY_EXTENSION", {**formats.BY_EXTENSION, ".notes": gained})
+
+    assert await hub_with(db, blob_store, device, tmp_path, TEXT, notes, base=()).runner.catch_up() == 1
