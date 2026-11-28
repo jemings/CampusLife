@@ -42,6 +42,7 @@ from ..jobs import Failed, Finished, Job, JobSpec, OutcomeCode, Pipeline, Succee
 from ..store import Entity, EntityRef
 from . import bodies, sniff
 from .extractors import Extractor
+from . import formats
 from .formats import refine
 from .limits import IDENTIFY_LIMITS, Limits
 from .running import Answer, run_child, unsafe
@@ -80,6 +81,11 @@ def reading(params: Mapping[str, object]) -> dict[str, object]:
     """A job's params as its extractor or converter takes them: without the reprocess nonce, which only makes the
     job's key new. The body and its block ids are made of these, so a reprocess keeps the block ids."""
     return {name: value for name, value in params.items() if name != REPROCESS}
+
+
+def _reading_key(job_type: str, params: Mapping[str, object]) -> tuple[str, str]:
+    """What a job reads a Blob as: its type and its params without the reprocess nonce."""
+    return job_type, bodies.canonical_json(reading(params)).decode()
 
 
 def identify_spec(sha256: str, reprocess: str | None = None) -> JobSpec:
@@ -145,9 +151,11 @@ class Files:
         enqueue_held(tx, registry, [(PLANNER, spec) for attachment_id in ids for spec in self.plan(tx, attachment_id, reprocess)])
 
     def rules(self) -> str:
-        """The readers and the types each reads, as a hash: what catch_up last looked through the files with."""
-        readers = {job_type: sorted(extractor.accepts) for job_type, extractor in self.extractors.items()}
-        return hashlib.sha256(json.dumps(readers, sort_keys=True).encode()).hexdigest()
+        """The readers with the params each takes for each type, and the format table refine narrows by, as a hash:
+        what catch_up last looked through the files with."""
+        readers = {job_type: {media: dict(params) for media, params in extractor.accepts.items()} for job_type, extractor in self.extractors.items()}
+        table = [[each.media_type, each.family, list(each.extensions)] for each in formats.FORMATS]
+        return hashlib.sha256(json.dumps([readers, table], sort_keys=True).encode()).hexdigest()
 
     async def catch_up(self, context: JobContext) -> int:
         """Queue each reader the Hub gained for the files identified under the current identify pipeline that it
@@ -166,8 +174,8 @@ class Files:
         ).fetchall()
         planned = []
         for attachment_id, sha256 in identified:
-            read = {job.job_type for job in jobs.of_subject(tx, f"blob:{sha256}")}
-            planned += [(PLANNER, spec) for spec in self.plan(tx, attachment_id) if spec.job_type not in read]
+            read = {_reading_key(job.job_type, job.params) for job in jobs.of_subject(tx, f"blob:{sha256}")}
+            planned += [(PLANNER, spec) for spec in self.plan(tx, attachment_id) if _reading_key(spec.job_type, spec.params) not in read]
         (before,) = tx.execute("SELECT count(*) FROM processing_jobs").fetchone()
         enqueue_held(tx, registry, planned)
         tx.execute(
@@ -191,7 +199,7 @@ class Files:
         latest: dict[tuple[str, str], Job] = {}
         current: set[tuple[str, str]] = set()
         for job in jobs.of_subject(snap, f"blob:{sha256}"):
-            key = job.job_type, bodies.canonical_json(reading(job.params)).decode()
+            key = _reading_key(job.job_type, job.params)
             latest[key] = job
             extractor = self.extractors.get(job.job_type)
             if extractor is not None and job.pipeline.version == self.pipeline(extractor).version:
@@ -208,7 +216,7 @@ class Files:
             facts.append(f"its name or declared type says another kind of file than its bytes, which are {found.media_type}")
         if not refined.jobs:
             facts.append(f"no extractor reads {refined.detected_mime}")
-        keys = [(job_type, bodies.canonical_json(dict(params)).decode()) for job_type, params in refined.jobs]
+        keys = [_reading_key(job_type, params) for job_type, params in refined.jobs]
         if RULES_CHANGED not in facts:
             facts.extend(can_read(job_type) for job_type, key in keys if (job_type, key) not in current)
         wanted = [latest.get(key) for key in keys]
