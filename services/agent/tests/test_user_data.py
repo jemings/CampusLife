@@ -684,6 +684,7 @@ ONE_PER_OP = {
     "restore": "restore_item",
     "suggestion.accept": "suggestion_accept",
     "suggestion.dismiss": "suggestion_dismiss",
+    "conflict.resolve": "conflict_resolve_keep",
 }
 
 
