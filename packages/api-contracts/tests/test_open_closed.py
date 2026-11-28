@@ -274,6 +274,16 @@ def test_a_proposal_names_the_members_of_the_input_it_mirrors():
     assert names(SUGGESTION["proposed_change"]) == names(MUTATION["change"])
 
 
+def test_a_resolve_sets_what_a_patch_of_the_same_entity_sets():
+    """D24 decision 3: conflict.resolve's set is a patch of the record's entity, judged by the same rules."""
+    resolve, patch = MUTATION["conflict_resolve"], MUTATION["patch"]
+    assert resolve["properties"]["set"] == patch["properties"]["set"]
+    assert resolve["properties"]["entity"] == patch["properties"]["entity"]
+    assert {key: value for key, value in resolve.items() if key.startswith("x-set-")} == {
+        key: value for key, value in patch.items() if key.startswith("x-set-")
+    }
+
+
 def test_a_conflict_record_keeps_a_change_as_the_patch_sent_it():
     """D24 decision 1: the record inlines the submitted set entries, an open copy of the closed input."""
     record = schema("conflict_record/conflict_record")

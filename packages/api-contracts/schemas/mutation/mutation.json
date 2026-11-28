@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://campuslife.invalid/contracts/schemas/mutation/mutation.json",
   "title": "Mutation",
-  "description": "One write a client sends to POST /v1/mutations (D18, E11). A union on op; every branch is closed input. mutation_id is a UUIDv4 the client makes once and reuses on every resend (D4). The MVP ops are these seven; later ops are added as new branches.",
+  "description": "One write a client sends to POST /v1/mutations (D18, E11). A union on op; every branch is closed input. mutation_id is a UUIDv4 the client makes once and reuses on every resend (D4). The ops are these eight; later ops are added as new branches.",
   "type": "object",
   "required": ["mutation_id", "op"],
   "properties": {
     "mutation_id": { "$ref": "../common/uuid.json" },
-    "op": { "enum": ["capture.commit", "create", "patch", "delete", "restore", "suggestion.accept", "suggestion.dismiss"] }
+    "op": { "enum": ["capture.commit", "create", "patch", "delete", "restore", "suggestion.accept", "suggestion.dismiss", "conflict.resolve"] }
   },
   "oneOf": [
     { "$ref": "#/$defs/capture_commit" },
@@ -16,7 +16,8 @@
     { "$ref": "#/$defs/delete" },
     { "$ref": "#/$defs/restore" },
     { "$ref": "#/$defs/suggestion_accept" },
-    { "$ref": "#/$defs/suggestion_dismiss" }
+    { "$ref": "#/$defs/suggestion_dismiss" },
+    { "$ref": "#/$defs/conflict_resolve" }
   ],
   "discriminator": {
     "propertyName": "op",
@@ -27,12 +28,13 @@
       "delete": "#/$defs/delete",
       "restore": "#/$defs/restore",
       "suggestion.accept": "#/$defs/suggestion_accept",
-      "suggestion.dismiss": "#/$defs/suggestion_dismiss"
+      "suggestion.dismiss": "#/$defs/suggestion_dismiss",
+      "conflict.resolve": "#/$defs/conflict_resolve"
     }
   },
   "$defs": {
     "entity": {
-      "description": "Entities patch, delete and restore name. The schema accepts each of them for every one of those ops; the Hub answers rejected{unsupported_entity} for a pair it does not support (A4), such as a patch on a relation.",
+      "description": "Entities patch, delete, restore and conflict.resolve name. The schema accepts each of them for every one of those ops; the Hub answers rejected{unsupported_entity} for a pair it does not support (A4), such as a patch on a relation.",
       "enum": ["item", "attachment", "relation", "tag"]
     },
     "id_follows_entity": {
@@ -279,6 +281,39 @@
         "suggestion_id": { "$ref": "../common/uuid.json" }
       },
       "additionalProperties": false
+    },
+    "conflict_resolve": {
+      "description": "Resolves the open ConflictRecord conflict_record_id in one transaction (D24 decision 3). Without set it keeps the Hub's values and only resolves the record. With set it is first a patch of the record's entity, entity naming it as a patch would; its keys are not limited to the record's, so a key that has to go with them (all_day beside starts_at) can be sent too. A record that is gone, or a set that is refused, resolves nothing. Keys of set that lose are kept in a new record under this mutation_id, so the result is then a conflict naming it. A record resolved before stays as it is, and set is then compared with the current values like any patch.",
+      "type": "object",
+      "required": ["mutation_id", "op", "conflict_record_id", "entity"],
+      "properties": {
+        "mutation_id": { "$ref": "../common/uuid.json" },
+        "op": { "const": "conflict.resolve" },
+        "conflict_record_id": { "$ref": "../common/uuid.json" },
+        "entity": { "$ref": "#/$defs/entity" },
+        "set": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/set_key" },
+          "additionalProperties": { "$ref": "#/$defs/change" }
+        }
+      },
+      "additionalProperties": false,
+      "x-set-targets": {
+        "item": {
+          "schema": "../item/item.json",
+          "fields": [
+            "../item/fields/term.json", "../item/fields/course.json", "../item/fields/lecture_session.json",
+            "../item/fields/note.json", "../item/fields/task.json", "../item/fields/assignment.json", "../item/fields/exam.json",
+            "../item/fields/event.json", "../item/fields/announcement.json", "../item/fields/opportunity.json", "../item/fields/organization.json"
+          ]
+        },
+        "attachment": { "schema": "../capture/attachment.json" },
+        "relation": { "schema": "../relation/relation.json" },
+        "tag": { "schema": "../tag/tag.json" }
+      },
+      "x-set-owner": true,
+      "x-set-type": true
     }
   }
 }

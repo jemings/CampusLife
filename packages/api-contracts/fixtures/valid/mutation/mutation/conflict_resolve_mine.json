@@ -1,0 +1,16 @@
+{
+  "mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  "op": "conflict.resolve",
+  "conflict_record_id": "16fd2706-8baf-433b-82eb-8c7fada847da",
+  "entity": "item",
+  "set": {
+    "body": {
+      "from_hash": "d70330d437b931f141e08105b73eb000b4e3b143e606270cf9254593830437de",
+      "to": "트리 순회\n- 전위\n- 중위"
+    },
+    "title": {
+      "from": "자료구조 3주차",
+      "to": "자료구조 3주차 정리"
+    }
+  }
+}
