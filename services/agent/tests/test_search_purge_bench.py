@@ -1,4 +1,4 @@
-"""The purge measurement script still runs, and in both table shapes it measures leaves no marker token behind."""
+"""The purge measurement script still runs, and in both table shapes its purge leaves no marker behind."""
 
 import importlib.util
 import sys
@@ -16,18 +16,40 @@ def load_bench():
     return module
 
 
-def test_each_shape_holds_the_marker_before_the_purge_and_none_of_it_after(tmp_path):
+def test_markers_use_only_syllables_the_corpus_does_not():
     bench = load_bench()
-    texts = bench.corpus(200)
+    texts = bench.corpus(500)
+    kept = "".join(texts)
+
+    with_markers, markers = bench.marked(texts, 50)
+
+    assert len(markers) == 50
+    assert not set("".join(markers.values())) & set(kept)
+    assert all(with_markers[i].endswith(marker) for i, marker in markers.items())
+
+
+def test_each_shape_holds_the_markers_before_its_purge_and_none_after_it(tmp_path):
+    bench = load_bench()
+    texts, markers = bench.marked(bench.corpus(3000), 100)
+    total = len(bench.bigrams(markers))
 
     for shape in bench.SHAPES:
-        _, _, _, after, before = bench.measure(shape, texts, tmp_path)
+        result = bench.measure(shape, texts, markers, tmp_path)
 
-        assert (before > 0, after) == (True, 0), shape
+        assert (result.before, result.after, result.terms_after) == (total, 0, 0), shape
+
+
+def test_without_optimize_the_contentless_shape_keeps_markers(tmp_path):
+    bench = load_bench()
+    texts, markers = bench.marked(bench.corpus(3000), 100)
+
+    result = bench.measure("contentless", texts, markers, tmp_path, optimize=False)
+
+    assert result.after > 0
 
 
 def test_the_bench_reports_its_source_and_removes_its_indexes_unless_given_a_directory(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-    load_bench().main(["--blocks", "50"])
+    load_bench().main(["--blocks", "200", "--marked", "10"])
     assert capsys.readouterr().out.startswith("출처: 로컬 합성")
     assert list(tmp_path.iterdir()) == []

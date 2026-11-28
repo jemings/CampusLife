@@ -1,17 +1,21 @@
-"""What it costs to purge one document from the search index, for each FTS5 table shape, on synthetic text.
+"""What it costs to purge documents from the search index, for each FTS5 table shape, on synthetic text.
 
-    uv run python tools/search_purge_bench.py [--blocks 100000] [--dir DIR]
+    uv run python tools/search_purge_bench.py [--blocks 100000] [--marked 300] [--dir DIR]
 
 Every number comes from local synthetic text (tools/search_bench.py's corpus), never from real data.
 
-Shapes, both under hangul-bigram@1 with the folded original in a plain table beside them, PRAGMA
-secure_delete on, WAL, and FTS5's own secure-delete option on:
+Shapes, both under hangul-bigram@1 with the folded original in a plain table beside them, PRAGMA secure_delete on,
+WAL, and FTS5's own secure-delete option on:
   stored       the FTS5 table keeps the analyzed text it indexed
-  contentless  content='' with contentless_delete=1; a delete leaves token bytes until 'optimize'
-               rewrites the whole index, so its purge is delete + optimize
+  contentless  content='' with contentless_delete=1
 
-A purge deletes one document holding a marker and empties the WAL (checkpoint TRUNCATE). The script reports the
-time of that purge and how many marker tokens are left in the database and WAL files after it.
+`--marked` blocks spread over the corpus each end in a marker word made only of Hangul syllables the corpus does not
+use, so its bigrams fall between the corpus's terms across many leaves. A purge deletes those blocks in one
+transaction, runs 'optimize' (rewriting the whole index), and empties the WAL (checkpoint TRUNCATE), as `forget`
+does. Each shape is measured again without 'optimize' as a control.
+
+The script reports the size, the time of the purge, how many marker bigrams the database and WAL files hold before and
+after it, and how many terms of the FTS5 index still hold a marker syllable.
 """
 
 from __future__ import annotations
@@ -20,20 +24,23 @@ import argparse
 import importlib.util
 import os
 import platform
+import random
 import sqlite3
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from campuslife_hub.search.analyzer import HANGUL_BIGRAM
 
-MARKER = "비밀표식 ZQXJ7731"
-MARKER_TOKENS = ("zqxj7731", "비밀", "밀표", "표식")
 SHAPES = {
     "stored": "",
     "contentless": ", content='', contentless_delete=1",
 }
+SEED = 29
+MARKER_SYLLABLES = 6
+BATCH = 256
 
 
 def corpus(blocks: int) -> list[str]:
@@ -44,71 +51,100 @@ def corpus(blocks: int) -> list[str]:
     return bench.corpus(blocks)
 
 
-def _left(path: Path) -> int:
-    raw = path.read_bytes() + (wal.read_bytes() if (wal := path.with_name(path.name + "-wal")).exists() else b"")
-    return sum(raw.count(token.encode()) for token in MARKER_TOKENS)
+def marked(texts: list[str], count: int) -> tuple[list[str], dict[int, str]]:
+    """texts with a marker word ending `count` blocks spread over them, and the markers by block."""
+    used = set("".join(texts))
+    rare = [chr(code) for code in range(0xAC00, 0xD7A4) if chr(code) not in used]
+    rng = random.Random(SEED)
+    step = max(1, len(texts) // count)
+    markers = {i: "".join(rng.choice(rare) for _ in range(MARKER_SYLLABLES)) for i in range(0, len(texts), step)[:count]}
+    return [f"{text} {markers[i]}" if i in markers else text for i, text in enumerate(texts)], markers
 
 
-def measure(shape: str, texts: list[str], directory: Path) -> tuple[float, int, float, int, int]:
-    """Build seconds, size, purge seconds, marker tokens left after the purge, and before it (the control)."""
-    path = directory / f"{shape}.sqlite3"
+def bigrams(markers: dict[int, str]) -> set[str]:
+    return {marker[j : j + 2] for marker in markers.values() for j in range(len(marker) - 1)}
+
+
+def _file_bytes(path: Path) -> bytes:
+    return b"".join(part.read_bytes() for part in (path, path.with_name(path.name + "-wal")) if part.exists())
+
+
+@dataclass(frozen=True)
+class Result:
+    size: int
+    """Of the files before the purge."""
+    purge_s: float
+    before: int
+    after: int
+    terms_after: int
+    """Terms of the FTS5 index that still hold a marker syllable."""
+
+
+def measure(shape: str, texts: list[str], markers: dict[int, str], directory: Path, *, optimize: bool = True) -> Result:
+    path = directory / f"{shape}{'' if optimize else '-unoptimized'}.sqlite3"
     con = sqlite3.connect(path, isolation_level=None)
     con.execute("PRAGMA journal_mode = WAL")
     con.execute("PRAGMA secure_delete = ON")
     con.execute(f"CREATE VIRTUAL TABLE fts USING fts5(body{SHAPES[shape]}, tokenize='{HANGUL_BIGRAM.fts5_tokenize}')")
     con.execute("INSERT INTO fts(fts, rank) VALUES ('secure-delete', 1)")
     con.execute("CREATE TABLE original(id INTEGER PRIMARY KEY, folded TEXT NOT NULL)")
-    started = time.perf_counter()
-    con.execute("BEGIN")
-    for i, text in enumerate([*texts, MARKER]):
-        con.execute("INSERT INTO fts(rowid, body) VALUES (?, ?)", (i, HANGUL_BIGRAM.analyze(text)))
-        con.execute("INSERT INTO original(id, folded) VALUES (?, ?)", (i, HANGUL_BIGRAM.fold_original(text)))
-    con.execute("COMMIT")
-    con.execute("INSERT INTO fts(fts) VALUES ('optimize')")
+    for start in range(0, len(texts), BATCH):
+        con.execute("BEGIN")
+        for i in range(start, min(start + BATCH, len(texts))):
+            con.execute("INSERT INTO fts(rowid, body) VALUES (?, ?)", (i, HANGUL_BIGRAM.analyze(texts[i])))
+            con.execute("INSERT INTO original(id, folded) VALUES (?, ?)", (i, HANGUL_BIGRAM.fold_original(texts[i])))
+        con.execute("COMMIT")
     con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    built = time.perf_counter() - started
     size = path.stat().st_size
-    before = _left(path)
+    wanted = [piece.encode() for piece in bigrams(markers)]
+    held = _file_bytes(path)
+    before = sum(piece in held for piece in wanted)
 
-    marker = len(texts)
     started = time.perf_counter()
     con.execute("BEGIN")
-    con.execute("DELETE FROM fts WHERE rowid = ?", (marker,))
-    con.execute("DELETE FROM original WHERE id = ?", (marker,))
+    con.executemany("DELETE FROM fts WHERE rowid = ?", [(i,) for i in markers])
+    con.executemany("DELETE FROM original WHERE id = ?", [(i,) for i in markers])
     con.execute("COMMIT")
-    if shape == "contentless":
+    if optimize:
         con.execute("INSERT INTO fts(fts) VALUES ('optimize')")
     con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     purged = time.perf_counter() - started
+    syllables = {syllable.encode() for marker in markers.values() for syllable in marker}
+    terms_after = sum(any(syllable in bytes(term) for syllable in syllables) for (term,) in con.execute("SELECT term FROM fts_idx"))
     con.close()
-    return built, size, purged, _left(path), before
+    left = _file_bytes(path)
+    return Result(size, purged, before, sum(piece in left for piece in wanted), terms_after)
+
+
+def report(texts: list[str], markers: dict[int, str], directory: Path) -> None:
+    total = len(bigrams(markers))
+    for shape in SHAPES:
+        for optimize in (True, False):
+            r = measure(shape, texts, markers, directory, optimize=optimize)
+            name = shape if optimize else f"{shape}, optimize 없음(대조)"
+            print(f"| {name} | {r.size / 1e6:.1f} | {r.purge_s:.3f} | {r.before}/{total} → {r.after}/{total} | {r.terms_after} |")
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--blocks", type=int, default=100_000)
+    parser.add_argument("--marked", type=int, default=300)
     parser.add_argument(
         "--dir", type=Path, help="build the indexes in a new directory under DIR and keep them (default: a temporary directory, removed)"
     )
     args = parser.parse_args(argv)
-    texts = corpus(args.blocks)
+    texts, markers = marked(corpus(args.blocks), args.marked)
     print(
-        f"출처: 로컬 합성 (blocks {len(texts)}, chars {sum(map(len, texts))}) · "
+        f"출처: 로컬 합성 (blocks {len(texts)}, chars {sum(map(len, texts))}, marked {len(markers)}) · "
         f"Python {sys.version.split()[0]} · SQLite {sqlite3.sqlite_version} · {platform.system()} {platform.machine()}"
     )
-    print("| shape | build s | size MB | purge s | marker tokens before → after |")
+    print("| shape | size MB | purge s | marker bigrams before → after | index terms with a marker syllable |")
     print("|---|---|---|---|---|")
     if args.dir is None:
         with tempfile.TemporaryDirectory() as directory:
-            _report(texts, Path(directory))
+            report(texts, markers, Path(directory))
     else:
-        _report(texts, Path(tempfile.mkdtemp(dir=args.dir)))
-
-
-def _report(texts: list[str], directory: Path) -> None:
-    for shape in SHAPES:
-        built, size, purged, after, before = measure(shape, texts, directory)
-        print(f"| {shape} | {built:.2f} | {size / 1e6:.1f} | {purged:.3f} | {before} → {after} |")
+        report(texts, markers, Path(tempfile.mkdtemp(dir=args.dir)))
 
 
 if __name__ == "__main__":
