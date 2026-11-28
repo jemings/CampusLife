@@ -14,6 +14,7 @@ import campuslife.android.data.SyncStore
 import campuslife.android.data.TransferState
 import campuslife.android.data.UserData
 import campuslife.wire.AttachmentRole
+import campuslife.wire.CONTRACT_VERSION
 import campuslife.wire.CloudPolicy
 import campuslife.wire.ItemData
 import campuslife.wire.ItemKind
@@ -388,16 +389,24 @@ class SyncEngineTest {
     @Test
     fun `each outcome only the user can mend is kept, and the next pass asks the Hub nothing`() {
         engine().run(false)
-        val stops = listOf<Pair<() -> Unit, SyncOutcome>>(
-            { hub.refuseToken = "unauthorized" } to SyncOutcome.Unauthorized,
-            { hub.refuseToken = "device_revoked" } to SyncOutcome.Revoked,
-            { hub.once({ it.path == "/v1/changes" }) { hub.refusal(it, 400, "contract_too_old") } } to SyncOutcome.ContractTooOld,
-            { hub.once({ it.path == "/v1/changes" }) { hub.response(it, 200, "{}", hub = OTHER_HUB_ID) } } to SyncOutcome.WrongHub,
+        val stops = listOf<Triple<() -> Unit, SyncOutcome, String>>(
+            Triple({ hub.refuseToken = "device_revoked" }, SyncOutcome.Revoked, "device_revoked"),
+            Triple(
+                { hub.once({ it.path == "/v1/changes" }) { hub.refusal(it, 400, "contract_too_old") } },
+                SyncOutcome.ContractTooOld,
+                "contract_too_old:$CONTRACT_VERSION",
+            ),
+            Triple(
+                { hub.once({ it.path == "/v1/changes" }) { hub.response(it, 200, "{}", hub = OTHER_HUB_ID) } },
+                SyncOutcome.WrongHub,
+                "wrong_hub",
+            ),
         )
 
-        for ((cause, outcome) in stops) {
+        for ((cause, outcome, kept) in stops) {
             cause()
             assertEquals(outcome, engine().run(false))
+            assertEquals(kept, store.standing()?.stopped)
             hub.refuseToken = null
             hub.requests.clear()
             assertEquals(outcome, engine().run(false))
@@ -406,6 +415,49 @@ class SyncEngineTest {
         }
 
         assertEquals(SyncOutcome.Synced(), engine().run(false))
+    }
+
+    @Test
+    fun `a refused token is not kept, so the next pass asks the Hub again`() {
+        engine().run(false)
+
+        for (code in listOf("unauthorized", "a_code_added_later")) {
+            hub.refuseToken = code
+            assertEquals(code, SyncOutcome.Unauthorized, engine().run(false))
+            hub.refuseToken = null
+            hub.requests.clear()
+
+            assertEquals(code, SyncOutcome.Synced(), engine().run(false))
+
+            assertTrue(code, hub.requests.isNotEmpty())
+            assertNull(code, store.standing()?.stopped)
+        }
+    }
+
+    @Test
+    fun `an app updated past the contract version the Hub refused asks the Hub again`() {
+        engine().run(false)
+        store.stop("contract_too_old:${CONTRACT_VERSION - 1}")
+        hub.requests.clear()
+
+        assertEquals(SyncOutcome.Synced(), engine().run(false))
+
+        assertTrue(hub.requests.isNotEmpty())
+        assertNull(store.standing()?.stopped)
+    }
+
+    @Test
+    fun `a stop this app does not write is dropped and the Hub asked again`() {
+        engine().run(false)
+        for (kept in listOf("a_stop_from_a_later_app", "contract_too_old")) {
+            store.stop(kept)
+            hub.requests.clear()
+
+            assertEquals(kept, SyncOutcome.Synced(), engine().run(false))
+
+            assertTrue(kept, hub.requests.isNotEmpty())
+            assertNull(kept, store.standing()?.stopped)
+        }
     }
 
     @Test

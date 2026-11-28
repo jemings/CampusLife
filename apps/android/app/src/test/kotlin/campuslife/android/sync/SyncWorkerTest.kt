@@ -112,6 +112,18 @@ class SyncWorkerTest {
     }
 
     @Test
+    fun `a periodic pass whose token the Hub refuses cancels the periodic pass`() {
+        val work = testWorkManager(SyncOutcome.Unauthorized) { SyncScheduler(WorkManager.getInstance(context)) }
+        SyncScheduler(work).keepPeriodic()
+        val info = work.getWorkInfosForUniqueWork(SyncScheduler.PERIODIC).get().single()
+
+        WorkManagerTestInitHelper.getTestDriver(context)!!.setAllConstraintsMet(info.id)
+
+        assertEquals(WorkInfo.State.CANCELLED, finished(work, info))
+        assertEquals(listOf(false), asked)
+    }
+
+    @Test
     fun `a pass runs every 15 minutes while the device is online, and asking again keeps the one there is`() {
         val work = testWorkManager()
 
@@ -124,7 +136,8 @@ class SyncWorkerTest {
         assertEquals(NetworkType.CONNECTED, first.constraints.requiredNetworkType)
     }
 
-    private fun factory(outcome: SyncOutcome) = SyncWorkerFactory({ SyncRunner { unmetered -> asked += unmetered; outcome } }, { schedule })
+    private fun factory(outcome: SyncOutcome, schedule: () -> SyncSchedule = { this.schedule }) =
+        SyncWorkerFactory({ SyncRunner { unmetered -> asked += unmetered; outcome } }, schedule)
 
     private fun resultOf(outcome: SyncOutcome, unmetered: Boolean = false): String {
         val worker = TestListenableWorkerBuilder<SyncWorker>(context)
@@ -135,10 +148,13 @@ class SyncWorkerTest {
         return result.javaClass.simpleName
     }
 
-    private fun testWorkManager(): WorkManager {
+    private fun testWorkManager(
+        outcome: SyncOutcome = SyncOutcome.Synced(),
+        schedule: () -> SyncSchedule = { this.schedule },
+    ): WorkManager {
         WorkManagerTestInitHelper.initializeTestWorkManager(
             context,
-            Configuration.Builder().setExecutor(SynchronousExecutor()).setWorkerFactory(factory(SyncOutcome.Synced())).build(),
+            Configuration.Builder().setExecutor(SynchronousExecutor()).setWorkerFactory(factory(outcome, schedule)).build(),
         )
         return WorkManager.getInstance(context)
     }
