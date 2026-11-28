@@ -739,6 +739,27 @@ async def test_an_edit_made_before_the_purge_and_sent_after_it_is_refused_and_ke
     assert offline.encode() not in database_file_bytes(Layout(tmp_path).database)
 
 
+async def test_an_edit_sent_while_the_purge_is_unfinished_keeps_nothing(db, device, blob_store, tmp_path):
+    """The rows went when the purge committed; a hook that failed leaves it unfinished, not undone."""
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    hooks = PurgeHooks()
+
+    def failing(target):
+        raise OSError("index locked")
+
+    hooks.register("index", failing)
+    purged = await purge.purge_blob(db, blob_store, lecture_.pdf, delete_notes=[lecture_.note], hooks=hooks)
+    assert not purged.finished
+    before = await feed(db)
+
+    [result] = await apply(
+        db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": text_hash("스택과 큐\n"), "to": "다른 장치에서 쓴 글"}}}
+    )
+
+    assert {name: value for name, value in result.items() if name != "mutation_id"} == {"result": "rejected", "reason": "deleted"}
+    assert await feed(db) == before
+
+
 async def test_an_edit_of_a_purged_attachment_sent_after_the_purge_keeps_nothing(db, device, blob_store, tmp_path):
     lecture_ = await lecture(db, device, blob_store, tmp_path)
     await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())

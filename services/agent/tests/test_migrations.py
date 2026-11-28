@@ -1,9 +1,13 @@
+import asyncio
 import json
 import sqlite3
 
 import pytest
 from campuslife_contracts import validate
 
+from campuslife_hub.data_root import Layout
+from campuslife_hub.db import Database
+from campuslife_hub.lock import HubLock
 from campuslife_hub.migrations import MIGRATIONS, DatabaseTooNew, Migration, migrate
 
 
@@ -95,6 +99,13 @@ PATCHED = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
 TAGGED = "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
 ITEM = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
 TAG = "0f8fad5b-d9cb-469f-a165-70867728950e"
+PURGED_NOTE = "9b2e5c1a-7d34-4f6e-8a1b-2c3d4e5f6a7b"
+PURGED_ATTACHMENT = "1e7f9a2b-3c4d-4e5f-9a6b-7c8d9e0f1a2b"
+LATE_ON_NOTE = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+LATE_ON_ATTACHMENT = "5d6e7f80-91a2-4b3c-9d4e-5f6a7b8c9d0e"
+LATE_TEXT = "퍼지뒤도착해스태시된글QWZX"
+JOURNALED = "INSERT INTO purge_journal (id, target, registered_at) VALUES ('j', ?, 't')"
+PURGE_TARGET = json.dumps({"artifacts": [], "attachments": [PURGED_ATTACHMENT], "blobs": [], "items": [PURGED_NOTE], "relations": [], "suggestions": []})
 
 
 def without_repeats(pairs):
@@ -107,17 +118,21 @@ def without_repeats(pairs):
 def test_migration_0011_turns_the_stash_into_one_conflict_record_per_mutation():
     """D24 decision 8: duplicates of a key a resend stashed again go first (E8), and each record takes its own rev
     above change_seq in the order its first value was stashed. PATCHED sorts after TAGGED and was stashed both
-    before and after it, so neither mutation_id order nor last-stashed order gives these revs."""
+    before and after it, so neither mutation_id order nor last-stashed order gives these revs. What a patch stashed
+    for an Item or Attachment a purge removed is dropped before that (D24 decision 2)."""
     conn = connect()
     migrate(conn, MIGRATIONS[:10])
     conn.execute("INSERT INTO hub_state (singleton, hub_id, epoch, change_seq) VALUES (1, 'h', 'e', 5)")
     conn.execute("INSERT INTO sync_index (entity, id, rev, deleted) VALUES ('item', ?, 5, 0)", (ITEM,))
+    conn.execute(JOURNALED, (PURGE_TARGET,))
     body = {"from_hash": None, "to": "다른 장치에서 쓴 글"}
     stash = [
+        ("s0", LATE_ON_NOTE, "item", PURGED_NOTE, "body", {"from_hash": None, "to": LATE_TEXT}),
         ("s1", PATCHED, "item", ITEM, "body", body),
         ("s2", TAGGED, "tag", TAG, "color", {"from": "#ff8800", "to": "#0088ff"}),
         ("s3", PATCHED, "item", ITEM, "title", {"to": "과제 2", "from": "과제 제출"}),
-        ("s4", PATCHED, "item", ITEM, "body", body),
+        ("s4", LATE_ON_ATTACHMENT, "attachment", PURGED_ATTACHMENT, "cloud_policy", {"from": "local_only", "to": "blocked"}),
+        ("s5", PATCHED, "item", ITEM, "body", body),
     ]
     for identifier, mutation_id, entity, entity_id, key, change in stash:
         conn.execute(STASHED, (identifier, mutation_id, entity, entity_id, key, json.dumps(change, ensure_ascii=False)))
@@ -135,3 +150,38 @@ def test_migration_0011_turns_the_stash_into_one_conflict_record_per_mutation():
     ]
     assert conn.execute("SELECT change_seq FROM hub_state").fetchone() == (7,)
     assert conn.execute("SELECT name FROM sqlite_schema WHERE name = 'conflict_stash'").fetchall() == []
+
+
+def test_migration_0011_leaves_no_text_of_a_stash_it_drops_in_the_database_file(tmp_path, monkeypatch):
+    """The Hub's writer migrates with secure_delete on whatever the build defaults to, so once its WAL is emptied the
+    text of a stash row kept for a purged Note is not in the file."""
+    layout = Layout(tmp_path)
+    layout.database.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(layout.database, isolation_level=None)
+    migrate(conn, MIGRATIONS[:10])
+    conn.execute("INSERT INTO hub_state (singleton, hub_id, epoch, change_seq) VALUES (1, 'h', 'e', 5)")
+    conn.execute(JOURNALED, (PURGE_TARGET,))
+    conn.execute(STASHED, ("s0", LATE_ON_NOTE, "item", PURGED_NOTE, "body", json.dumps({"from_hash": None, "to": LATE_TEXT}, ensure_ascii=False)))
+    conn.close()
+    assert LATE_TEXT.encode() in layout.database.read_bytes()
+    real = sqlite3.connect
+
+    def secure_delete_off(*args, **kwargs):
+        opened = real(*args, **kwargs)
+        opened.execute("PRAGMA secure_delete = OFF")
+        return opened
+
+    monkeypatch.setattr(sqlite3, "connect", secure_delete_off)
+
+    async def open_the_hub():
+        with HubLock.acquire(layout.lock_file) as lock:
+            db = await Database.open(layout, lock=lock, create=False)
+            try:
+                kept = await db.read(lambda snap: snap.execute("SELECT count(*) FROM conflict_records").fetchone())
+                return kept, await db.truncate_wal()
+            finally:
+                await db.close()
+
+    assert asyncio.run(open_the_hub()) == ((0,), True)
+    wal = layout.database.with_name(layout.database.name + "-wal")
+    assert LATE_TEXT.encode() not in b"".join(path.read_bytes() for path in (layout.database, wal) if path.exists())
