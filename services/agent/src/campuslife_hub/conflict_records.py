@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from datetime import UTC, datetime
 
 from campuslife_contracts import effective_cloud_policy
 
-from . import store
+from . import audit, store
+from .audit import AuditEvent
+from .clock import instant
 from .db import Snapshot, Tx
+from .devices import DeviceId
 from .store import Entity, EntityRef
 
 
@@ -31,6 +35,24 @@ def keep(tx: Tx, mutation_id: str, target: EntityRef, changes: dict[str, dict], 
         return (mutation_id,)
     store.write(tx, record, {"id": mutation_id, "entity_ref": f"{target.entity.value}:{target.id}", "set": kept})
     return (mutation_id,)
+
+
+def target(record: dict) -> EntityRef:
+    """The entity the record's changes were sent to."""
+    entity, identifier = record["entity_ref"].split(":", 1)
+    return EntityRef(Entity(entity), identifier)
+
+
+def resolve(tx: Tx, record: dict, mutation_id: str, device: DeviceId) -> None:
+    """Resolve an open record by mutation_id, sent by device, and audit it; a resolved one stays as the first
+    resolution left it."""
+    if "set" not in record:
+        return
+    now = datetime.now(UTC)
+    resolved = {"at": instant(now), "mutation_id": mutation_id}
+    store.write(tx, EntityRef(Entity.CONFLICT_RECORD, record["id"]), {"id": record["id"], "entity_ref": record["entity_ref"], "resolved": resolved})
+    details = {"conflict_record_id": record["id"], "entity_ref": record["entity_ref"], "mutation_id": mutation_id}
+    audit.record(tx, AuditEvent.CONFLICT_RESOLVED, at=now, subject=device, details=details)
 
 
 def _of(runner: Tx | Snapshot, entity_refs: Iterable[str]) -> list[dict]:

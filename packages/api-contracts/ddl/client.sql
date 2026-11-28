@@ -38,7 +38,7 @@ CREATE TABLE entity_cache (
 
 -- Every Mutation this device made, in the order it made them; a seq is never reused. body is the
 -- mutation/mutation JSON, sent unchanged on every resend. entity and entity_id name the row it
--- writes (capture for capture.commit, suggestion for suggestion.*).
+-- writes (capture for capture.commit, suggestion for suggestion.*, conflict_record for conflict.resolve).
 -- state: held (a capture.commit whose Blobs are not all stored), pending (to send), acked (applied,
 -- or a conflict with applied_fields, waiting for a pull that began after the ACK), pulling (such a
 -- pull is running), settled (the result is in entity_cache, or a conflict wrote nothing), rejected

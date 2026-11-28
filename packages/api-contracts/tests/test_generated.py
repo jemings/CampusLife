@@ -326,6 +326,7 @@ REQUIRED = {
     "mutation/mutation#/$defs/capture_commit": {"mutation_id", "op", "capture"},
     "mutation/mutation#/$defs/change": {"to"},
     "mutation/mutation#/$defs/change/else": {"from"},
+    "mutation/mutation#/$defs/conflict_resolve": {"mutation_id", "op", "conflict_record_id", "entity"},
     "mutation/mutation#/$defs/create": {"mutation_id", "op", "entity", "id", "data"},
     "mutation/mutation#/$defs/create_item": {"mutation_id", "op", "entity", "id", "data"},
     "mutation/mutation#/$defs/create_relation": {"mutation_id", "op", "entity", "id", "data"},

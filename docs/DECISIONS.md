@@ -901,6 +901,15 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - D3의 epoch 감지 문장, D18의 ConflictRecord·해소 문장, D20 E12의 409 문장, DOMAIN-MODEL의 ConflictRecord 행은 이 항목을 따릅니다.
 - 기록(#18 PR2): Hub의 `conflict_records.py`가 patch의 진 키와 지워진 대상에 온 patch의 키를 Mutation의 기록에 남기고(`user_data.py`), 즉시 purge가 그 엔터티의 기록을 tombstone으로 만듭니다(`purge.py`). purge된 대상에 온 patch는 `purge.purged_at`으로 가려 기록하지 않습니다. `0011_conflict_records.sql`이 `conflict_stash`를 옮깁니다. 열린 기록 수는 admin `/api/status`의 `conflicts.open`과 장치 화면에 나옵니다. `strictest_submitted_cloud_policy`는 #8의 ProviderGateway가 유효 정책을 계산할 때 읽습니다(결정 11).
   - 이주한 기록의 키 순서는 canonical이 아닐 수 있습니다. SQL 이주(D21 E3)가 JSON 키를 정렬하지 못하기 때문이고, 값은 같으며 다음 쓰기가 canonical로 다시 씁니다.
+- 해소(#18 PR3): 계약은 `mutation/mutation`의 `conflict.resolve`입니다. set 규칙과 대상은 patch와 같고, 계약 시험이 둘이 같은지 봅니다. Kotlin 모델은 `ResolveConflict`이고, Outbox는 해소를 그 ConflictRecord 행에 둡니다.
+  - Hub는 `user_data.resolve`가 결정 3의 순서로 판정하고 `conflict_records.resolve`가 기록을 해소합니다. audit `conflict_resolved`의 subject는 해소한 장치이고, details는 `conflict_record_id`·`entity_ref`·`mutation_id`뿐입니다.
+  - `suggestion.accept`가 만드는 Item id는 accept의 mutation_id에서 유도한 UUIDv4입니다(결정 5a, `suggestions.py`).
+  - 구현자 결정 (2026-11-28):
+    - `entity`가 기록의 엔터티와 다르면 `rejected{schema}`입니다. set을 다른 엔터티의 열로 판정하게 되므로 잘못된 Mutation입니다.
+    - 거부 순서: 기록이 없거나 tombstone이면 `deleted`, 다음이 entity 불일치 `schema`입니다. set이 있으면 그 뒤는 클라이언트 patch와 같은 순서(`not_canonical`, 살아 있지 않은 대상의 `deleted`, CAS의 `schema`)입니다.
+    - set 없는 해소는 대상을 보지 않습니다. 대상이 휴지통에 있거나 없어도 기록만 닫습니다(결정 2의 "복구 없이 사라진 대상").
+    - audit은 이 해소가 열린 기록을 닫을 때만 남깁니다. 이미 해소된 기록에 온 해소와 거부된 해소는 남기지 않습니다.
+    - 살아 있지 않은 대상에 온 set은 기록을 남기지 않습니다. 그래서 purge한 대상도 `purge.purged_at`을 따로 보지 않고 같은 결과가 됩니다.
 - 범위: 이 항목은 #18 PR1(계약과 경계)에서 적습니다. 기록 생성과 이주, 해소 op, 휴지통 만료, 시험용 모의 장치, Windows `/conflicts`, 클라이언트 규칙 문서(MULTI-DEVICE §3.2·§3.3·§8)는 #18의 뒤 PR입니다. 클라이언트 쪽(기준 epoch 헤더, 409 처리, 60일 보관, `rejected_mutation_count`)은 #3·#16이 구현합니다.
 
 ---

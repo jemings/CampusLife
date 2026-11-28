@@ -193,14 +193,21 @@ def _copy_evidence(tx: Tx, item_ref: str, anchors: dict[str, list[dict]]) -> Non
 
 
 def _create_item_write(tx: Tx, proposed: dict, edits: dict, mutation_id: str) -> dict | None:
-    """The create a client would send with the proposed columns and the edits over them; the Hub picks the Item's id.
+    """The create a client would send with the proposed columns and the edits over them, the Item named by the accept.
     An edit may add a column or a field the proposal left out (#9 decision 3): the create judges the result."""
     data = {name: proposed[name] for name in ITEM_DATA if name in proposed}
     for key, value in edits.items():
         data = with_value(data, key, value)
     if data["kind"] not in ITEM_KINDS:
         return None
-    return {"mutation_id": mutation_id, "op": "create", "entity": "item", "id": str(uuid.uuid4()), "data": data}
+    return {"mutation_id": mutation_id, "op": "create", "entity": "item", "id": _item_made_by(mutation_id), "data": data}
+
+
+def _item_made_by(accept_mutation_id: str) -> str:
+    """The UUIDv4 of the Item an accept makes, derived from its mutation_id, so the same accept resent to a Hub restored
+    from before it makes the same Item, and the client's later patches of it apply (D24 decision 5a)."""
+    digest = hashlib.sha256(f"suggestion.accept item {accept_mutation_id}".encode()).digest()
+    return str(uuid.UUID(bytes=digest[:16], version=4))
 
 
 def _patch_item_write(tx: Tx, proposed: dict, edits: dict, mutation_id: str) -> dict | None:

@@ -1,0 +1,19 @@
+{
+  "mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  "op": "conflict.resolve",
+  "conflict_record_id": "16fd2706-8baf-433b-82eb-8c7fada847da",
+  "entity": "item",
+  "set": {
+    "all_day": {
+      "from": null,
+      "to": true
+    },
+    "starts_at": {
+      "from": "2026-03-02T00:30:00.000Z",
+      "to": {
+        "date": "2026-03-02",
+        "tz": "Asia/Seoul"
+      }
+    }
+  }
+}
