@@ -8,6 +8,7 @@ import campuslife.wire.CONTRACT_VERSION
 import campuslife.wire.DeviceStatus
 import campuslife.wire.ErrorCode
 import campuslife.wire.UploadSession
+import campuslife.wire.isUuid
 import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -123,6 +124,7 @@ class SyncEngine(
             val info = hub.hub().orStop()
             if (info.hubId != hub.hubId) throw Stop(SyncOutcome.WrongHub)
             if (info.minContractVersion > CONTRACT_VERSION) throw Stop(SyncOutcome.ContractTooOld)
+            if (!isUuid(info.epoch)) throw Stop(SyncOutcome.HubFailed)
             store.knowHub(info.hubId, info.epoch)
         }
 
@@ -281,7 +283,7 @@ class SyncEngine(
     private fun refusal(refused: Answer.Refused): Exception = when {
         refused.status == CONFLICT && refused.code == ErrorCode.EPOCH_CHANGED ->
             (refused.error?.details?.get("epoch") as? JsonPrimitive)?.takeIf { it.isString }?.content
-                ?.let(::EpochChanged) ?: Stop(SyncOutcome.HubFailed)
+                ?.takeIf(::isUuid)?.let(::EpochChanged) ?: Stop(SyncOutcome.HubFailed)
         refused.status == UNAUTHORIZED -> Stop(
             when (refused.code) {
                 ErrorCode.DEVICE_REVOKED -> SyncOutcome.Revoked
