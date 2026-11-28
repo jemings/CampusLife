@@ -86,12 +86,19 @@ class Limits:
 
     @staticmethod
     def from_json(data: dict) -> Limits:
-        """The table data holds, of the type it names; ValueError for a type that is no Limits of this package."""
+        """The table data holds, of the type it names; ValueError unless that is a Limits type defined, not only
+        imported, in a module of the extractor package that imports."""
         bounds = dict(data)
-        module, _, name = str(bounds.pop(TYPE, "")).partition(":")
-        kind = getattr(importlib.import_module(module), name, None) if module.startswith(ENTRY_PREFIX) and name else None
-        if not (isinstance(kind, type) and issubclass(kind, Limits)):
-            raise ValueError(f"a limits table names a Limits type of {ENTRY_PREFIX}, not {data.get(TYPE)!r}")
+        named = bounds.pop(TYPE, None)
+        module, _, name = str(named).partition(":")
+        kind = None
+        if module.startswith(ENTRY_PREFIX) and name:
+            try:
+                kind = getattr(importlib.import_module(module), name, None)
+            except ImportError:
+                kind = None
+        if not (isinstance(kind, type) and issubclass(kind, Limits) and kind.__module__ == module):
+            raise ValueError(f"a limits table names a Limits type defined in {ENTRY_PREFIX}, not {named!r}")
         return kind(**bounds)
 
     def hash8(self) -> str:
