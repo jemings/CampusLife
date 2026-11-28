@@ -99,6 +99,8 @@ def write(path, data):
         (lambda path: write(path, b"\x00" * 1019 + b"%PDF-1.7\n"), formats.PDF),
         (lambda path: write(path, b"junk before the header\r\n%PDF-1.4\n%\xe2\xe3\xcf\xd3\n" + bytes(range(256))), formats.PDF),
         (lambda path: write(path, b"junk before the header\r\n%PDF-1.4\n"), formats.TEXT),
+        (lambda path: write(path, codecs.BOM_UTF8 + b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n" + bytes(range(256))), formats.PDF),
+        (lambda path: write(path, codecs.BOM_UTF8 + b"%PDF-1.4 is a header\n"), formats.TEXT),
         (lambda path: cfb_writer.write(path, {"WordDocument": b"w", "Workbook": b"b"}), "application/msword"),
         (lambda path: write(path, "# 제목\n본문".encode()), formats.TEXT),
         (lambda path: write(path, codecs.BOM_UTF16_LE + "본문".encode("utf-16-le")), formats.TEXT),

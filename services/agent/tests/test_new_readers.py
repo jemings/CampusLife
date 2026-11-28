@@ -208,3 +208,44 @@ async def test_a_type_the_format_table_gained_is_read_by_the_reader_of_it(db, de
     monkeypatch.setattr(formats, "BY_EXTENSION", {**formats.BY_EXTENSION, ".notes": gained})
 
     assert await hub_with(db, blob_store, device, tmp_path, TEXT, notes, base=()).runner.catch_up() == 1
+
+
+async def test_a_reader_whose_params_for_a_type_changed_is_not_queued_again(db, device, blob_store, tmp_path):
+    """C1: params changed for a type the reader already read is a change of what it reads, which waits for a
+    reprocess (D26 decision 5), not a reading the Hub gained."""
+    old = fake("echo", {"text/markdown": {"mode": "a"}})
+    new = fake("echo", {"text/markdown": {"mode": "b"}})
+    before = hub_with(db, blob_store, device, tmp_path, TEXT, old, base=())
+    await before.runner.catch_up()
+    await before.capture(("a.md", NOTES))
+    await before.settle()
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, new, base=())
+
+    assert await after.runner.catch_up() == 0
+
+
+async def test_a_catch_up_that_fails_midway_queues_nothing_and_records_nothing(db, device, blob_store, tmp_path, monkeypatch):
+    """C2: the catch-up is one transaction."""
+    before = hub_with(db, blob_store, device, tmp_path, TEXT, base=())
+    await before.runner.catch_up()
+    await before.capture(("a.md", NOTES), ("b.md", b"# 2\nother"))
+    await before.settle()
+    queued = len(await before.jobs())
+    echo = fake("echo", {"text/markdown": {}})
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, echo, base=())
+    files = type(after.files)
+    original, calls = files.plan, []
+
+    def second_fails(self, tx, attachment_id, reprocess=None):
+        calls.append(attachment_id)
+        if len(calls) == 2:
+            raise RuntimeError("midway")
+        return original(self, tx, attachment_id, reprocess)
+
+    monkeypatch.setattr(files, "plan", second_fails)
+    with pytest.raises(RuntimeError, match="midway"):
+        await after.runner.catch_up()
+
+    assert len(await after.jobs()) == queued
+    monkeypatch.undo()
+    assert await hub_with(db, blob_store, device, tmp_path, TEXT, echo, base=()).runner.catch_up() == 2

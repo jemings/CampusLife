@@ -172,3 +172,9 @@ def test_a_markdown_heading_longer_than_a_block_is_cut(tmp_path):
     result = extracted(tmp_path, "# 아주 긴 제목입니다\n본문\n".encode(), limits=Limits(max_block_text_chars=6))
 
     assert places(result) == [("heading", "아주 긴 제", [], 0), ("paragraph", "본문", ["아주 긴 제"], 0)]
+
+
+def test_text_reads_by_its_first_version():
+    """Outline changed no output v1 could store: it only cuts a heading v1 made too long to store (D26), so the
+    version stays and the files text read keep their readings."""
+    assert text.VERSION == "1"
