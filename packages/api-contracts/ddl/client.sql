@@ -12,11 +12,15 @@
 
 -- Where this device stands against its Hub, one row with id 0: epoch is the base epoch, set from
 -- the first GET /v1/hub and replaced only by a 409 epoch_changed; cursor is the next since.
+-- stopped: null while the sync runs; else why it stopped until the user acts, which a pass
+-- answers with and asks the Hub nothing: unauthorized, device_revoked, wrong_hub,
+-- contract_too_old. Pairing again or an app update clears it.
 CREATE TABLE meta (
     id INTEGER NOT NULL PRIMARY KEY,
     hub_id TEXT NOT NULL,
     epoch TEXT NOT NULL,
-    cursor INTEGER NOT NULL
+    cursor INTEGER NOT NULL,
+    stopped TEXT
 );
 
 -- The Hub's last state of every changes-feed row, of any entity: a version that does not read an
