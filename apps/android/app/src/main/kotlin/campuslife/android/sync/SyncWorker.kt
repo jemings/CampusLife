@@ -49,8 +49,10 @@ class SyncWorker(
             }
             SyncOutcome.NotPaired -> Result.success(output)
             SyncOutcome.HubNotReached, SyncOutcome.HubFailed, SyncOutcome.Dormant -> Result.retry()
-            SyncOutcome.Unauthorized, SyncOutcome.Revoked, SyncOutcome.WrongHub, SyncOutcome.ContractTooOld ->
+            SyncOutcome.Unauthorized, SyncOutcome.Revoked, SyncOutcome.WrongHub, SyncOutcome.ContractTooOld -> {
+                schedule.stopUntilUserActs()
                 Result.failure(output)
+            }
         }
     }
 
@@ -93,7 +95,10 @@ class SyncScheduler(private val work: WorkManager) : SyncSchedule {
         work.enqueueUniqueWork(LARGE, ExistingWorkPolicy.KEEP, request)
     }
 
-    override fun stopUntilUserActs(): Unit = TODO()
+    override fun stopUntilUserActs() {
+        work.cancelUniqueWork(PERIODIC)
+        work.cancelUniqueWork(LARGE)
+    }
 
     companion object {
         const val SYNC = "sync"

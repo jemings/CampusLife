@@ -71,9 +71,13 @@ class SyncEngine(
 ) {
     private val passing = ReentrantLock()
 
-    /** [allowLarge]: the network is unmetered, or the user lets large Blobs go over any network. */
+    /**
+     * [allowLarge]: the network is unmetered, or the user lets large Blobs go over any network. An outcome only the
+     * user can mend is kept, and later passes answer with it without asking the Hub until [SyncStore.resume].
+     */
     fun run(allowLarge: Boolean): SyncOutcome = passing.withLock {
-        try {
+        store.standing()?.stopped?.let { stopped -> return@withLock STOPS.entries.first { it.value == stopped }.key }
+        val outcome = try {
             Pass(allowLarge).run()
         } catch (stop: Stop) {
             stop.outcome
@@ -84,6 +88,8 @@ class SyncEngine(
                 is HubTrouble.Unreadable -> SyncOutcome.HubFailed
             }
         }
+        STOPS[outcome]?.let(store::stop)
+        outcome
     }
 
     private class Stop(val outcome: SyncOutcome) : Exception(outcome.toString())
@@ -308,6 +314,14 @@ class SyncEngine(
         const val FINALIZE_ROUNDS = 3
 
         const val UPLOAD_ROUNDS = 2
+
+        /** What [SyncStore.stop] keeps for each outcome only the user can mend. */
+        val STOPS = mapOf(
+            SyncOutcome.Unauthorized to ErrorCode.UNAUTHORIZED.value,
+            SyncOutcome.Revoked to ErrorCode.DEVICE_REVOKED.value,
+            SyncOutcome.WrongHub to "wrong_hub",
+            SyncOutcome.ContractTooOld to ErrorCode.CONTRACT_TOO_OLD.value,
+        )
 
         /** The codes of a 400 that refuses a batch for one Mutation in it (openapi/sync.yaml postMutations). */
         val BATCH_REFUSALS = setOf(ErrorCode.INVALID_REQUEST, ErrorCode.NOT_CANONICAL)

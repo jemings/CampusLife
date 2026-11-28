@@ -56,11 +56,18 @@ class SyncStore(
         }
     }
 
-    /** Keeps why the sync stopped until the user acts; passes answer with it and ask the Hub nothing until [resume]. */
-    fun stop(reason: String): Unit = TODO()
+    /**
+     * Keeps why the sync stopped until the user acts; passes answer with it and ask the Hub nothing until [resume].
+     * Before the first GET /v1/hub there is no standing to keep it with, so nothing is kept.
+     */
+    fun stop(reason: String) {
+        db.syncMeta().setStopped(reason)
+    }
 
-    /** The user acted on a stop, as by pairing again (PR5): the next pass asks the Hub again. */
-    fun resume(): Unit = TODO()
+    /** The user acted on a stop, as by pairing again or updating the app: the next pass asks the Hub again. */
+    fun resume() {
+        db.syncMeta().setStopped(null)
+    }
 
     /** Sets a Mutation aside that makes the Hub refuse any batch it is in; the user sees it with the rejected. */
     fun refuse(mutationId: String): Unit = db.inTransaction {
