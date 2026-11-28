@@ -60,6 +60,7 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 
 - Artifact의 provider·model·prompt_version은 모델을 쓴 job에만 있습니다(렌디션에는 없음). `processing_summary`의 모양은 #8이 정합니다(E20). 유효 `cloud_policy`는 저장하지 않고 호출 때 계산합니다(D8).
 - ContentBlock은 테이블이 아니라 extraction Artifact 본문의 block입니다(D26). `id = sha256(canonical_json([blob, extractor.id, extractor.version, extractor.params, ordinal]))`, block_type, text 또는 payload, refs(Locator)를 가집니다. 같은 Blob을 같은 추출기·버전·params로 읽으면 id가 같습니다.
+- 알려진 block_type은 `heading`(payload `{level}`), `paragraph`, `page`(PDF 쪽, 텍스트 층이 없으면 text 없음), `table`(문서 안 표, payload 없음), `table_row`(시트·CSV의 행, payload `{formulas?}`), `table_header`, `notes`(슬라이드 노트)입니다(#6). 각 블록의 text·ref·payload 규칙은 `packages/api-contracts/HARNESS.md`의 "Artifact 본문"에 있습니다. extraction warning은 `no_text_layer`, `limit_reached`, `replaced_characters`, `objects_skipped`입니다.
 - 본문이 있는 Artifact의 `content_blob`은 공통 envelope `artifact/body` `{v, blocks:[{id, block_type, text?, payload?, refs}]}`이고 type마다 스키마가 좁힙니다(`extraction`, `identify`). `rendition`은 본문이 없고 `content_blob`이 렌디션 PDF 자체입니다. 파이프라인은 렌디션을 Relation으로 잇지 않습니다(D26).
 - Suggestion `proposed`의 모양은 action을 따릅니다. create_item은 Item create의 data, patch_item은 `{entity: item, id, set}`, add_relation은 Relation이며, Hub가 보내는 모양이라 안쪽도 열려 있습니다. 다만 patch_item의 `set` 키는 같은 계약의 열 이름이라 열려 있지 않습니다(새 열을 제안하는 patch는 계약 버전이 같은 Hub만 보냅니다). 모르는 action은 표시만 하고 수락할 수 없습니다.
 - `suggestion.accept`의 `edits`는 patch의 set처럼 키를 쓰고, 값은 제안 대신 쓸 값입니다. 공통 열 키는 계약 검증기가 owner·set_type으로 검사하고, `fields.<key>`와 제안에 있는 키인지는 Hub 적용기(#2)가 판정합니다.
@@ -137,7 +138,7 @@ Capture와 Attachment에는 처리 상태 필드가 없습니다. `unsafe_input`
 ## 7. 출처 (D13)
 
 - 본문이 있는 Artifact는 `artifact/body` envelope `{v, blocks:[{id, block_type, text?, payload?, refs}]}`이고, ref는 공통 Locator를 가리킵니다. #5가 envelope과 extraction·identify 본문을 정했고 #8이 additive로 넓힙니다(D26). `rendition`처럼 PDF 등 파일 자체가 내용인 Artifact는 envelope을 쓰지 않습니다.
-- Locator(`locator/locator`)의 kind는 `pdf_page, slide, doc_path, sheet_range, media_time, image_region, web_snapshot, document`입니다. kind는 Hub가 보내는 쪽에서 열린 값이고, 모르는 kind는 `blob`이 있으면 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. 이 계약의 `v`는 1이고, page·slide·shape는 1부터, `block_index`는 0부터 셉니다. `box`는 표시 방향 기준 `[x, y, w, h]`입니다(E17). `annotation` kind는 #17이 추가합니다. 모르는 kind도 `blob`(sha256), `capture`(UUID), `box`(정규화 `[x, y, w, h]`(D12·E17), `box_extent` 규칙도 적용)는 타입을 지킵니다. 시트 이름의 31자 한도는 코드 포인트 기준이고, 스프레드시트의 한도는 UTF-16 31단위입니다.
+- Locator(`locator/locator`)의 kind는 `pdf_page, slide, doc_path, sheet_range, media_time, image_region, web_snapshot, document`입니다. kind는 Hub가 보내는 쪽에서 열린 값이고, 모르는 kind는 `blob`이 있으면 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. 이 계약의 `v`는 1이고, page·slide·shape는 1부터, `block_index`는 0부터 셉니다. `box`는 표시 방향 기준 `[x, y, w, h]`입니다(E17). `annotation` kind는 #17이 추가합니다. 모르는 kind도 `blob`(sha256), `capture`(UUID), `box`(정규화 `[x, y, w, h]`(D12·E17), `box_extent` 규칙도 적용)는 타입을 지킵니다. 시트 이름의 31자 한도는 코드 포인트 기준이고, 스프레드시트의 한도는 UTF-16 31단위입니다. `sheet_range`의 `sheet`는 선택이고, 없으면 이름 없는 시트 하나뿐인 구분자 파일(CSV·TSV)의 범위입니다(#6).
 - 앵커는 Blob 해시입니다(녹음은 Capture 타임라인, 필기는 레이어 revision).
 - LLM은 입력 ContentBlock id(extraction 본문의 block id)로만 인용하고, Hub가 그 id를 검증해 Locator로 치환합니다.
 - 정확한 위치가 없으면 `document`를 쓰고 추정하지 않습니다.

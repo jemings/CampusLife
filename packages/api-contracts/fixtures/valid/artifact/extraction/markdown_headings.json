@@ -13,6 +13,9 @@
       "id": "e38eb5dcee645cc2ec47b486e7bcfa57230397b8342054e8d29431db430b60dd",
       "block_type": "heading",
       "text": "1. 과제 안내",
+      "payload": {
+        "level": 1
+      },
       "refs": [
         {
           "v": 1,
@@ -43,6 +46,9 @@
       "id": "61c147ada604e7f79381332beeb81f50af5ab37ede64b26db503d2737a173af1",
       "block_type": "heading",
       "text": "1.1 마감",
+      "payload": {
+        "level": 2
+      },
       "refs": [
         {
           "v": 1,

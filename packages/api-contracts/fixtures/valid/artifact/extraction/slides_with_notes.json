@@ -1,0 +1,71 @@
+{
+  "v": 1,
+  "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "extractor": {
+    "id": "pptx",
+    "version": "1",
+    "params": {}
+  },
+  "blocks": [
+    {
+      "id": "f5965c2e4ea51d7c16ff722c52a229c4c412d8f6496e4428bc36353bf573356e",
+      "block_type": "heading",
+      "text": "프로세스와 스레드",
+      "payload": {
+        "level": 1
+      },
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "slide",
+          "slide": 1
+        }
+      ]
+    },
+    {
+      "id": "b833a50fb39d842a00bb0c5caa15e7aa6c41a94f0c923ab5554c49a6c2974e35",
+      "block_type": "paragraph",
+      "text": "문맥 교환의 비용",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "slide",
+          "slide": 1
+        }
+      ]
+    },
+    {
+      "id": "c3e930df888362bd914dd39c2020e854db6176cf0eec918b16d4a660a5d5caf8",
+      "block_type": "notes",
+      "text": "예제는 칠판에서 풉니다.",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "slide",
+          "slide": 1
+        }
+      ]
+    },
+    {
+      "id": "bcf0214932f5dc7dfd04f710e5fcf4d159e3e18c5390c818ac4496a46d30f146",
+      "block_type": "table",
+      "text": "구분\t프로세스\t스레드\n주소 공간\t독립\t공유",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "slide",
+          "slide": 2
+        }
+      ]
+    }
+  ],
+  "warnings": [
+    {
+      "code": "objects_skipped"
+    }
+  ]
+}

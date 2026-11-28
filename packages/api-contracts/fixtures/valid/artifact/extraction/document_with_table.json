@@ -1,0 +1,139 @@
+{
+  "v": 1,
+  "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "extractor": {
+    "id": "docx",
+    "version": "1",
+    "params": {}
+  },
+  "blocks": [
+    {
+      "id": "730b1935003f7f91495c5dd650e929462e5dea7943e20102d35ce3755a72303c",
+      "block_type": "heading",
+      "text": "1. 과제 안내",
+      "payload": {
+        "level": 1
+      },
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "doc_path",
+          "heading_path": [],
+          "block_index": 0
+        }
+      ]
+    },
+    {
+      "id": "f7d2244a5c2e4c772750f4ceb585ae7b9f7da8807d7500d7f974b562e226bb4d",
+      "block_type": "paragraph",
+      "text": "보고서는 PDF로 제출합니다.",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "doc_path",
+          "heading_path": [
+            "1. 과제 안내"
+          ],
+          "block_index": 0
+        }
+      ]
+    },
+    {
+      "id": "5f321fb62c082e36de898e631c1678f0fb16f883deaef4047220be4452f39478",
+      "block_type": "table",
+      "text": "주차\t범위\n1\t서론\n2\t자료 구조",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "doc_path",
+          "heading_path": [
+            "1. 과제 안내"
+          ],
+          "block_index": 1
+        }
+      ]
+    },
+    {
+      "id": "ba1579fb38b3aff43ff4d108813dc7a8b38a6e048b24e60e14c5b7e1fa51565b",
+      "block_type": "heading",
+      "text": "1.1 마감",
+      "payload": {
+        "level": 2
+      },
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "doc_path",
+          "heading_path": [
+            "1. 과제 안내"
+          ],
+          "block_index": 2
+        }
+      ]
+    },
+    {
+      "id": "0c646ac009712fa290737a3edfca01cd95961135f4d134890e9cac7ca2bde976",
+      "block_type": "paragraph",
+      "text": "3월 14일 23:59까지입니다.",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "doc_path",
+          "heading_path": [
+            "1. 과제 안내",
+            "1.1 마감"
+          ],
+          "block_index": 0
+        }
+      ]
+    },
+    {
+      "id": "e57167cd1d343ef2a4a8af664cf99f5cb9db0ab732aca0c8e561b27cdb9592a6",
+      "block_type": "heading",
+      "text": "가) 늦은 제출",
+      "payload": {
+        "level": 9
+      },
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "doc_path",
+          "heading_path": [
+            "1. 과제 안내",
+            "1.1 마감"
+          ],
+          "block_index": 1
+        }
+      ]
+    },
+    {
+      "id": "40d4b92e6605260055c23b183950e218d1a20a0a48f6a45f410afbebe47fea7f",
+      "block_type": "paragraph",
+      "text": "하루에 10%씩 감점합니다.",
+      "refs": [
+        {
+          "v": 1,
+          "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "kind": "doc_path",
+          "heading_path": [
+            "1. 과제 안내",
+            "1.1 마감",
+            "가) 늦은 제출"
+          ],
+          "block_index": 0
+        }
+      ]
+    }
+  ],
+  "warnings": [
+    {
+      "code": "objects_skipped"
+    }
+  ]
+}
