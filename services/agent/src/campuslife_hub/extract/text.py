@@ -19,7 +19,8 @@ from .document import LIMIT_REACHED, Outline
 from .extracted import Extracted
 from .limits import Limits
 
-VERSION = "1"
+VERSION = "2"
+"""2: a heading longer than max_block_text_chars is cut to it (Outline) rather than failing the body."""
 
 MAX_BYTES_PER_CHAR = 4
 """Reading max_text_chars times this many bytes reads at least max_text_chars characters in any of the encodings."""

@@ -5,7 +5,7 @@ would otherwise repeat:
 - the heading stack and each block's doc_path: a heading closes the headings of its level and deeper, and a block's
   block_index counts the blocks under the last heading of its heading_path, from 0. A block that names its own ref
   (a PDF page, a slide) is not counted there;
-- cutting a block's text into blocks of at most max_block_text_chars;
+- cutting a block's text into blocks of at most max_block_text_chars, and a heading's to that length;
 - stopping at max_blocks blocks or max_text_chars characters: the result is partial with a limit_reached warning, and
   every later call adds nothing.
 """
@@ -34,8 +34,12 @@ class Outline:
         """_counts[0]: blocks before the first heading; _counts[i + 1]: blocks under _headings[i]."""
 
     def heading(self, level: int, text: str) -> bool:
-        """A heading of level (1 the outermost) and its text, whole: it is not cut into pieces. False once reading
+        """A heading of level (1 the outermost) and its text, cut to max_block_text_chars, which the blocks under it
+        name in their heading_path. A heading of blanks alone is left out and closes nothing. False once reading
         stopped."""
+        if not text.strip():
+            return True
+        text = text[:self._limits.max_block_text_chars]
         while self._headings and self._headings[-1][0] >= level:
             self._headings.pop()
             self._counts.pop()
