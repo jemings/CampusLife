@@ -591,3 +591,31 @@ async def test_a_core_that_cannot_register_its_index_hook_closes_its_database(tm
             pass
 
     assert len(closed) == 1
+
+
+async def test_a_late_retry_of_forget_does_not_drop_what_came_back_since(db, blob_store, tmp_path, index):
+    original = b"synthetic original again"
+    sha, _ = await extraction(db, blob_store, tmp_path, [("첫추출 문단", [])], subject_bytes=original)
+    await index.catch_up(db, blob_store)
+    hooks = PurgeHooks()
+    hooks.register("search", index.forget)
+    reader = reading(index._path)
+    try:
+        assert (await purge.purge_blob(db, blob_store, sha, hooks=hooks)).failed_hooks == ("search",)
+    finally:
+        reader.close()
+    await index.catch_up(db, blob_store)
+    again, _ = await extraction(db, blob_store, tmp_path, [("다시온 문단", [])], subject_bytes=original)
+    assert again == sha
+    await index.catch_up(db, blob_store)
+
+    [finish] = await purge.finish_unfinished(db, blob_store, hooks)
+    await index.catch_up(db, blob_store)
+
+    assert finish.finished
+    rebuilt = SearchIndex(tmp_path / "rebuilt" / "search.sqlite3")
+    await rebuilt.catch_up(db, blob_store)
+    held, built_once = await index.documents(), await rebuilt.documents()
+    rebuilt.close()
+    assert [document.text for document in held] == ["다시온 문단"]
+    assert held == built_once
