@@ -77,7 +77,16 @@ def test_reading_stops_inside_a_block_at_max_text_chars():
     assert outline.block("paragraph", "가나") and not outline.block("paragraph", "다라마")
     assert not outline.block("page", None, ref={"kind": "pdf_page", "page": 1})
     assert [block["text"] for block in outline.result.blocks] == ["가나", "다라"]
-    assert outline.stopped and outline.result.partial and outline.result.warnings == ["limit_reached"]
+    assert outline.result.partial and outline.result.warnings == ["limit_reached"]
+
+
+def test_a_block_that_spends_the_last_characters_is_whole_and_the_next_adds_nothing():
+    outline = Outline(Limits(max_text_chars=4))
+
+    assert outline.block("paragraph", "가나다라")
+    assert not outline.block("paragraph", "마")
+    assert [block["text"] for block in outline.result.blocks] == ["가나다라"]
+    assert outline.result.partial and outline.result.warnings == ["limit_reached"]
 
 
 def test_a_heading_cut_at_the_limit_opens_no_section():
