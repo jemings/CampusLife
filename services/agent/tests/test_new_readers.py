@@ -249,3 +249,32 @@ async def test_a_catch_up_that_fails_midway_queues_nothing_and_records_nothing(d
     assert len(await after.jobs()) == queued
     monkeypatch.undo()
     assert await hub_with(db, blob_store, device, tmp_path, TEXT, echo, base=()).runner.catch_up() == 2
+
+
+async def test_a_reader_whose_params_changed_waits_even_when_another_reader_is_gained(db, device, blob_store, tmp_path):
+    old = fake("echo", {"text/markdown": {"mode": "a"}})
+    new = fake("echo", {"text/markdown": {"mode": "b"}})
+    before = hub_with(db, blob_store, device, tmp_path, TEXT, old, base=())
+    await before.runner.catch_up()
+    await before.capture(("a.md", NOTES))
+    await before.settle()
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, new, CONVERT, base=())
+
+    assert await after.runner.catch_up() == 1
+
+    assert [job.params for job in await after.jobs("extract.fake_echo")] == [{"mode": "a"}]
+    assert len(await after.jobs("render.fake_convert")) == 1
+
+
+async def test_a_gained_type_of_bytes_the_reader_read_with_the_same_params_is_not_read_again(db, device, blob_store, tmp_path):
+    """The Blob as a.txt and a.md: echo read it as plain text; a newer echo also reads Markdown, with the same params,
+    so the Blob was read so already, and the newer version waits for a reprocess."""
+    plain = fake("echo", {"text/plain": {}})
+    both = fake("echo", {"text/plain": {}, "text/markdown": {}}, version="2")
+    hub = hub_with(db, blob_store, device, tmp_path, TEXT, plain, base=())
+    await hub.runner.catch_up()
+    await hub.capture(("a.txt", NOTES), ("a.md", NOTES))
+    await hub.settle()
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, both, base=())
+
+    assert await after.runner.catch_up() == 0
