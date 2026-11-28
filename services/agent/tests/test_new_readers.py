@@ -1,0 +1,150 @@
+"""A Hub that starts with readers it lacked queues them for the files it already holds, and nothing else (#6 PR2
+decision, D28): a new extractor or converter, or one that reads a type it did not, is planned for each identified
+file it reads that it never read; a reader whose version or limits changed, and a file identified under other
+identify rules, wait for a reprocess (D26 decision 5)."""
+
+import asyncio
+from dataclasses import replace
+
+import pytest
+from extract_harness import TEST_LIMITS, hub_with
+from test_capture_commit import blob_store, device
+
+from campuslife_hub.extract.extractors import TEXT
+from campuslife_hub.extract.fakes import fake
+from campuslife_hub.extract.framework import IDENTIFY, RULES_CHANGED, can_read
+from campuslife_hub.ingest import INGEST
+from campuslife_hub.jobs import JobState
+
+__all__ = ["blob_store", "device"]
+
+NOTES = "# 1장\n트리는 계층 구조입니다.".encode()
+ECHO = fake("echo", {"text/plain": {}, "text/markdown": {}})
+CONVERT = fake("pdf", {"text/plain": {}, "text/markdown": {}}, extractor_id="fake_convert", kind="render")
+
+
+async def read_by(db, blob_store, device, tmp_path, *readers):
+    """A Hub with readers that has read one Markdown note, and the Capture holding it."""
+    hub = hub_with(db, blob_store, device, tmp_path, *readers, base=())
+    await hub.runner.catch_up()
+    capture = await hub.capture(("노트.md", NOTES))
+    await hub.settle()
+    return hub, capture
+
+
+def kinds(found):
+    return [(job.job_type, job.state) for job in found]
+
+
+async def status(hub, attachment):
+    return await hub.db.read(lambda snap: hub.files.status(snap, attachment["id"]))
+
+
+@pytest.mark.parametrize(("added", "job_type", "artifact_type"), [(ECHO, "extract.fake_echo", "extraction"), (CONVERT, "render.fake_convert", "rendition")])
+async def test_a_reader_the_hub_gained_reads_the_files_it_already_holds(db, device, blob_store, tmp_path, added, job_type, artifact_type):
+    before, capture = await read_by(db, blob_store, device, tmp_path, TEXT)
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, added, base=())
+
+    assert await after.runner.catch_up() == 1
+    await after.settle()
+
+    assert kinds(await after.jobs()) == [
+        (INGEST, JobState.SUCCEEDED), (IDENTIFY, JobState.SUCCEEDED), ("extract.text", JobState.SUCCEEDED), (job_type, JobState.SUCCEEDED),
+    ]
+    assert len([artifact for artifact in await after.artifacts(artifact_type) if artifact["pipeline_version"].startswith(added.id)]) == 1
+    assert (await status(after, capture["attachments"][0])).facts == ()
+
+
+async def test_a_reader_that_reads_a_type_it_did_not_reads_the_files_of_that_type(db, device, blob_store, tmp_path):
+    plain_only = fake("echo", {"text/plain": {}})
+    before, _ = await read_by(db, blob_store, device, tmp_path, TEXT, plain_only)
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, ECHO, base=())
+
+    assert await after.runner.catch_up() == 1
+    await after.settle()
+
+    assert [job.state for job in await after.jobs("extract.fake_echo")] == [JobState.SUCCEEDED]
+
+
+@pytest.mark.parametrize(
+    ("changed", "limits"),
+    [(replace(TEXT, version="2"), TEST_LIMITS), (replace(TEXT, limits=replace(TEST_LIMITS, timeout_s=31.0)), None)],
+    ids=["version", "limits"],
+)
+async def test_a_reader_whose_version_or_limits_changed_waits_for_a_reprocess(db, device, blob_store, tmp_path, changed, limits):
+    before, capture = await read_by(db, blob_store, device, tmp_path, TEXT)
+    after = hub_with(db, blob_store, device, tmp_path, changed, base=(), limits=limits, identify_limits=TEST_LIMITS)
+
+    assert await after.runner.catch_up() == 0
+
+    [job] = await after.jobs("extract.text")
+    assert job.pipeline == before.registry.pipeline("extract.text") != after.registry.pipeline("extract.text")
+    assert (await status(after, capture["attachments"][0])).facts == (can_read("extract.text"),)
+
+
+async def test_a_file_identified_under_other_identify_rules_waits_for_a_reprocess(db, device, blob_store, tmp_path):
+    before, capture = await read_by(db, blob_store, device, tmp_path, TEXT)
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, ECHO, base=(), limits=replace(TEST_LIMITS, timeout_s=29.0))
+
+    assert await after.runner.catch_up() == 0
+
+    assert await after.jobs("extract.fake_echo") == []
+    assert (await status(after, capture["attachments"][0])).facts == (RULES_CHANGED,)
+
+
+async def test_a_file_whose_reader_failed_is_not_read_again(db, device, blob_store, tmp_path):
+    refusing = fake("refuse", {"text/markdown": {"status": "corrupt"}})
+    before, _ = await read_by(db, blob_store, device, tmp_path, TEXT, refusing)
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, refusing, ECHO, base=())
+
+    assert await after.runner.catch_up() == 1
+
+    assert len(await after.jobs("extract.fake_refuse")) == 1
+
+
+async def test_rules_the_hub_started_with_before_are_not_looked_through_again(db, device, blob_store, tmp_path, monkeypatch):
+    before, _ = await read_by(db, blob_store, device, tmp_path, TEXT)
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, ECHO, base=())
+    assert await after.runner.catch_up() == 1
+
+    def looked(*args):
+        raise AssertionError("the Hub looked through its files under readers it started with before")
+
+    monkeypatch.setattr(type(after.files), "plan", looked)
+    again = hub_with(db, blob_store, device, tmp_path, TEXT, ECHO, base=())
+
+    assert await again.runner.catch_up() == 0
+
+
+async def test_a_hub_that_goes_back_to_readers_it_had_queues_nothing_new(db, device, blob_store, tmp_path):
+    before, _ = await read_by(db, blob_store, device, tmp_path, TEXT)
+    await hub_with(db, blob_store, device, tmp_path, TEXT, ECHO, base=()).runner.catch_up()
+    queued = len(await before.jobs())
+
+    assert await before.runner.catch_up() == 0
+    assert len(await before.jobs()) == queued
+
+
+async def test_a_file_of_a_role_the_planner_skips_is_not_read(db, device, blob_store, tmp_path):
+    hub = hub_with(db, blob_store, device, tmp_path, TEXT, base=())
+    await hub.runner.catch_up()
+    await hub.capture(("a.md", NOTES), role="photo")
+    await hub.settle()
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, ECHO, base=())
+
+    assert await after.runner.catch_up() == 0
+    assert await after.jobs() == (await hub.jobs())
+
+
+async def test_the_runner_catches_up_when_it_starts(db, device, blob_store, tmp_path):
+    before, _ = await read_by(db, blob_store, device, tmp_path, TEXT)
+    after = hub_with(db, blob_store, device, tmp_path, TEXT, ECHO, base=())
+    stop = asyncio.Event()
+
+    async def read_then_stop():
+        while not [job for job in await after.jobs("extract.fake_echo") if job.state is JobState.SUCCEEDED]:
+            await asyncio.sleep(0.05)
+        stop.set()
+
+    async with asyncio.timeout(60):
+        await asyncio.gather(after.runner.run_forever(stop, idle_s=0.05), read_then_stop())

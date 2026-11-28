@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -110,13 +109,13 @@ class Hub:
         return await self.db.read(lambda snap: media.get(snap, sha256))
 
 
-def hub_with(db, blob_store, device, tmp_path, *extractors, limits=TEST_LIMITS, base=ALL):
-    """A Hub reading with base and extractors; limits, unless None, is the table of identify and every reader alike,
-    and with None each keeps its own."""
+def hub_with(db, blob_store, device, tmp_path, *extractors, limits=TEST_LIMITS, base=ALL, identify_limits=None):
+    """A Hub reading with base and extractors; limits, unless None, is the table of every reader alike, and with None
+    each keeps its own. identify runs under identify_limits, or else limits, or else IDENTIFY_LIMITS."""
     readers = (*base, *extractors)
     if limits is not None:
         readers = tuple(replace(reader, limits=limits) for reader in readers)
-    registry = build_registry(readers, IDENTIFY_LIMITS if limits is None else limits)
+    registry = build_registry(readers, identify_limits or limits or IDENTIFY_LIMITS)
     clock = Clock()
     runner = JobRunner(JobContext(db, blob_store, registry, tmp_path / "work"), clock=clock)
     return Hub(db, blob_store, device, tmp_path, registry, clock, runner)
