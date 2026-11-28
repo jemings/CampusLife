@@ -186,7 +186,7 @@ async def test_a_new_extractor_version_makes_a_new_artifact_and_leaves_the_old_o
     await hub.capture(("a.md", NOTES))
     await hub.settle()
     [old] = await hub.artifacts("extraction")
-    newer = Extractor("text", "2", TEXT.entry, TEXT.accepts)
+    newer = Extractor("text", str(int(TEXT.version) + 1), TEXT.entry, TEXT.accepts)
     upgraded = hub_with(db, blob_store, device, tmp_path, newer, base=())
 
     await upgraded.capture(("again.md", NOTES))
@@ -195,7 +195,7 @@ async def test_a_new_extractor_version_makes_a_new_artifact_and_leaves_the_old_o
     old_body, _ = await hub.body(old)
     extractions = await hub.artifacts("extraction")
     assert [artifact["id"] for artifact in extractions][0] == old["id"]
-    assert [artifact["pipeline_version"] for artifact in extractions] == [f"text-1+L{TEST_LIMITS.hash8()}", f"text-2+L{TEST_LIMITS.hash8()}"]
+    assert [artifact["pipeline_version"] for artifact in extractions] == [f"text-{TEXT.version}+L{TEST_LIMITS.hash8()}", f"text-{newer.version}+L{TEST_LIMITS.hash8()}"]
     new_body, _ = await hub.body(extractions[1])
     assert [block["text"] for block in new_body["blocks"]] == [block["text"] for block in old_body["blocks"]]
     assert not {block["id"] for block in new_body["blocks"]} & {block["id"] for block in old_body["blocks"]}

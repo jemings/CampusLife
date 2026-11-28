@@ -88,7 +88,7 @@ def test_identify_reads_by_the_second_version_of_its_rules():
 
 
 def test_the_default_table_keeps_the_hash_it_had_before_tables_had_types():
-    """text keeps VERSION 1 through the Outline move, so its pipeline must not change with the table's JSON."""
+    """A table's type is not hashed, so a reader's pipeline changes with its bounds and its version alone."""
     assert DEFAULT_LIMITS.hash8() == IDENTIFY_LIMITS.hash8() == "92874ddf"
 
 

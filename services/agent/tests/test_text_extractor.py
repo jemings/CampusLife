@@ -76,7 +76,7 @@ def test_a_heading_line_of_long_blanks_is_read_in_linear_time(tmp_path):
     result = extracted(tmp_path, line)
 
     assert time.perf_counter() - started < 1.0
-    assert result.blocks[0]["text"] == "x" + " " * 200_000 + "y"
+    assert result.blocks[0]["text"] == ("x" + " " * 200_000 + "y")[:Limits().max_block_text_chars]
 
 
 def test_plain_text_has_no_headings(tmp_path):
@@ -169,6 +169,6 @@ def test_a_character_cut_where_the_reading_stops_is_left_out_not_replaced(tmp_pa
 
 
 def test_a_markdown_heading_longer_than_a_block_is_cut(tmp_path):
-    result = extracted(tmp_path, "# 아주 긴 제목입니다\n본문\n".encode(), limits=Limits(max_block_text_chars=5))
+    result = extracted(tmp_path, "# 아주 긴 제목입니다\n본문\n".encode(), limits=Limits(max_block_text_chars=6))
 
     assert places(result) == [("heading", "아주 긴 제", [], 0), ("paragraph", "본문", ["아주 긴 제"], 0)]

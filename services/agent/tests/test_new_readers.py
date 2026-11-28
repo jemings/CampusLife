@@ -69,7 +69,7 @@ async def test_a_reader_that_reads_a_type_it_did_not_reads_the_files_of_that_typ
 
 @pytest.mark.parametrize(
     ("changed", "limits"),
-    [(replace(TEXT, version="2"), TEST_LIMITS), (replace(TEXT, limits=replace(TEST_LIMITS, timeout_s=31.0)), None)],
+    [(replace(TEXT, version=str(int(TEXT.version) + 1)), TEST_LIMITS), (replace(TEXT, limits=replace(TEST_LIMITS, timeout_s=31.0)), None)],
     ids=["version", "limits"],
 )
 async def test_a_reader_whose_version_or_limits_changed_waits_for_a_reprocess_when_another_is_gained(db, device, blob_store, tmp_path, changed, limits):
