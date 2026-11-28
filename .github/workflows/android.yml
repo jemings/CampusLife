@@ -56,6 +56,7 @@ jobs:
           git add --intent-to-add app/schemas
           git diff --exit-code -- app/schemas
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        if: ${{ !cancelled() }}
       - name: Compare the harness output with the contract fixtures
         working-directory: packages/api-contracts
         run: |
