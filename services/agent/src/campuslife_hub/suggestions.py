@@ -24,7 +24,7 @@ from .db import Tx
 from .devices import DeviceId
 from .outcomes import Applied, Conflict, Outcome, Reason, Rejected
 from .store import Entity, EntityRef
-from .user_data import FIELDS_PREFIX, ITEM_DATA, ITEM_KINDS, MUTATION_DEFS, TEXT_COLUMNS, create_item, create_relation, patch, with_value
+from .user_data import FIELDS_PREFIX, ITEM_DATA, ITEM_KINDS, MUTATION_DEFS, TEXT_COLUMNS, create_item, create_relation, live, patch, with_value
 
 DECIDED = frozenset({"accepted", "dismissed"})
 
@@ -245,10 +245,14 @@ def _accept_create_item(tx: Tx, suggestion: dict, write: dict, device: DeviceId)
 
 
 def _accept_patch_item(tx: Tx, suggestion: dict, write: dict, device: DeviceId) -> Accepted:
-    """Compare-and-set like a client's patch (D18); the evidence is added when at least one key was written."""
+    """Compare-and-set like a client's patch (D18); the evidence is added when at least one key was written. Its keys
+    that lose are kept in a ConflictRecord as a client's are; refused because the Item is not live, it keeps none, as
+    the open Suggestion still holds what it proposes (D24 decision 1, E3)."""
     anchors = _anchors(suggestion["evidence"])
     if not all(refs.exists(tx, anchor) for anchor in anchors):
         return Accepted(Rejected(Reason.LINK_TARGET_MISSING), {})
+    if live(tx, EntityRef(Entity.ITEM, write["id"])) is None:
+        return Accepted(Rejected(Reason.DELETED), {})
     patched = patch(tx, write, device)
     if isinstance(patched, Applied) or (isinstance(patched, Conflict) and patched.applied_fields):
         _copy_evidence(tx, f"item:{write['id']}", anchors)
