@@ -2,7 +2,7 @@
 
 `<root>/cache/search.sqlite3` keeps a document for each text the Hub can show: an Item's title and body, an
 Attachment's file name, and each block of the current extraction of a Blob with its Locators. A document holds the
-text as stored, the folded text a LIKE scan reads, and, in an FTS5 table that keeps it, the analyzed text.
+text as stored and the folded text a LIKE scan reads; a contentless FTS5 table indexes the analyzed text.
 
 The index follows the database's changes feed past a cursor (`catch_up`) and writes the cursor in the transaction
 that writes the documents. A purge hook (`forget`) drops what a purge removed. One lock keeps a batch of the follower,
@@ -14,7 +14,7 @@ one of them is not what the database and this code say, the file is dropped and 
 file is built the same way. A new extractor version is not a reason: its Artifact is a change like any other.
 
 The connection runs with PRAGMA secure_delete on and the FTS5 table with its own secure-delete option, and `forget`
-empties the write-ahead log, so the bytes of what a purge removed leave the files (U2).
+rewrites the FTS5 index and empties the write-ahead log, so the bytes of what a purge removed leave the files (U2).
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from campuslife_contracts import canonical_json
 from .. import artifacts, store
 from ..blobs import BlobStore
 from ..data_root import Layout
-from ..db import ReadOnlyDatabase, Snapshot
+from ..db import CHECKPOINT_BUSY_TIMEOUT_MS, ReadOnlyDatabase, Snapshot
 from ..identity import read_identity
 from ..purge import PurgeTarget
 from ..sqlite_probe import secure_delete_problems
@@ -47,6 +47,8 @@ INDEXED_ARTIFACT_TYPES = ("extraction",)
 INDEX_VERSION = f"{SCHEMA}:{ANALYZER.id}:{','.join(INDEXED_ARTIFACT_TYPES)}"
 BATCH = 256
 """Feed rows a batch reads; a batch holds the lock, so a purge hook waits for at most one."""
+FORGOTTEN = ""
+"""The version of a source whose documents a purge dropped; no source holds it, so the next change rewrites it."""
 
 _DDL = (
     "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -55,7 +57,7 @@ _DDL = (
     "CREATE TABLE docs (id INTEGER PRIMARY KEY, source TEXT NOT NULL, part TEXT NOT NULL, block_id TEXT, refs TEXT,"
     " original TEXT NOT NULL, folded TEXT NOT NULL)",
     "CREATE INDEX docs_by_source ON docs (source)",
-    f"CREATE VIRTUAL TABLE fts USING fts5(body, tokenize='{ANALYZER.fts5_tokenize}')",
+    f"CREATE VIRTUAL TABLE fts USING fts5(body, content='', contentless_delete=1, tokenize='{ANALYZER.fts5_tokenize}')",
     "INSERT INTO fts (fts, rank) VALUES ('secure-delete', 1)",
 )
 
@@ -193,7 +195,7 @@ class SearchIndex:
     def _open(self) -> sqlite3.Connection:
         if self._conn is None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(self._path, isolation_level=None, check_same_thread=False)
+            conn = sqlite3.connect(self._path, isolation_level=None, check_same_thread=False, timeout=CHECKPOINT_BUSY_TIMEOUT_MS / 1000)
             try:
                 conn.execute("PRAGMA journal_mode = WAL")
                 if problems := secure_delete_problems(conn):
@@ -239,9 +241,13 @@ class SearchIndex:
         return conn.execute("SELECT 1 FROM sources WHERE source = ? AND version = ?", (source.name, source.version)).fetchone() is not None
 
     @staticmethod
-    def _replace(conn: sqlite3.Connection, source: _Source, documents: Iterable[Document]) -> None:
-        conn.execute("DELETE FROM fts WHERE rowid IN (SELECT id FROM docs WHERE source = ?)", (source.name,))
-        conn.execute("DELETE FROM docs WHERE source = ?", (source.name,))
+    def _drop_documents(conn: sqlite3.Connection, name: str) -> None:
+        conn.execute("DELETE FROM fts WHERE rowid IN (SELECT id FROM docs WHERE source = ?)", (name,))
+        conn.execute("DELETE FROM docs WHERE source = ?", (name,))
+
+    @classmethod
+    def _replace(cls, conn: sqlite3.Connection, source: _Source, documents: Iterable[Document]) -> None:
+        cls._drop_documents(conn, source.name)
         conn.execute("DELETE FROM sources WHERE source = ?", (source.name,))
         if source.artifact is None and not source.documents:
             return
@@ -295,8 +301,13 @@ class SearchIndex:
                 self._conn = None
 
     def forget(self, target: PurgeTarget) -> None:
-        """Drop every document of what the purge removed and empty the write-ahead log (U2); a purge hook, so it runs
-        on a worker thread."""
+        """Drop every document of what the purge removed, rewrite the FTS5 index, and empty the write-ahead log (U2);
+        a purge hook, so it runs on a worker thread and again until it ends.
+
+        A source keeps its row, marked forgotten, so the follower works it out again when the purge's tombstones
+        come: purging the newer extraction of a Blob leaves the older one current. FTS5's secure-delete leaves the
+        first term of a leaf in the separators of the index's interior; 'optimize' writes the index again without
+        them (D27)."""
         with self._lock:
             conn = self._held()
             if conn is None:
@@ -309,7 +320,9 @@ class SearchIndex:
             }
             with _transaction(conn):
                 for name in sorted(names):
-                    self._replace(conn, _Source(name), ())
+                    self._drop_documents(conn, name)
+                conn.executemany("UPDATE sources SET version = ? WHERE source = ?", [(FORGOTTEN, name) for name in names])
+            conn.execute("INSERT INTO fts (fts) VALUES ('optimize')")
             (busy, _, _) = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
             if busy:
                 raise WalKept(f"the write-ahead log of {self._path} could not be emptied")
