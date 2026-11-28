@@ -123,6 +123,11 @@ def pdf(path: Path, params: Mapping, limits: Limits, out: Path) -> None:
     out.write_bytes(b"%PDF-1.7\n%" + json.dumps(dict(params), sort_keys=True).encode() + b"\n" + path.read_bytes() + b"\n%%EOF\n")
 
 
+def pdf_of_limits(path: Path, params: Mapping, limits: Limits, out: Path) -> None:
+    """A converter writing a small PDF that holds the table its child was handed."""
+    out.write_bytes(b"%PDF-1.7\n%" + repr(limits).encode() + b"\n%%EOF\n")
+
+
 def not_pdf(path: Path, params: Mapping, limits: Limits, out: Path) -> None:
     out.write_bytes(b"<html>not a PDF</html>")
 
