@@ -96,4 +96,9 @@ val TRANSITIONS: Map<Pair<TransferState, TransferEvent>, TransferState> = mapOf(
     (HELD to OutboxEvent.BLOB_LOST) to REJECTED,
     (ACKED to OutboxEvent.PULL_BEGUN) to PULLING,
     (PULLING to OutboxEvent.PULL_DONE) to SETTLED,
+    (PENDING to OutboxEvent.UNSENDABLE) to REJECTED,
+    (ACKED to OutboxEvent.EPOCH_CHANGED) to PENDING,
+    (PULLING to OutboxEvent.EPOCH_CHANGED) to PENDING,
+    (SETTLED to OutboxEvent.EPOCH_CHANGED) to PENDING,
+    (REJECTED to OutboxEvent.EPOCH_CHANGED) to PENDING,
 )
