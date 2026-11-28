@@ -168,10 +168,7 @@ class SyncEngine(
                     is HubClient.Opened.Stored -> return moved(blob, BlobEvent.HUB_HAS_BLOB)
                     is HubClient.Opened.Session -> value.session
                 }
-                is Answer.Refused -> return when (opened.code) {
-                    ErrorCode.HUB_STORAGE_FULL -> moved(blob, BlobEvent.DEFERRED).let { Step.HUB_FULL }
-                    else -> throw refusal(opened)
-                }
+                is Answer.Refused -> return waits(blob, opened)
             }
             store.onUpload(blob.sha256, BlobEvent.SESSION_OPENED)
             var missing = chunks(session) - session.received.toSet()
@@ -180,10 +177,10 @@ class SyncEngine(
                 when (val finalized = hub.finalize(blob.sha256, blob.size)) {
                     is Answer.Ok -> return moved(blob, BlobEvent.HUB_HAS_BLOB)
                     is Answer.Refused -> when {
-                        finalized.code == ErrorCode.INCOMPLETE -> missing = missingChunks(finalized) ?: throw refusal(finalized)
+                        finalized.code == ErrorCode.INCOMPLETE -> missing = missingChunks(finalized) ?: return waits(blob, finalized)
                         finalized.code == ErrorCode.HASH_MISMATCH -> return copyLost(blob)
                         finalized.status == NOT_FOUND -> return moved(blob, BlobEvent.SESSION_LOST)
-                        else -> throw refusal(finalized)
+                        else -> return waits(blob, finalized)
                     }
                 }
             }
@@ -194,7 +191,7 @@ class SyncEngine(
         private fun missingCopy(blob: Upload): Step = when (val finalized = hub.finalize(blob.sha256, blob.size)) {
             is Answer.Ok -> moved(blob, BlobEvent.HUB_HAS_BLOB)
             is Answer.Refused ->
-                if (finalized.status == NOT_FOUND || finalized.status == CONFLICT) copyLost(blob) else throw refusal(finalized)
+                if (finalized.status == NOT_FOUND || finalized.status == CONFLICT) copyLost(blob) else waits(blob, finalized)
         }
 
         /** Sends chunk [index]; null when it went, else where the Blob stands now. */
@@ -211,7 +208,7 @@ class SyncEngine(
                 is Answer.Refused -> when {
                     put.status == NOT_FOUND -> moved(blob, BlobEvent.SESSION_LOST)
                     put.code == ErrorCode.CHUNK_MISMATCH -> copyLost(blob)
-                    else -> throw refusal(put)
+                    else -> waits(blob, put)
                 }
             }
         }
@@ -221,6 +218,19 @@ class SyncEngine(
             moved(blob, BlobEvent.COPY_LOST)
         } catch (failed: IOException) {
             moved(blob, BlobEvent.DEFERRED)
+        }
+
+        /**
+         * A refusal of one Blob's upload leaves that Blob to wait and the pass goes on to the next Blob, the push and
+         * the pull. A refusal that speaks for every request still ends the pass, and hub_storage_full ends the uploads.
+         */
+        private fun waits(blob: Upload, refused: Answer.Refused): Step = when {
+            refused.code == ErrorCode.HUB_STORAGE_FULL -> moved(blob, BlobEvent.DEFERRED).let { Step.HUB_FULL }
+            refused.status == UNAUTHORIZED || refused.code in PASS_REFUSALS -> throw refusal(refused)
+            else -> {
+                lastError = "the Hub refused a Blob upload: ${refused.status} ${refused.code?.value.orEmpty()}".trimEnd()
+                moved(blob, BlobEvent.DEFERRED)
+            }
         }
 
         private fun moved(blob: Upload, event: BlobEvent): Step {
@@ -322,6 +332,9 @@ class SyncEngine(
             SyncOutcome.WrongHub to "wrong_hub",
             SyncOutcome.ContractTooOld to ErrorCode.CONTRACT_TOO_OLD.value,
         )
+
+        /** Refusals besides 401 that speak for every request of the pass, whichever operation drew them. */
+        val PASS_REFUSALS = setOf(ErrorCode.CONTRACT_TOO_OLD, ErrorCode.EPOCH_CHANGED)
 
         /** The codes of a 400 that refuses a batch for one Mutation in it (openapi/sync.yaml postMutations). */
         val BATCH_REFUSALS = setOf(ErrorCode.INVALID_REQUEST, ErrorCode.NOT_CANONICAL)
