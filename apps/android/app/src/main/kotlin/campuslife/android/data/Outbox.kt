@@ -14,6 +14,7 @@ import campuslife.wire.MutationOutcome
 import campuslife.wire.MutationResult
 import campuslife.wire.MutationSerializer
 import campuslife.wire.Patch
+import campuslife.wire.ResolveConflict
 import campuslife.wire.Restore
 import campuslife.wire.wireJson
 import kotlinx.serialization.json.jsonObject
@@ -62,6 +63,7 @@ private fun target(mutation: Mutation): Pair<String, String> = when (mutation) {
     is Restore -> mutation.entity.wireName() to mutation.id
     is AcceptSuggestion -> EntityName.SUGGESTION.value to mutation.suggestionId
     is DismissSuggestion -> EntityName.SUGGESTION.value to mutation.suggestionId
+    is ResolveConflict -> EntityName.CONFLICT_RECORD.value to mutation.conflictRecordId
 }
 
 internal fun MutableEntity.wireName(): String =

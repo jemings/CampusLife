@@ -91,7 +91,19 @@ data class DismissSuggestion(
     @SerialName("suggestion_id") val suggestionId: String,
 ) : Mutation
 
-/** The entities patch, delete and restore name. */
+/**
+ * Resolves a ConflictRecord (D24 decision 3). Without set it keeps the Hub's values; with set it is a patch of
+ * the record's entity, which entity names.
+ */
+@Serializable
+data class ResolveConflict(
+    @SerialName("mutation_id") override val mutationId: String,
+    @SerialName("conflict_record_id") val conflictRecordId: String,
+    val entity: MutableEntity,
+    val set: Map<String, SetEntry>? = null,
+) : Mutation
+
+/** The entities patch, delete, restore and conflict.resolve name. */
 @Serializable
 enum class MutableEntity {
     @SerialName("item") ITEM,
@@ -126,6 +138,7 @@ object MutationSerializer : KSerializer<Mutation> {
         Branch("restore", null, Restore::class, Restore.serializer()),
         Branch("suggestion.accept", null, AcceptSuggestion::class, AcceptSuggestion.serializer()),
         Branch("suggestion.dismiss", null, DismissSuggestion::class, DismissSuggestion.serializer()),
+        Branch("conflict.resolve", null, ResolveConflict::class, ResolveConflict.serializer()),
     )
 
     override val descriptor: SerialDescriptor = buildClassSerialDescriptor("campuslife.mutation")
