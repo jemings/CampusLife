@@ -278,6 +278,44 @@ async def test_maintenance_finishes_a_purge_left_unfinished(tmp_path):
         assert not core.blobs.path_of(sha).exists()
 
 
+def created_note(title):
+    return {"mutation_id": str(uuid.uuid4()), "op": "create", "entity": "item", "id": str(uuid.uuid4()), "data": {"kind": "note", "title": title, "fields": {}}}
+
+
+async def test_a_served_hub_indexes_what_changes_for_search(tmp_path):
+    async with serving(tmp_path, config={"search_every": timedelta(seconds=0.05)}) as (core, *_):
+        note = created_note("자료구조 정리")
+        await mutations.apply(core.db, [note], core.hub_device)
+
+        async def found():
+            return [hit.source for hit in await core.search.find("자료구조")] == [f"item:{note['id']}"]
+
+        await until(found)
+
+
+async def test_a_failed_index_round_is_logged_and_the_next_one_runs(tmp_path, caplog):
+    with caplog.at_level(logging.ERROR, logger="campuslife_hub.host"):
+        async with serving(tmp_path, config={"search_every": timedelta(seconds=0.05)}) as (core, *_):
+            real, rounds = core.search.catch_up, []
+
+            async def failing_once(*args, **kwargs):
+                rounds.append(1)
+                if len(rounds) == 1:
+                    raise OSError("disk unplugged")
+                return await real(*args, **kwargs)
+
+            core.search.catch_up = failing_once
+            note = created_note("그래프 탐색")
+            await mutations.apply(core.db, [note], core.hub_device)
+
+            async def found_after_a_failure():
+                return len(rounds) >= 2 and [hit.source for hit in await core.search.find("그래프")] == [f"item:{note['id']}"]
+
+            await until(found_after_a_failure)
+
+    assert "indexing for search failed" in caplog.text
+
+
 async def test_a_failed_maintenance_round_is_logged_and_the_next_one_runs(tmp_path, caplog):
     rounds = []
 

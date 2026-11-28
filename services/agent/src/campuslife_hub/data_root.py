@@ -151,6 +151,15 @@ class Layout:
         return self.root / "logs"
 
     @property
+    def cache(self) -> Path:
+        """What the Hub rebuilds from the database and the Blobs when it is missing; never backed up (D9, E16)."""
+        return self.root / "cache"
+
+    @property
+    def search_index(self) -> Path:
+        return self.cache / "search.sqlite3"
+
+    @property
     def work(self) -> Path:
         """Each running job's own directory, work/<job id>/, which its handler empties when it ends (S15); what a
         stopped Hub left goes when the Hub opens."""

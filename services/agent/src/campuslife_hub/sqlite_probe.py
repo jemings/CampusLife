@@ -1,7 +1,8 @@
 """What the Hub needs from the SQLite it runs on (D16, E2).
 
 RETURNING sets the version floor; the rest are probed by trying them, because a
-build's version does not say which optional modules it was compiled with.
+build's version does not say which optional modules it was compiled with. The
+search index needs FTS5's contentless_delete (3.43) and secure-delete option (3.44) (D27).
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ MIN_VERSION = (3, 35, 0)
 
 FEATURE_PROBES = {
     "fts5": "CREATE VIRTUAL TABLE temp.probe_fts5 USING fts5(body)",
+    "fts5 secure-delete": "INSERT INTO temp.probe_fts5 (probe_fts5, rank) VALUES ('secure-delete', 1)",
+    "fts5 contentless_delete": "CREATE VIRTUAL TABLE temp.probe_contentless USING fts5(body, content='', contentless_delete=1)",
     "fts5 trigram tokenizer": "CREATE VIRTUAL TABLE temp.probe_trigram USING fts5(body, tokenize='trigram')",
     "json_extract": "SELECT json_extract('{\"a\": 1}', '$.a')",
     "generated column": "CREATE TEMP TABLE probe_generated (a INTEGER, b INTEGER GENERATED ALWAYS AS (a + 1))",

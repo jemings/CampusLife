@@ -143,7 +143,7 @@ Windows 파일시스템이 바이트의 원천이고, SQLite에는 메타데이�
     ├── staging\                       # 해시를 확인하기 전 파일 (blobs와 같은 볼륨, 기동 때 잔여물 삭제)
     ├── uploads\<session uuid>\<index>  # 업로드 세션의 chunk (blobs와 같은 볼륨, 7일 지난 세션 정리)
     ├── logs\hub.log                   # 지금 파일 + 이전 5개(각 5 MiB), 비밀 값·강의 본문 가림 (E19)
-    ├── cache\                         # 이후(#11 등): FTS 인덱스, 썸네일, overlay 렌더링 — 백업 안 함
+    ├── cache\search.sqlite3           # 검색 색인(D27): 지우면 다시 만듦, secure_delete=ON — 백업 안 함. 이후 썸네일, overlay 렌더링
     └── exports\                       # 이후: 사람이 읽는 트리 복사본
 
     <백업 드라이브의 폴더>\

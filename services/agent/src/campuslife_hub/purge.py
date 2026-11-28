@@ -124,10 +124,6 @@ class PurgeHooks:
         return list(self._hooks.items())
 
 
-HOOKS = PurgeHooks()
-register = HOOKS.register
-
-
 def _listed(values: Iterable[str]) -> str:
     return json.dumps(sorted(values))
 
@@ -289,7 +285,7 @@ async def _finish(db: Database, blobs: BlobStore, hooks: PurgeHooks, journal_id:
     return Finish(journal_id, tuple(failed), kept, not emptied)
 
 
-async def purge_blob(db: Database, blobs: BlobStore, sha256: str, *, delete_notes: Iterable[str] = (), hooks: PurgeHooks = HOOKS) -> Purged:
+async def purge_blob(db: Database, blobs: BlobStore, sha256: str, *, delete_notes: Iterable[str] = (), hooks: PurgeHooks) -> Purged:
     """Purge sha256 and what was made from it, with the fork Notes in delete_notes; PurgeRefused, writing nothing,
     when the Hub holds nothing of it or delete_notes names a Note it does not reach."""
     chosen = tuple(delete_notes)
@@ -320,7 +316,7 @@ def purged_at(runner: Tx | Snapshot, ref: EntityRef) -> str | None:
     return registered_at
 
 
-async def finish_unfinished(db: Database, blobs: BlobStore, hooks: PurgeHooks = HOOKS) -> list[Finish]:
+async def finish_unfinished(db: Database, blobs: BlobStore, hooks: PurgeHooks) -> list[Finish]:
     """Finish the purges left unfinished, oldest first; what each finish did."""
     rows = await db.read(lambda snap: snap.execute("SELECT id, target FROM purge_journal WHERE finished_at IS NULL ORDER BY registered_at, rowid").fetchall())
     return [await _finish(db, blobs, hooks, journal_id, PurgeTarget.from_json(target)) for journal_id, target in rows]
