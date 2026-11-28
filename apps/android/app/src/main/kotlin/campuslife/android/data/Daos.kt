@@ -61,6 +61,9 @@ interface OutboxDao {
     @Query("DELETE FROM mutation_outbox WHERE seq = :seq")
     fun remove(seq: Long)
 
+    @Query("DELETE FROM mutation_outbox WHERE state IN (:states)")
+    fun removeIn(states: List<String>)
+
     /** Forgets settled Mutations answered before [before]; a capture.commit stays as long as its originals (D24). */
     @Query("DELETE FROM mutation_outbox WHERE state = 'settled' AND op <> 'capture.commit' AND acked_at_ms < :before")
     fun forget(before: Long): Int

@@ -61,7 +61,14 @@ class SyncStore(
      * cache go, and so do the Mutations the previous Hub answered; those it refused go to the new Hub with the unsent.
      * The next pass takes the new Hub's epoch as the base epoch.
      */
-    fun changeHub(): Unit = TODO()
+    fun changeHub(): Unit = db.inTransaction {
+        db.syncMeta().clear()
+        db.cache().clear()
+        db.outbox().removeIn(listOf(TransferState.ACKED.column, TransferState.PULLING.column, TransferState.SETTLED.column))
+        for (row in db.outbox().inState(TransferState.REJECTED.column)) {
+            db.outbox().requeue(row.seq, TransferState.REJECTED.after(OutboxEvent.HUB_CHANGED).column)
+        }
+    }
 
     /**
      * Keeps why the sync stopped until the user acts; passes answer with it and ask the Hub nothing until [resume].
