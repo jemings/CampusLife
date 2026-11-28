@@ -1,21 +1,24 @@
+import asyncio
+import json
+import unicodedata
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from campuslife_contracts import validate
+from campuslife_contracts import contract_root, validate
 from conftest import contract_fixture
 from test_capture_commit import apply, blob_store, device, feed, new_id, store_bytes
+from test_uploads import tablet
 
 from campuslife_hub import artifacts, backup, jobs, mutations, store, suggestions
 from campuslife_hub.core import open_core
 from campuslife_hub.jobs import JobSpec, Pipeline
 from campuslife_hub.store import Entity, EntityRef
 
-__all__ = ["blob_store", "device"]
+__all__ = ["blob_store", "device", "tablet"]
 
 COURSE = "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
 CAPTURE = "0f8fad5b-d9cb-469f-a165-70867728950e"
 FINGERPRINT = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
-OTHER_FINGERPRINT = "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752"
 ASSIGNMENT = {
     "kind": "assignment",
     "title": "과제 2",
@@ -45,8 +48,8 @@ def page_at(pdf, page=2):
 SPOKEN = {"v": 1, "kind": "media_time", "capture": CAPTURE, "start_ms": 1930000, "end_ms": 1985000}
 
 
-async def propose(db, artifact_id, action="create_item", proposal=ASSIGNMENT, evidence=(), fingerprint=FINGERPRINT):
-    return await db.write(lambda tx: suggestions.propose(tx, artifact_id, action, proposal, list(evidence), fingerprint))
+async def propose(db, artifact_id, action="create_item", proposal=ASSIGNMENT, evidence=()):
+    return await db.write(lambda tx: suggestions.propose(tx, artifact_id, action, proposal, list(evidence)))
 
 
 def accepting(suggestion, edits=None):
@@ -86,6 +89,96 @@ def due_at_patch(item_id, before, after, **more):
     return {"entity": "item", "id": item_id, "set": {"due_at": {"from": before, "to": after}, **more}}
 
 
+def test_the_hub_has_a_fingerprint_a_write_and_an_accept_for_each_action_the_contract_knows():
+    known = json.loads((contract_root() / "schemas" / "suggestion" / "suggestion.json").read_text(encoding="utf-8"))["$defs"]["known"]
+
+    assert set(suggestions.ACTIONS) == set(known["properties"]["action"]["enum"])
+
+
+PDF = "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+PINNED_FINGERPRINTS = {
+    "create_item": (ASSIGNMENT, [page_at(PDF), SPOKEN], "d6d41e3414af511b70098fbc4cc38f0932c9ee14bf934b688f3c50760352d5c0"),
+    "patch_item": (due_at_patch(COURSE, "2026-03-16T14:59:00.000Z", "2026-03-23T14:59:00.000Z"), [page_at(PDF)],
+                   "d4f54be5a9fa13adf47e212fea5a12cece9f748ae1ff99322cb3ce093a33ff00"),
+    "add_relation": ({"id": f"item:{COURSE}|about|capture:{CAPTURE}", "from": f"item:{COURSE}", "type": "about", "to": f"capture:{CAPTURE}"},
+                     [], "d03f9463544c13c57180e7284dced0f4776a133e5030991488935ad655b25452"),
+}
+"""#9 decision 6, worked by hand: sha256 of the compact JSON of [action, kind, sorted anchors, due_at or starts_at, title
+NFC casefolded without spaces or punctuation], [action, item id, sorted [key, to]] or [action, relation id]. A Hub
+that computed another value would reopen every fingerprint the user decided."""
+
+
+@pytest.mark.parametrize("action", PINNED_FINGERPRINTS)
+def test_the_fingerprint_of_each_action_is_the_pinned_value(action):
+    proposed, evidence, expected = PINNED_FINGERPRINTS[action]
+    assert suggestions.fingerprint(action, proposed, evidence) == expected
+
+
+CREATE_ITEM_KEY = PINNED_FINGERPRINTS["create_item"][2]
+SAME_PROPOSAL_WORDED_OTHERWISE = {
+    "title in NFD": ({**ASSIGNMENT, "title": unicodedata.normalize("NFD", "과제 2")}, [page_at(PDF), SPOKEN]),
+    "title in other spacing and punctuation": ({**ASSIGNMENT, "title": " 과제-2. "}, [page_at(PDF), SPOKEN]),
+    "evidence in another order": (ASSIGNMENT, [SPOKEN, page_at(PDF)]),
+    "other places on the same anchors": (ASSIGNMENT, [page_at(PDF, 5), page_at(PDF, 9), {**SPOKEN, "start_ms": 0}]),
+    "title over two lines": ({**ASSIGNMENT, "title": "과제\n2"}, [page_at(PDF), SPOKEN]),
+    "title split by a tab": ({**ASSIGNMENT, "title": "과제\t2"}, [page_at(PDF), SPOKEN]),
+    "title with format characters": ({**ASSIGNMENT, "title": "\ufeff과제\u200b 2\u200d"}, [page_at(PDF), SPOKEN]),
+    "another start beside the same due date": ({**ASSIGNMENT, "starts_at": "2026-03-10T00:00:00.000Z"}, [page_at(PDF), SPOKEN]),
+    "other columns and fields": ({**ASSIGNMENT, "body": "조별 과제", "fields": {"course_id": COURSE}}, [page_at(PDF), SPOKEN]),
+}
+
+
+@pytest.mark.parametrize(("proposed", "evidence"), SAME_PROPOSAL_WORDED_OTHERWISE.values(), ids=SAME_PROPOSAL_WORDED_OTHERWISE.keys())
+def test_a_create_item_worded_otherwise_keeps_its_fingerprint(proposed, evidence):
+    assert suggestions.fingerprint("create_item", proposed, evidence) == CREATE_ITEM_KEY
+
+
+def test_a_create_item_title_in_other_case_keeps_its_fingerprint():
+    evidence = [page_at(PDF)]
+
+    assert suggestions.fingerprint("create_item", {**ASSIGNMENT, "title": "Lab Report 2"}, evidence) == suggestions.fingerprint(
+        "create_item", {**ASSIGNMENT, "title": "LAB REPORT 2"}, evidence)
+
+
+def test_without_a_due_date_the_start_is_the_date_in_the_fingerprint():
+    undated = {key: value for key, value in ASSIGNMENT.items() if key != "due_at"}
+
+    assert suggestions.fingerprint("create_item", undated, []) != suggestions.fingerprint(
+        "create_item", {**undated, "starts_at": "2026-03-10T00:00:00.000Z"}, [])
+
+
+@pytest.mark.parametrize(("title", "other"), [("C# lab", "C lab"), ("Week 3.1", "Week 31")])
+def test_decision_6_accepts_that_titles_apart_only_by_punctuation_share_a_fingerprint(title, other):
+    """The cost decision 6 took on: dropping punctuation joins these. #8 measures how often it bites."""
+    assert suggestions.fingerprint("create_item", {**ASSIGNMENT, "title": title}, []) == suggestions.fingerprint(
+        "create_item", {**ASSIGNMENT, "title": other}, [])
+
+
+ANOTHER_PROPOSAL = {
+    "another kind": ({**ASSIGNMENT, "kind": "exam", "fields": {"course_id": COURSE}}, [page_at(PDF), SPOKEN]),
+    "another due date": ({**ASSIGNMENT, "due_at": "2026-03-23T14:59:00.000Z"}, [page_at(PDF), SPOKEN]),
+    "no due date, so the start": ({key: value for key, value in ASSIGNMENT.items() if key != "due_at"}, [page_at(PDF), SPOKEN]),
+    "another title": ({**ASSIGNMENT, "title": "과제 3"}, [page_at(PDF), SPOKEN]),
+    "another anchor": (ASSIGNMENT, [page_at("e" * 64), SPOKEN]),
+    "one anchor fewer": (ASSIGNMENT, [page_at(PDF)]),
+}
+
+
+@pytest.mark.parametrize(("proposed", "evidence"), ANOTHER_PROPOSAL.values(), ids=ANOTHER_PROPOSAL.keys())
+def test_a_create_item_that_differs_in_a_key_part_has_another_fingerprint(proposed, evidence):
+    assert suggestions.fingerprint("create_item", proposed, evidence) != CREATE_ITEM_KEY
+
+
+def test_a_patch_item_fingerprint_follows_its_keys_and_values_not_their_from_or_order():
+    proposed, evidence, expected = PINNED_FINGERPRINTS["patch_item"]
+    reordered = {**proposed, "set": {"title": {"from": "a", "to": "b"}, **proposed["set"]}}
+
+    assert suggestions.fingerprint("patch_item", {**proposed, "set": {"due_at": {"from": None, "to": "2026-03-23T14:59:00.000Z"}}}, []) == expected
+    assert suggestions.fingerprint("patch_item", reordered, evidence) == suggestions.fingerprint(
+        "patch_item", {**proposed, "set": {**proposed["set"], "title": {"from": "x", "to": "b"}}}, evidence)
+    assert suggestions.fingerprint("patch_item", due_at_patch(COURSE, None, "2026-03-30T14:59:00.000Z"), evidence) != expected
+
+
 async def test_a_proposal_is_an_open_suggestion_in_the_feed(db, blob_store, tmp_path):
     artifact_id, pdf = await grounds(db, blob_store, tmp_path)
 
@@ -94,7 +187,8 @@ async def test_a_proposal_is_an_open_suggestion_in_the_feed(db, blob_store, tmp_
     assert validate("suggestion/suggestion", suggestion) == []
     assert {name: value for name, value in suggestion.items() if name != "id"} == {
         "source_artifact_id": artifact_id, "action": "create_item", "proposed": ASSIGNMENT,
-        "evidence": [page_at(pdf), SPOKEN], "fingerprint": FINGERPRINT, "state": "open",
+        "evidence": [page_at(pdf), SPOKEN], "fingerprint": suggestions.fingerprint("create_item", ASSIGNMENT, [page_at(pdf), SPOKEN]),
+        "state": "open",
     }
     assert rows(await feed(db), "suggestion") == {suggestion["id"]: suggestion}
 
@@ -127,7 +221,7 @@ async def test_a_fingerprint_the_user_decided_is_not_proposed_again(db, device, 
 async def test_a_newer_artifact_proposing_an_open_fingerprint_supersedes_the_older_suggestion(db, blob_store, tmp_path):
     artifact_id, _ = await grounds(db, blob_store, tmp_path)
     older = await propose(db, artifact_id)
-    other = await propose(db, artifact_id, fingerprint=OTHER_FINGERPRINT)
+    other = await propose(db, artifact_id, proposal={**ASSIGNMENT, "title": "과제 3"})
     newer_id, _ = await grounds(db, blob_store, tmp_path, pipeline="suggest-2", recorded_at=LATER)
 
     newer = await propose(db, newer_id)
@@ -214,7 +308,7 @@ async def test_proposed_text_is_kept_with_lf_line_ends_and_accepted_as_it_is(db,
     title = f"제목{line_break}둘째 줄"
     created = await propose(db, artifact_id, proposal={**ASSIGNMENT, "title": title, "body": f"1주차{line_break}2주차"})
     patch_set = {"body": {"from_hash": None, "to": f"a{line_break}b"}, "title": {"from": create["data"]["title"], "to": title}}
-    patching = await propose(db, artifact_id, "patch_item", {"entity": "item", "id": item_id, "set": patch_set}, fingerprint=OTHER_FINGERPRINT)
+    patching = await propose(db, artifact_id, "patch_item", {"entity": "item", "id": item_id, "set": patch_set})
 
     results = [await decide(db, device, accepting(each)) for each in (created, patching)]
 
@@ -264,7 +358,7 @@ async def test_accepting_a_create_item_makes_the_item_and_an_evidence_relation_p
             "locators": [SPOKEN],
         },
     }
-    assert rows(changes, "suggestion")[suggestion["id"]] == {**suggestion, "state": "accepted"}
+    assert rows(changes, "suggestion")[suggestion["id"]] == {**suggestion, "state": "accepted", "created_item_id": item_id}
 
 
 async def test_a_suggestion_without_evidence_is_accepted_without_relations(db, device, blob_store, tmp_path):
@@ -308,6 +402,36 @@ async def test_accepting_a_patch_item_patches_the_item_with_edits_in_place_of_th
     assert await state_of(db, suggestion) == "accepted"
 
 
+async def test_only_accepting_a_create_item_records_the_item_it_made(db, device, blob_store, tmp_path):
+    """#9 decision 5: another device finds the Item a Suggestion became by created_item_id."""
+    artifact_id, pdf = await grounds(db, blob_store, tmp_path)
+    item_id, create = created_item(due_at="2026-03-16T14:59:00.000Z")
+    await apply(db, device, create)
+    relation = {"id": f"item:{item_id}|about|capture:{CAPTURE}", "from": f"item:{item_id}", "type": "about", "to": f"capture:{CAPTURE}"}
+    made = await propose(db, artifact_id)
+    patching = await propose(db, artifact_id, "patch_item", due_at_patch(item_id, "2026-03-16T14:59:00.000Z", "2026-03-23T14:59:00.000Z"))
+    relating = await propose(db, artifact_id, "add_relation", relation, [page_at(pdf)])
+
+    for suggestion in (made, patching, relating):
+        assert (await decide(db, device, accepting(suggestion)))["result"] == "applied"
+
+    changes = await feed(db)
+    decided = rows(changes, "suggestion")
+    [new_item] = [each for each in rows(changes, "item") if each != item_id]
+    assert decided[made["id"]]["created_item_id"] == new_item
+    assert "created_item_id" not in decided[patching["id"]] and "created_item_id" not in decided[relating["id"]]
+
+
+@pytest.mark.parametrize("outcome", ["rejected", "dismissed"])
+async def test_a_create_item_not_accepted_records_no_item(db, device, blob_store, tmp_path, outcome):
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+    suggestion = await propose(db, artifact_id)
+    mutation = accepting(suggestion, {"fields.course_id": None}) if outcome == "rejected" else dismissing(suggestion)
+    await decide(db, device, mutation)
+
+    assert "created_item_id" not in rows(await feed(db), "suggestion")[suggestion["id"]]
+
+
 async def test_evidence_a_relation_already_has_is_joined_not_repeated(db, device, blob_store, tmp_path):
     artifact_id, pdf = await grounds(db, blob_store, tmp_path)
     item_id, create = created_item(due_at="2026-03-16T14:59:00.000Z")
@@ -315,7 +439,7 @@ async def test_evidence_a_relation_already_has_is_joined_not_repeated(db, device
     earlier = await propose(db, artifact_id, "patch_item", due_at_patch(item_id, "2026-03-16T14:59:00.000Z", "2026-03-23T14:59:00.000Z"),
                             [page_at(pdf, 2)])
     later = await propose(db, artifact_id, "patch_item", due_at_patch(item_id, "2026-03-23T14:59:00.000Z", "2026-03-30T14:59:00.000Z"),
-                          [page_at(pdf, 3), page_at(pdf, 2)], OTHER_FINGERPRINT)
+                          [page_at(pdf, 3), page_at(pdf, 2)])
 
     for suggestion in (earlier, later):
         assert (await decide(db, device, accepting(suggestion)))["result"] == "applied"
@@ -333,7 +457,7 @@ async def test_evidence_a_relation_already_holds_leaves_it_as_it_is(db, device, 
                             [page_at(pdf)])
     await decide(db, device, accepting(earlier))
     later = await propose(db, artifact_id, "patch_item", due_at_patch(item_id, "2026-03-23T14:59:00.000Z", "2026-03-30T14:59:00.000Z"),
-                          [page_at(pdf)], OTHER_FINGERPRINT)
+                          [page_at(pdf)])
     before = [row for row in await feed(db) if row["id"] == relation_id]
 
     assert (await decide(db, device, accepting(later)))["result"] == "applied"
@@ -436,7 +560,7 @@ async def test_accepting_the_contract_supersedes_example_leaves_its_evidence_on_
     for content in (b"foo", b"bar"):
         await store_bytes(blob_store, tmp_path, content)
     artifact_id, _ = await grounds(db, blob_store, tmp_path)
-    suggestion = await propose(db, artifact_id, "add_relation", example["proposed"], example["evidence"], example["fingerprint"])
+    suggestion = await propose(db, artifact_id, "add_relation", example["proposed"], example["evidence"])
 
     assert await decide(db, device, accepting(suggestion)) == {"result": "applied"}
 
@@ -476,9 +600,24 @@ async def test_evidence_on_something_the_hub_no_longer_holds_rejects_the_accept_
     assert await feed(db) == before
 
 
+@pytest.mark.parametrize(
+    ("edits", "written"),
+    [({"body": "본문"}, {"body": "본문"}), ({"fields.submission": "온라인 제출"}, {"fields": {**ASSIGNMENT["fields"], "submission": "온라인 제출"}})],
+    ids=["a column it did not propose", "a field of its kind it did not propose"],
+)
+async def test_edits_add_to_a_create_item_what_it_did_not_propose(db, device, blob_store, tmp_path, edits, written):
+    """#9 decision 3: the user fills in what the model left out, and the Item is judged as a client's create."""
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+    suggestion = await propose(db, artifact_id)
+
+    assert await decide(db, device, accepting(suggestion, edits)) == {"result": "applied"}
+
+    [item] = rows(await feed(db), "item").values()
+    assert item == {"id": item["id"], "schema_version": 1, **ASSIGNMENT, **written, "rev": item["rev"]}
+
+
 EDITS_THE_SUGGESTION_CANNOT_TAKE = {
-    "create_item: a column it did not propose": ("create_item", {"body": "본문"}),
-    "create_item: a field it did not propose": ("create_item", {"fields.submission": "온라인 제출"}),
+    "create_item: a field its kind does not define": ("create_item", {"fields.room": "공학관 301"}),
     "create_item: a field value the kind does not take": ("create_item", {"fields.due_text": 316}),
     "create_item: a required field left out": ("create_item", {"fields.course_id": None}),
     "create_item: a date that does not follow all_day": ("create_item", {"due_at": {"date": "2026-03-16", "tz": "Asia/Seoul"}}),
@@ -510,23 +649,132 @@ async def test_edits_the_suggestion_cannot_take_are_rejected_as_schema_and_chang
     assert await feed(db) == before
 
 
-@pytest.mark.parametrize(
-    ("action", "proposal"),
-    [
-        ("create_item", {"kind": "club_meeting", "title": "동아리 모임", "fields": {}}),
-        ("add_relation", {"id": f"blob:{'e' * 64}|mentions|capture:{CAPTURE}", "from": f"blob:{'e' * 64}", "type": "mentions",
-                          "to": f"capture:{CAPTURE}"}),
-    ],
-    ids=["item of a kind this hub has no fields for", "relation of a type clients cannot create"],
-)
-async def test_a_proposal_this_hub_cannot_write_is_rejected_as_schema_with_nothing_written(db, device, blob_store, tmp_path, action, proposal):
+NOT_ACCEPTABLE_AS_PROPOSED = {
+    "item of a kind this hub has no fields for": ("create_item", {"kind": "club_meeting", "title": "동아리 모임", "fields": {}}),
+    "field its kind does not define": ("create_item", {**ASSIGNMENT, "fields": {**ASSIGNMENT["fields"], "submission_url": "https://lms.example.invalid/a/2"}}),
+    "relation of a type clients cannot create": (
+        "add_relation", {"id": f"blob:{'e' * 64}|mentions|capture:{CAPTURE}", "from": f"blob:{'e' * 64}", "type": "mentions", "to": f"capture:{CAPTURE}"}),
+}
+"""Each fits the open Suggestion shape the Hub sends, but accepting it as proposed could only answer rejected{schema}
+(#9 decision 12)."""
+
+
+@pytest.mark.parametrize(("action", "proposal"), NOT_ACCEPTABLE_AS_PROPOSED.values(), ids=NOT_ACCEPTABLE_AS_PROPOSED.keys())
+async def test_a_proposal_not_acceptable_as_proposed_is_refused_and_nothing_is_written(db, blob_store, tmp_path, action, proposal):
     artifact_id, pdf = await grounds(db, blob_store, tmp_path)
-    suggestion = await propose(db, artifact_id, action, proposal, [page_at(pdf)])
+    assert validate("suggestion/suggestion", {"id": new_id(), "source_artifact_id": artifact_id, "action": action, "proposed": proposal,
+                                              "evidence": [page_at(pdf)], "fingerprint": FINGERPRINT, "state": "open"}) == []
     before = await feed(db)
 
-    assert await decide(db, device, accepting(suggestion)) == {"result": "rejected", "reason": "schema"}
+    with pytest.raises(suggestions.InvalidSuggestion, match="cannot be accepted as proposed"):
+        await propose(db, artifact_id, action, proposal, [page_at(pdf)])
 
     assert await feed(db) == before
+
+
+@pytest.mark.parametrize(("action", "proposal"), NOT_ACCEPTABLE_AS_PROPOSED.values(), ids=NOT_ACCEPTABLE_AS_PROPOSED.keys())
+async def test_a_stored_suggestion_not_acceptable_as_proposed_is_rejected_as_schema_with_nothing_written(db, device, action, proposal):
+    """A row an earlier Hub stored before propose refused such proposals."""
+    kept = {"id": new_id(), "source_artifact_id": new_id(), "action": action, "proposed": proposal, "evidence": [],
+            "fingerprint": FINGERPRINT, "state": "open"}
+    await db.write(lambda tx: store.write(tx, EntityRef(Entity.SUGGESTION, kept["id"]), kept))
+    before = await feed(db)
+
+    assert await decide(db, device, accepting(kept)) == {"result": "rejected", "reason": "schema"}
+
+    assert await feed(db) == before
+
+
+async def test_a_patch_item_setting_a_field_its_items_kind_does_not_define_is_refused_and_nothing_is_written(db, device, blob_store, tmp_path):
+    """The kind of an Item never changes (decision 4), so neither does the answer of accepting such a patch."""
+    artifact_id, pdf = await grounds(db, blob_store, tmp_path)
+    task_id, create = created_item()
+    await apply(db, device, create)
+    before = await feed(db)
+
+    with pytest.raises(suggestions.InvalidSuggestion, match="cannot be accepted as proposed"):
+        await propose(db, artifact_id, "patch_item", {"entity": "item", "id": task_id, "set": {"fields.course_id": {"from": None, "to": COURSE}}})
+
+    assert await feed(db) == before
+
+
+async def test_a_patch_item_leaving_out_a_field_its_items_kind_does_not_define_is_proposed_and_applied(db, device, blob_store, tmp_path):
+    """Setting such a field to null writes nothing to it, so the patch can be accepted (#9 decision 12)."""
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+    task_id, create = created_item(due_at="2026-03-16T14:59:00.000Z")
+    await apply(db, device, create)
+    proposal = due_at_patch(task_id, "2026-03-16T14:59:00.000Z", "2026-03-23T14:59:00.000Z", **{"fields.room": {"from": None, "to": None}})
+
+    suggestion = await propose(db, artifact_id, "patch_item", proposal)
+
+    assert (await decide(db, device, accepting(suggestion)))["result"] == "applied"
+    assert rows(await feed(db), "item")[task_id]["due_at"] == "2026-03-23T14:59:00.000Z"
+
+
+async def gone_for_good(db, blob_store, tmp_path, device):
+    """An Item purged away (its tombstone) and a Blob a purge removed: neither can come back."""
+    item_id, create = created_item()
+    await apply(db, device, create)
+    await db.write(lambda tx: store.write(tx, EntityRef(Entity.ITEM, item_id), None))
+    purged = "d" * 64
+    await db.write(lambda tx: tx.execute("INSERT INTO purge_journal (id, target, registered_at) VALUES (?, ?, ?)",
+                                         (new_id(), json.dumps({"blobs": [purged]}), "2026-03-02T00:00:00.000Z")))
+    return f"item:{item_id}", f"blob:{purged}"
+
+
+def relation(source, relation_type, target):
+    return {"id": f"{source}|{relation_type}|{target}", "from": source, "type": relation_type, "to": target}
+
+
+@pytest.mark.parametrize("target", ["patch_item on a purged Item", "relation from a purged Item", "relation to a purged Item",
+                                    "relation to a purged Blob"])
+async def test_a_proposal_on_what_is_gone_for_good_is_refused_and_nothing_is_written(db, device, blob_store, tmp_path, target):
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+    item, blob = await gone_for_good(db, blob_store, tmp_path, device)
+    action, proposal = {
+        "patch_item on a purged Item": ("patch_item", due_at_patch(item.removeprefix("item:"), None, "2026-03-23T14:59:00.000Z")),
+        "relation from a purged Item": ("add_relation", relation(item, "about", f"capture:{CAPTURE}")),
+        "relation to a purged Item": ("add_relation", relation(f"capture:{CAPTURE}", "about", item)),
+        "relation to a purged Blob": ("add_relation", relation(f"capture:{CAPTURE}", "about", blob)),
+    }[target]
+    before = await feed(db)
+
+    with pytest.raises(suggestions.InvalidSuggestion, match="gone for good"):
+        await propose(db, artifact_id, action, proposal)
+
+    assert await feed(db) == before
+
+
+async def test_a_relation_to_what_the_hub_does_not_hold_yet_is_proposed(db, device, blob_store, tmp_path):
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+
+    suggestion = await propose(db, artifact_id, "add_relation", relation(f"capture:{CAPTURE}", "about", f"item:{new_id()}"))
+
+    assert suggestion["state"] == "open"
+
+
+async def test_a_patch_item_on_an_item_the_hub_does_not_hold_is_proposed_and_its_accept_answers_deleted(db, device, blob_store, tmp_path):
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+    suggestion = await propose(db, artifact_id, "patch_item", due_at_patch(new_id(), None, "2026-03-23T14:59:00.000Z"))
+    before = await feed(db)
+
+    assert await decide(db, device, accepting(suggestion)) == {"result": "rejected", "reason": "deleted"}
+
+    assert await feed(db) == before
+    assert await db.read(lambda snap: snap.execute("SELECT count(*) FROM conflict_records").fetchone()[0]) == 0
+
+
+async def test_a_patch_item_change_with_members_a_patch_does_not_take_is_accepted_without_them(db, device, blob_store, tmp_path):
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+    item_id, create = created_item(due_at="2026-03-16T14:59:00.000Z")
+    await apply(db, device, create)
+    proposal = due_at_patch(item_id, "2026-03-16T14:59:00.000Z", "2026-03-23T14:59:00.000Z")
+    proposal["set"]["due_at"]["confidence"] = 0.8
+
+    suggestion = await propose(db, artifact_id, "patch_item", proposal)
+
+    assert await decide(db, device, accepting(suggestion)) == {"result": "applied", "applied_fields": ["due_at"]}
+    assert rows(await feed(db), "item")[item_id]["due_at"] == "2026-03-23T14:59:00.000Z"
 
 
 async def test_dismissing_records_the_decision_and_writes_no_user_data(db, device, blob_store, tmp_path):
@@ -562,6 +810,36 @@ async def test_a_decision_on_a_suggestion_decided_before_changes_nothing(db, dev
     before = await feed(db)
 
     assert await decide(db, device, then(suggestion)) == answer
+
+    assert await feed(db) == before
+
+
+@pytest.mark.parametrize("second", [accepting, dismissing])
+async def test_two_devices_deciding_at_once_leave_one_decision_and_the_later_gets_a_state_conflict(db, device, tablet, blob_store, tmp_path, second):
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+    suggestion = await propose(db, artifact_id)
+
+    phone_results, tablet_results = await asyncio.gather(
+        mutations.apply(db, [accepting(suggestion)], device), mutations.apply(db, [second(suggestion)], tablet))
+
+    answers = sorted(result["result"] for result in (*phone_results, *tablet_results))
+    assert answers == ["applied", "conflict"]
+    [lost] = [result for result in (*phone_results, *tablet_results) if result["result"] == "conflict"]
+    assert (lost["applied_fields"], lost["conflicted_fields"]) == ([], ["state"])
+    changes = await feed(db)
+    decided = rows(changes, "suggestion")[suggestion["id"]]
+    assert len(rows(changes, "item")) == (1 if decided["state"] == "accepted" else 0)
+
+
+@pytest.mark.parametrize("decision", [accepting, dismissing])
+async def test_a_decision_sent_again_gets_the_first_answer_as_a_duplicate_and_changes_nothing(db, device, blob_store, tmp_path, decision):
+    artifact_id, _ = await grounds(db, blob_store, tmp_path)
+    suggestion = await propose(db, artifact_id)
+    mutation = decision(suggestion)
+    first = await decide(db, device, mutation)
+    before = await feed(db)
+
+    assert await decide(db, device, mutation) == {"result": "duplicate", "original": {"mutation_id": mutation["mutation_id"], **first}}
 
     assert await feed(db) == before
 
