@@ -81,7 +81,7 @@ CampusLife는 강의 녹음·정리만을 위한 앱이 아닙니다. 수업, �
 
 ## 첫 MVP 완료 기준
 
-[ROADMAP.md의 MVP 정의](docs/ROADMAP.md#mvp-정의-단일-기준)를 따릅니다. 요약하면 Fold8에서 강의 녹음·사진을 손실 없이 수집해 노트북이 온라인일 때 HTTPS로 업로드하고, 출처가 연결된 강의 노트를 만들며, 비강의 자료도 같은 Capture 경로로 저장하는 것까지입니다. 다중 형식 추출, Inbox 분류, Planner, iPad는 MVP 이후입니다.
+[ROADMAP.md의 MVP 정의](docs/ROADMAP.md#mvp-정의-단일-기준)를 따릅니다. 요약하면 Fold8에서 강의 녹음·사진을 손실 없이 수집해 노트북이 온라인일 때 HTTPS로 업로드하고, 출처가 연결된 강의 노트를 만들며, 비강의 자료도 같은 Capture 경로로 저장하는 것까지입니다. 다중 형식 추출, Inbox 분류, Planner, iPad는 MVP 이후입니다. 그중 Hub 로컬 UI의 Inbox와 Suggestion 검토(#9, [D28](docs/DECISIONS.md))는 이미 있고, 제안을 만드는 AI producer는 #8입니다.
 
 ## 개인정보 주의
 

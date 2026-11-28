@@ -106,6 +106,16 @@ CLI 요청은 600초를 기다립니다. 그보다 오래 걸리는 큰 첫 백�
 - **재처리:** Captures의 **Reprocess**(Capture 하나)나 **Reprocess every Capture**, 또는 `campuslife-hub reprocess --capture <id> | --all`. 판별부터 다시 하고 새 Artifact를 만들며, 원본과 옛 Artifact는 그대로 둡니다. 같은 추출기 버전이면 block id가 같습니다. Hub를 업데이트해 추출기가 바뀌어도 자동으로 다시 처리하지 않으므로, 새 추출기로 읽히고 싶은 Capture는 재처리합니다. Hub가 돌지 않을 때 실행하면 job만 쌓이고 다음 `serve`에서 돕니다.
 - 실패한 job은 **Jobs**의 Retry로 같은 job을 다시 시도합니다. 원본이 purge된 뒤의 job은 Retry가 없습니다.
 
+### Inbox와 Suggestion 검토 (D28)
+
+- 로컬 UI의 **Inbox**는 열린 Suggestion과 미분류 Capture를 보여 줍니다. 저장된 목록이 아니라 열 때마다 계산하고, 읽음·보관 상태는 없습니다. 위의 all · suggestions · captures로 한쪽만 볼 수 있고, 각 부분은 최근 것부터 200개를 보여 줍니다.
+- Suggestion마다 근거를 "p.2", "00:32:10–00:33:05"처럼 글로 적고 원본 내려받기 링크를 붙입니다. **Accept**·**Dismiss**는 그것 하나를, 고른 것들의 **Accept the chosen**·**Dismiss the chosen**은 하나씩 따로 결정하고 다음 화면에 각각의 결과를 적습니다. 하나가 거부돼도 나머지는 결정됩니다.
+- **Edit and accept**는 제안의 값을 고쳐 수락합니다. 새 Item이면 제안에 없던 열과 그 kind의 field도 채울 수 있고, 일정 변경이면 바꿀 값만 고칩니다. 비운 칸은 빼고, 숫자·true·false·JSON으로 읽히는 글은 그 값으로 씁니다. kind는 바꿀 수 없습니다.
+- 수락하면 만든 Item 화면으로 갑니다. Item 화면은 근거와 Tag를 보여 주고, Tag를 더하거나(같은 이름의 Tag는 다시 씀) 뺍니다.
+- 미분류 Capture는 **Make an Item of it**으로 제목과 kind를 정해 Item을 만들면 그 Capture를 근거로 이어 Inbox에서 빠집니다. 어떤 Relation이든 Capture, 그 파일, 그 Blob에 닿으면 분류된 것으로 봅니다. 그래서 같은 파일을 가진 다른 Capture도 함께 빠집니다.
+- 파일을 purge하면 그 파일로 분류됐던 Capture가 Inbox로 돌아오고, 파일이 purge되었다고 적힙니다. Item을 휴지통에 넣어도 그 Item이 근거로 삼은 Capture는 분류된 채로 남습니다.
+- 모든 결정과 편집은 sync와 같은 Mutation 적용기를 Hub 자신의 장치로 거칩니다. 같은 폼을 두 번 보내면 두 번째는 `duplicate`로 아무것도 바꾸지 않습니다.
+
 ### sync 리스너와 tailscale serve (D5, D22)
 
 `serve`는 sync 리스너를 `127.0.0.1:8730`(`--sync-port`)에만 엽니다. 휴대폰·태블릿은 `tailscale serve`를 거쳐 닿습니다. serve가 이 노트북의 MagicDNS 이름(`<이름>.<tailnet>.ts.net`)의 공인 인증서로 HTTPS를 종단하고, 443을 sync 리스너로 넘깁니다. admin 포트(8731)는 넘기지 않습니다.
