@@ -266,13 +266,13 @@ class DeviceLinkTest {
     }
 
     /** What a device that synced with the first Hub holds: one Item settled, one refused, and unsent ones. */
-    private data class Before(val applied: String, val refused: String, val unsent: String, val capture: String, val sha256: String)
+    private data class WithFirst(val applied: String, val refused: String, val unsent: String, val capture: String, val sha256: String)
 
     /**
      * The capture's Blob went up to the first Hub, and the connection was cut before its commit went, so the
      * commit waits as pending for a Blob the first Hub has.
      */
-    private fun syncedWithFirst(): Before {
+    private fun syncedWithFirst(): WithFirst {
         link.pair(FIRST, FakeHub.SECRET, FakeHub.HUB_ID, "phone")
         val applied = items.create(course("자료구조"))
         assertEquals(SyncOutcome.Synced(), link.sync(false))
@@ -290,7 +290,7 @@ class DeviceLinkTest {
         assertEquals(SyncOutcome.HubNotReached, link.sync(false))
         val sha256 = first.stored.keys.single()
         assertEquals(TransferState.PENDING.column, everyRow().single { it.entityId == capture }.state)
-        return Before(applied, refused, unsent, capture, sha256)
+        return WithFirst(applied, refused, unsent, capture, sha256)
     }
 
     private fun everyRow() = db.outbox().inStates(TransferState.entries.map { it.column })
