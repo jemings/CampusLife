@@ -1,0 +1,15 @@
+{
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "kind": "opportunity",
+  "schema_version": 1,
+  "title": "교내 성적우수 장학금",
+  "fields": {
+    "category": "scholarship",
+    "eligibility_text": "직전 학기 12학점 이상 이수한 재학생",
+    "due_text": "3월 16일 18시까지",
+    "organization_id": "acme"
+  },
+  "rev": 17,
+  "starts_at": "2026-03-02T00:00:00.000Z",
+  "due_at": "2026-03-16T09:00:00.000Z"
+}

@@ -66,9 +66,10 @@ HUB = "hub"
 OWNERS = {
     "artifact/artifact": dict.fromkeys(
         ["id", "artifact_type", "subject_ref", "job_key", "provider", "model", "prompt_version", "pipeline_version",
-         "input_hashes", "content_blob", "created_at"], HUB),
+         "input_hashes", "content_blob", "created_at", "fetched"], HUB),
     "suggestion/suggestion": dict.fromkeys(
-        ["id", "source_artifact_id", "action", "proposed", "evidence", "fingerprint", "state", "conflicts_with"], HUB),
+        ["id", "source_artifact_id", "action", "proposed", "evidence", "fingerprint", "state", "conflicts_with",
+         "created_item_id"], HUB),
     "conflict_record/conflict_record": dict.fromkeys(["id", "entity_ref", "set", "resolved"], HUB),
     "capture/attachment": {
         "id": "client", "capture_id": "hub", "blob_sha256": "hub", "role": "client", "seq": "client",
@@ -194,7 +195,9 @@ def test_the_strings_a_device_reports_are_one_line_text():
 
 ARTIFACT_BODY_SCHEMAS = {"extraction": "artifact/extraction", "identify": "artifact/identify"}
 """The artifact types whose content Blob is JSON in the artifact/body envelope. A rendition's content Blob is the
-rendered PDF itself (D12: annotations and pins hold that Blob), so it has no body schema."""
+rendered PDF itself (D12: annotations and pins hold that Blob), and a web_snapshot's the bytes the Hub fetched (D13: the
+snapshot Blob anchors a web_snapshot Locator), so neither has a body schema."""
+BYTES_AS_BODY = {"rendition", "web_snapshot"}
 
 
 def test_body_schemas_are_the_text_artifact_types():
@@ -206,7 +209,7 @@ def test_body_schemas_are_the_text_artifact_types():
     }
     assert body_schemas == set(ARTIFACT_BODY_SCHEMAS.values())
     assert set(ARTIFACT_BODY_SCHEMAS) <= set(artifact_types)
-    assert "rendition" in artifact_types and "rendition" not in ARTIFACT_BODY_SCHEMAS
+    assert BYTES_AS_BODY <= set(artifact_types) and BYTES_AS_BODY.isdisjoint(ARTIFACT_BODY_SCHEMAS)
     for artifact_type, schema_id in ARTIFACT_BODY_SCHEMAS.items():
         assert read_strict(SCHEMAS / f"{schema_id}.json")["$ref"] == "body.json", artifact_type
 

@@ -1,0 +1,21 @@
+{
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90aea",
+  "source_artifact_id": "550e8400-e29b-41d4-a716-446655440000",
+  "action": "add_relation",
+  "proposed": {
+    "id": "blob:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae|supersedes|blob:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9",
+    "from": "blob:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+    "type": "supersedes",
+    "to": "blob:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9"
+  },
+  "evidence": [
+    {
+      "v": 1,
+      "kind": "document",
+      "blob": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+    }
+  ],
+  "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "state": "accepted",
+  "created_item_id": "16fd2706-8baf-433b-82eb-8c7fada847da"
+}

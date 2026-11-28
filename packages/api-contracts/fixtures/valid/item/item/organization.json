@@ -1,0 +1,11 @@
+{
+  "id": "9b2c1f4e-3a5d-4c6b-8e7f-1a2b3c4d5e6f",
+  "kind": "organization",
+  "schema_version": 1,
+  "title": "컴퓨터공학과",
+  "fields": {
+    "category": "department",
+    "url": "https://cse.example.invalid/"
+  },
+  "rev": 17
+}

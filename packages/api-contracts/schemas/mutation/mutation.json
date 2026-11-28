@@ -113,7 +113,11 @@
         { "if": { "$ref": "../item/item.json#/$defs/kind_is/note" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/note" } } } },
         { "if": { "$ref": "../item/item.json#/$defs/kind_is/task" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/task" } } } },
         { "if": { "$ref": "../item/item.json#/$defs/kind_is/assignment" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/assignment" } } } },
-        { "if": { "$ref": "../item/item.json#/$defs/kind_is/exam" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/exam" } } } }
+        { "if": { "$ref": "../item/item.json#/$defs/kind_is/exam" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/exam" } } } },
+        { "if": { "$ref": "../item/item.json#/$defs/kind_is/event" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/event" } } } },
+        { "if": { "$ref": "../item/item.json#/$defs/kind_is/announcement" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/announcement" } } } },
+        { "if": { "$ref": "../item/item.json#/$defs/kind_is/opportunity" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/opportunity" } } } },
+        { "if": { "$ref": "../item/item.json#/$defs/kind_is/organization" }, "then": { "properties": { "fields": { "$ref": "#/$defs/closed_fields/organization" } } } }
       ]
     },
     "closed_fields": {
@@ -123,7 +127,11 @@
       "note": { "$ref": "../item/fields/note.json", "properties": { "forked_from_artifact": true }, "additionalProperties": false },
       "task": { "$ref": "../item/fields/task.json", "properties": { "progress": true, "reminders": true }, "additionalProperties": false },
       "assignment": { "$ref": "../item/fields/assignment.json", "properties": { "course_id": true, "due_text": true, "submission": true }, "additionalProperties": false },
-      "exam": { "$ref": "../item/fields/exam.json", "properties": { "course_id": true, "scope_text": true }, "additionalProperties": false }
+      "exam": { "$ref": "../item/fields/exam.json", "properties": { "course_id": true, "scope_text": true }, "additionalProperties": false },
+      "event": { "$ref": "../item/fields/event.json", "properties": { "category": true, "place_text": true, "organization_id": true, "url": true }, "additionalProperties": false },
+      "announcement": { "$ref": "../item/fields/announcement.json", "properties": { "category": true, "organization_id": true, "url": true }, "additionalProperties": false },
+      "opportunity": { "$ref": "../item/fields/opportunity.json", "properties": { "category": true, "eligibility_text": true, "due_text": true, "organization_id": true, "url": true }, "additionalProperties": false },
+      "organization": { "$ref": "../item/fields/organization.json", "properties": { "category": true, "url": true }, "additionalProperties": false }
     },
     "create_relation": {
       "type": "object",
@@ -194,7 +202,8 @@
           "schema": "../item/item.json",
           "fields": [
             "../item/fields/term.json", "../item/fields/course.json", "../item/fields/lecture_session.json",
-            "../item/fields/note.json", "../item/fields/task.json", "../item/fields/assignment.json", "../item/fields/exam.json"
+            "../item/fields/note.json", "../item/fields/task.json", "../item/fields/assignment.json", "../item/fields/exam.json",
+            "../item/fields/event.json", "../item/fields/announcement.json", "../item/fields/opportunity.json", "../item/fields/organization.json"
           ]
         },
         "attachment": { "schema": "../capture/attachment.json" },
@@ -249,7 +258,7 @@
         "op": { "const": "suggestion.accept" },
         "suggestion_id": { "$ref": "../common/uuid.json" },
         "edits": {
-          "description": "Values the user changed before accepting, keyed like a patch's set, each the value to write instead of the proposed one; null leaves an optional column out. For create_item a key names a column or fields.<key> of proposed, for patch_item a key of proposed.set, whose to it replaces; add_relation takes no edits. The target is always an Item, so a common column key is checked here like a patch's: only user columns (rule owner), with a value that fits, and null only for an optional column (rule set_type). Whether a key is in the proposal, and what a fields.<key> takes, depend on the Suggestion, so the Hub's applier (#2) judges them and answers rejected{schema}.",
+          "description": "Values the user set before accepting, keyed like a patch's set, each the value to write; null leaves an optional column out. For create_item a key names any user column or fields.<key> of the proposed kind, whether the proposal has it or not, and the Hub judges the Item that results as it judges a client's create, fields closed; the kind is not a key (rule owner), so accepting never changes it. For patch_item a key is one of proposed.set, whose to it replaces: a key the proposal lacks has no from to compare. add_relation takes no edits. The target is always an Item, so a common column key is checked here like a patch's: only user columns (rule owner), with a value that fits, and null only for an optional column (rule set_type). Which keys the Suggestion allows, and what a fields.<key> takes, depend on the Suggestion, so the Hub's applier judges them and answers rejected{schema}.",
           "type": "object",
           "minProperties": 1,
           "propertyNames": { "$ref": "#/$defs/set_key" }

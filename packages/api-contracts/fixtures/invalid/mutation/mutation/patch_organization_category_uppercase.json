@@ -1,0 +1,12 @@
+{
+  "mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  "op": "patch",
+  "entity": "item",
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "set": {
+    "fields.category": {
+      "from": "club",
+      "to": "Club"
+    }
+  }
+}
