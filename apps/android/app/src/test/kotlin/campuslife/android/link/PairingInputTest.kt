@@ -54,13 +54,13 @@ class PairingInputTest {
 
     @Test
     fun `a typed code drops spaces and hyphens and is lowercased`() {
-        assertEquals(SECRET, PairingInput.secret("0123-4567-89AB-cdef 0123-4567-89ab-CDEF"))
-        assertEquals(SECRET, PairingInput.secret("  0123456789abcdef0123456789abcdef\n"))
+        assertEquals(SECRET, PairingInput.secret("aaaa-AAAA-aaaa-AAAA aaaa-aaaa-AAAA-aaaa"))
+        assertEquals(SECRET, PairingInput.secret("  $SECRET\n"))
     }
 
     @Test
     fun `a typed code that is not 32 hex digits is no secret`() {
-        for (code in listOf("", "0123-4567", SECRET + "0", SECRET.dropLast(1) + "g", "0123_4567_89ab_cdef_0123_4567_89ab_cdef")) {
+        for (code in listOf("", "0123-4567", SECRET + "0", SECRET.dropLast(1) + "g", "aaaa_aaaa_aaaa_aaaa_aaaa_aaaa_aaaa_aaaa")) {
             assertNull(code, PairingInput.secret(code))
         }
     }
@@ -103,7 +103,7 @@ class PairingInputTest {
             .sortedBy { it.name }
 
     private companion object {
-        const val SECRET = "0123456789abcdef0123456789abcdef"
+        const val SECRET = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
         /** One code point in two UTF-16 units. */
         const val PHONE = "\uD83D\uDCF1"
