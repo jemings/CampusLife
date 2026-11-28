@@ -70,10 +70,11 @@ def _with_lf_text(action: str, proposed: dict) -> dict:
 
 
 def _title_key(title: str) -> str:
-    """NFC, casefolded, without spaces or punctuation: a model that words the title a little otherwise proposes the same."""
+    """NFC, casefolded, without spaces, punctuation or invisible format characters: a model that words the title a
+    little otherwise proposes the same."""
     return "".join(
         char for char in unicodedata.normalize("NFC", title).casefold()
-        if not (char.isspace() or unicodedata.category(char)[0] in "PZ")
+        if not (char.isspace() or unicodedata.category(char)[0] in "PZ" or unicodedata.category(char) == "Cf")
     )
 
 
