@@ -4,8 +4,8 @@ Each extractor and converter carries its own table (Extractor.limits), and ident
 the extractor issues' common decision, so that a bound of one format retires that format's pipeline alone, and the
 framework knows no format. A format with bounds of its own (pages, cells, entries) declares a subclass of Limits in
 its module; the table travels as JSON with its type's name, and the child rebuilds that type. A job carries its
-reader's table in its request, the child keeps to it, and the Hub checks what comes back against it. A table's hash,
-its type included, is part of its reader's pipeline version, so a change of any bound makes new jobs of that reader
+reader's table in its request, the child keeps to it, and the Hub checks what comes back against it. The hash of a
+table's bounds is part of its reader's pipeline version, so a change of any bound makes new jobs of that reader
 rather than reusing results made under other bounds; the timeout of the reader's jobs follows its timeout_s. Every
 breach ends the job with outcome unsafe_input (FILE-INGESTION §9).
 
@@ -95,10 +95,9 @@ class Limits:
         return kind(**bounds)
 
     def hash8(self) -> str:
-        """The first 8 hex digits of the table's SHA-256: the L part of a pipeline version. A plain Limits hashes its
-        bounds alone, as before tables had types, so its pipelines keep their versions."""
-        hashed = self.to_json() if type(self) is not Limits else asdict(self)
-        return hashlib.sha256(json.dumps(hashed, sort_keys=True).encode()).hexdigest()[:8]
+        """The first 8 hex digits of the SHA-256 of the table's bounds, a format's own included: the L part of a
+        pipeline version. The type is left out, so a plain table hashes as it did before tables had types."""
+        return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()[:8]
 
 
 DEFAULT_LIMITS = Limits()
