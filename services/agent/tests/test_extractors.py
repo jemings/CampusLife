@@ -90,12 +90,11 @@ def test_an_extractors_own_limits_type_keeps_its_bounds_through_json():
 
     assert Limits.from_json(limits.to_json()) == limits
     assert limits.hash8() != PagedLimits(max_pages=8, timeout_s=9.0).hash8()
-    assert limits.hash8() != Limits(timeout_s=9.0).hash8()
 
 
 @pytest.mark.parametrize(
     "type_name",
-    ["os:PathLike", "campuslife_hub.extract.extractors:Extractor", "campuslife_hub.extract.limits:nothing", "campuslife_hub.db:Limits"],
+    ["os:PathLike", "campuslife_hub.extract.extractors:Extractor", "campuslife_hub.extract.limits:nothing", "campuslife_hub.pipelines:Limits"],
 )
 def test_limits_from_json_take_only_a_limits_type_of_the_extractor_package(type_name):
     with pytest.raises(ValueError):

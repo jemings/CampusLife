@@ -71,12 +71,13 @@ async def test_a_reader_that_reads_a_type_it_did_not_reads_the_files_of_that_typ
     [(replace(TEXT, version="2"), TEST_LIMITS), (replace(TEXT, limits=replace(TEST_LIMITS, timeout_s=31.0)), None)],
     ids=["version", "limits"],
 )
-async def test_a_reader_whose_version_or_limits_changed_waits_for_a_reprocess(db, device, blob_store, tmp_path, changed, limits):
+async def test_a_reader_whose_version_or_limits_changed_waits_for_a_reprocess_when_another_is_gained(db, device, blob_store, tmp_path, changed, limits):
     before, capture = await read_by(db, blob_store, device, tmp_path, TEXT)
-    after = hub_with(db, blob_store, device, tmp_path, changed, base=(), limits=limits, identify_limits=TEST_LIMITS)
+    after = hub_with(db, blob_store, device, tmp_path, changed, ECHO, base=(), limits=limits, identify_limits=TEST_LIMITS)
 
-    assert await after.runner.catch_up() == 0
+    assert await after.runner.catch_up() == 1
 
+    assert len(await after.jobs("extract.fake_echo")) == 1
     [job] = await after.jobs("extract.text")
     assert job.pipeline == before.registry.pipeline("extract.text") != after.registry.pipeline("extract.text")
     assert (await status(after, capture["attachments"][0])).facts == (can_read("extract.text"),)
