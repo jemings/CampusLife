@@ -1,5 +1,5 @@
 """A Hub that starts with readers it lacked queues them for the files it already holds, and nothing else (#6 PR2
-decision, D28): a new extractor or converter, or one that reads a type it did not, is planned for each identified
+decision, D26): a new extractor or converter, or one that reads a type it did not, is planned for each identified
 file it reads that it never read; a reader whose version or limits changed, and a file identified under other
 identify rules, wait for a reprocess (D26 decision 5)."""
 

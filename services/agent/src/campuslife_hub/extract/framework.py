@@ -9,7 +9,7 @@ Blob, so a Capture that comes before, during or after the Blob's identify reache
 Attachment: the same Blob read by the same extractor with the same params is one job (D2).
 
 A Hub that starts with readers it lacked (a new extractor or converter, or one that reads a type it did not) plans
-them, once, for the files it already holds (catch_up, D28): for each Attachment whose Blob the current identify
+them, once, for the files it already holds (catch_up, D26): for each Attachment whose Blob the current identify
 pipeline read, each reader refine picks that never read the Blob is queued. A reader whose version or limits changed
 and a Blob identified under other identify rules wait for a reprocess, as status says.
 
