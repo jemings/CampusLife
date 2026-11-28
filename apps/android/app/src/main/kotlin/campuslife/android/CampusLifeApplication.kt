@@ -34,7 +34,7 @@ class CampusLifeApplication : Application(), Configuration.Provider {
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
-            .setWorkerFactory(SyncWorkerFactory({ graph.sync }, { SyncScheduler(WorkManager.getInstance(this)).requestLarge() }))
+            .setWorkerFactory(SyncWorkerFactory({ graph.sync }, { SyncScheduler(WorkManager.getInstance(this)) }))
             .build()
 }
 

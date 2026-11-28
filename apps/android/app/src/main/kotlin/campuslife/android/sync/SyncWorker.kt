@@ -23,19 +23,28 @@ fun interface SyncRunner {
     fun run(unmetered: Boolean): SyncOutcome
 }
 
+/** What the outcome of a pass asks of the sync work WorkManager keeps. */
+interface SyncSchedule {
+    /** Blobs over [LARGE_BLOB_BYTES] wait: a pass once the device is on an unmetered network (D7). */
+    fun requestLarge()
+
+    /** The sync stopped until the user acts: no pass runs by itself until then. */
+    fun stopUntilUserActs()
+}
+
 /** The WorkManager side of a sync pass: what each outcome means for when WorkManager runs it again. */
 class SyncWorker(
     context: Context,
     params: WorkerParameters,
     private val runner: SyncRunner,
-    private val onLargeWaiting: () -> Unit,
+    private val schedule: SyncSchedule,
 ) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val outcome = withContext(Dispatchers.IO) { runner.run(inputData.getBoolean(UNMETERED, false)) }
         val output = workDataOf(OUTCOME to outcome.toString())
         return when (outcome) {
             is SyncOutcome.Synced -> {
-                if (outcome.largeWaiting) onLargeWaiting()
+                if (outcome.largeWaiting) schedule.requestLarge()
                 if (outcome.deferred) Result.retry() else Result.success(output)
             }
             SyncOutcome.NotPaired -> Result.success(output)
@@ -52,17 +61,17 @@ class SyncWorker(
 }
 
 /** Makes [SyncWorker]s for WorkManager; every other worker class is left to the default factory. */
-class SyncWorkerFactory(private val runner: () -> SyncRunner, private val onLargeWaiting: () -> Unit) : WorkerFactory() {
+class SyncWorkerFactory(private val runner: () -> SyncRunner, private val schedule: () -> SyncSchedule) : WorkerFactory() {
     override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters): ListenableWorker? =
         if (workerClassName == SyncWorker::class.java.name) {
-            SyncWorker(appContext, workerParameters, runner(), onLargeWaiting)
+            SyncWorker(appContext, workerParameters, runner(), schedule())
         } else {
             null
         }
 }
 
 /** The sync work WorkManager keeps: a pass on request, one every 15 minutes, and one for large Blobs on Wi-Fi. */
-class SyncScheduler(private val work: WorkManager) {
+class SyncScheduler(private val work: WorkManager) : SyncSchedule {
     /** A pass soon; queued behind one already running, so a change made during it is not missed. */
     fun requestSync() {
         val request = OneTimeWorkRequestBuilder<SyncWorker>().setConstraints(over(NetworkType.CONNECTED)).build()
@@ -76,14 +85,15 @@ class SyncScheduler(private val work: WorkManager) {
         work.enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request)
     }
 
-    /** A pass once the device is on an unmetered network, for the Blobs over [LARGE_BLOB_BYTES] (D7). */
-    fun requestLarge() {
+    override fun requestLarge() {
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
             .setConstraints(over(NetworkType.UNMETERED))
             .setInputData(workDataOf(SyncWorker.UNMETERED to true))
             .build()
         work.enqueueUniqueWork(LARGE, ExistingWorkPolicy.KEEP, request)
     }
+
+    override fun stopUntilUserActs(): Unit = TODO()
 
     companion object {
         const val SYNC = "sync"

@@ -7,13 +7,17 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Upsert
 
-/** Where this device stands against its Hub (D3): the Hub's id, the base epoch and the changes-feed cursor. One row. */
+/**
+ * Where this device stands against its Hub (D3): the Hub's id, the base epoch and the changes-feed cursor. One row.
+ * [stopped] says why the sync stopped until the user acts, as a re-pairing or an app update; null while it runs.
+ */
 @Entity(tableName = "meta")
 data class SyncMeta(
     @PrimaryKey val id: Int = 0,
     @ColumnInfo(name = "hub_id") val hubId: String,
     val epoch: String,
     val cursor: Long,
+    val stopped: String? = null,
 )
 
 @Dao
@@ -26,6 +30,9 @@ interface SyncMetaDao {
 
     @Query("UPDATE meta SET cursor = :cursor WHERE id = 0")
     fun setCursor(cursor: Long): Int
+
+    @Query("UPDATE meta SET stopped = :stopped WHERE id = 0")
+    fun setStopped(stopped: String?): Int
 
     /** Takes [epoch] as the base epoch and reads the feed from its start again (D24). */
     @Query("UPDATE meta SET epoch = :epoch, cursor = 0 WHERE id = 0")
