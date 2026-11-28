@@ -9,6 +9,7 @@ lost, as a conflict on state, except that dismissing again is already done.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from collections.abc import Callable, Iterable
@@ -153,7 +154,7 @@ def _proposes(proposed: dict, key: str) -> bool:
 
 
 def _accept_create_item(tx: Tx, suggestion: dict, edits: dict, mutation: dict, device: DeviceId) -> Outcome:
-    """The Item a client could create with the proposed columns, edits in their place; the Hub picks its id."""
+    """The Item a client could create with the proposed columns, edits in their place, named by the accept."""
     proposed = suggestion["proposed"]
     if not all(_proposes(proposed, key) for key in edits):
         return Rejected(Reason.SCHEMA)
@@ -163,13 +164,20 @@ def _accept_create_item(tx: Tx, suggestion: dict, edits: dict, mutation: dict, d
     anchors = _anchors(suggestion["evidence"])
     if not all(refs.exists(tx, anchor) for anchor in anchors):
         return Rejected(Reason.LINK_TARGET_MISSING)
-    ref = EntityRef(Entity.ITEM, str(uuid.uuid4()))
+    ref = EntityRef(Entity.ITEM, _item_made_by(mutation["mutation_id"]))
     if not could_be_created(Entity.ITEM, {"id": ref.id, **data}, mutation["mutation_id"]):
         return Rejected(Reason.SCHEMA)
     created = create_item(tx, ref, data)
     if isinstance(created, Applied):
         _copy_evidence(tx, f"item:{ref.id}", anchors)
     return created
+
+
+def _item_made_by(accept_mutation_id: str) -> str:
+    """The UUIDv4 of the Item an accept makes, derived from its mutation_id, so the same accept resent to a Hub restored
+    from before it makes the same Item, and the client's later patches of it apply (D24 decision 5a)."""
+    digest = hashlib.sha256(f"suggestion.accept item {accept_mutation_id}".encode()).digest()
+    return str(uuid.UUID(bytes=digest[:16], version=4))
 
 
 def _accept_patch_item(tx: Tx, suggestion: dict, edits: dict, mutation: dict, device: DeviceId) -> Outcome:
