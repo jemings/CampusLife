@@ -5,7 +5,9 @@ Every text here is synthetic.
 
 import asyncio
 import json
+import random
 import sqlite3
+import threading
 import time
 import unicodedata
 
@@ -17,12 +19,13 @@ from test_purge import database_file_bytes, default_secure_delete_off
 from campuslife_hub import artifacts, jobs, purge, store
 from campuslife_hub.core import open_core
 from campuslife_hub.data_root import Layout
+from campuslife_hub.db import Database
 from campuslife_hub.extract.extractors import TEXT, Extractor
 from campuslife_hub.extract.limits import Limits
 from campuslife_hub.jobs import JobSpec, Pipeline
 from campuslife_hub.purge import PurgeHooks
 from campuslife_hub.search import index as search_index
-from campuslife_hub.search.index import SearchIndex
+from campuslife_hub.search.index import SearchIndex, WalKept
 from campuslife_hub.store import Entity, EntityRef
 
 __all__ = ["blob_store", "default_secure_delete_off", "device"]
@@ -193,9 +196,12 @@ async def test_entities_the_index_does_not_know_or_hold_are_passed_over(db, devi
 
 
 async def scenario(db, device, blob_store, tmp_path, *indexes):
-    """Changes of every kind the index follows, each index catching up after each step."""
+    """Changes of every kind the index follows, each index catching up after each step and forgetting each purge."""
     hub = hub_with(db, blob_store, device, tmp_path)
     kept, deleted, gone = new_id(), new_id(), new_id()
+    hooks = PurgeHooks()
+    for number, each in enumerate(indexes):
+        hooks.register(f"search-{number}", each.forget)
 
     async def step(*ops):
         if ops:
@@ -211,7 +217,12 @@ async def scenario(db, device, blob_store, tmp_path, *indexes):
     await newer.capture(("again.md", NOTES))
     await newer.settle()
     await step(item_op("restore", deleted), item_op("delete", gone))
-    await purge.purge_blob(db, blob_store, (await hub.artifacts("extraction"))[-1]["input_hashes"][0], hooks=PurgeHooks())
+    extractions = await hub.artifacts("extraction")
+    [newer_extraction] = [made for made in extractions if made["pipeline_version"].startswith("text-2")]
+    await purge.purge_blob(db, blob_store, newer_extraction["content_blob"], hooks=hooks)
+    await step()
+    [other] = [made for made in extractions if made["subject_ref"] != newer_extraction["subject_ref"]]
+    await purge.purge_blob(db, blob_store, other["input_hashes"][0], hooks=hooks)
     await step()
 
 
@@ -327,6 +338,45 @@ async def test_a_purge_leaves_no_byte_of_what_it_removed_in_the_index_files(defa
     assert await sources(index, "다른") != []
 
 
+KEPT_BLOCKS = 20000
+"""Enough blocks that the FTS5 index has interior pages, whose separators keep the first term of a leaf."""
+KEPT_SYLLABLES = [chr(0xAC00 + 2 * i) for i in range(150)]
+MARKER_SYLLABLES = [chr(0xAC01 + 2 * i) for i in range(150)]
+"""Syllables only markers use, falling between the kept text's in the index's term order."""
+
+
+def words(rng, syllables, count, low=2, high=5):
+    return " ".join("".join(rng.choice(syllables) for _ in range(rng.randint(low, high))) for _ in range(count))
+
+
+def index_terms_holding(index, syllables):
+    conn = sqlite3.connect(index._path)
+    try:
+        return [bytes(term).decode("utf-8", "replace") for (term,) in conn.execute("SELECT term FROM fts_idx") if any(s.encode() in bytes(term) for s in syllables)]
+    finally:
+        conn.close()
+
+
+async def test_a_purge_leaves_no_byte_of_what_it_removed_in_an_index_of_many_leaves(default_secure_delete_off, db, blob_store, tmp_path, index):
+    rng = random.Random(11)
+    await extraction(db, blob_store, tmp_path, [(words(rng, KEPT_SYLLABLES, 25), []) for _ in range(KEPT_BLOCKS)], subject_bytes=b"kept original")
+    markers = [words(rng, MARKER_SYLLABLES, 1, 6, 6) for _ in range(300)]
+    purged_sha, _ = await extraction(db, blob_store, tmp_path, [(f"{words(rng, KEPT_SYLLABLES, 5)} {marker}", []) for marker in markers], subject_bytes=b"purged original")
+    await index.catch_up(db, blob_store)
+    held = cache_bytes(index)
+    marker_bigrams = {marker[j : j + 2].encode() for marker in markers for j in range(len(marker) - 1)}
+    assert all(bigram in held for bigram in marker_bigrams)
+    hooks = PurgeHooks()
+    hooks.register("search", index.forget)
+
+    assert (await purge.purge_blob(db, blob_store, purged_sha, hooks=hooks)).finished
+
+    left = cache_bytes(index)
+    assert [bigram.decode() for bigram in marker_bigrams if bigram in left] == []
+    assert index_terms_holding(index, MARKER_SYLLABLES) == []
+    assert len(await index.documents()) == KEPT_BLOCKS
+
+
 async def test_a_connection_deleting_with_secure_delete_off_leaves_the_marker_in_the_index_files(db, device, blob_store, tmp_path, index):
     await marked(db, device, blob_store, tmp_path, index)
     index.close()
@@ -424,5 +474,111 @@ async def test_a_core_opening_finishes_the_index_s_part_of_a_purge_a_stopped_hub
             assert not (await purge.purge_blob(core.db, core.blobs, sha, hooks=core.purge_hooks)).finished
             assert await sources(core.search, "퍼지") != []
 
-    async with open_core(tmp_path / "root", create=False, sync_roots=[]) as core:
-        assert await sources(core.search, "퍼지") == []
+            path = core.search._path
+    assert MARKER_BYTES[0] in database_file_bytes(path)
+
+    async with open_core(tmp_path / "root", create=False, sync_roots=[]):
+        pass
+
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT count(*) FROM docs WHERE original LIKE '%ZQXJ7731%'").fetchone() == (0,)
+    conn.close()
+    assert [text for text in MARKER_BYTES if text in database_file_bytes(path)] == []
+
+
+def reading(path):
+    """A connection holding a read transaction on the index, which keeps a checkpoint from emptying its WAL."""
+    reader = sqlite3.connect(path, isolation_level=None, timeout=0.1)
+    reader.execute("BEGIN")
+    reader.execute("SELECT count(*) FROM docs").fetchone()
+    return reader
+
+
+async def test_forget_says_so_when_a_reader_keeps_it_from_emptying_the_wal(db, device, blob_store, index):
+    note = new_id()
+    await apply(db, device, create_item(note, MARKER))
+    await index.catch_up(db, blob_store)
+    reader = reading(index._path)
+
+    try:
+        with pytest.raises(WalKept):
+            index.forget(purge.PurgeTarget(items=(note,)))
+    finally:
+        reader.close()
+
+
+async def test_a_purge_a_reader_keeps_from_emptying_the_index_wal_stays_unfinished_until_finished_again(default_secure_delete_off, db, blob_store, tmp_path, index):
+    sha, _ = await extraction(db, blob_store, tmp_path, [(f"{MARKER} 문단", [])])
+    await index.catch_up(db, blob_store)
+    hooks = PurgeHooks()
+    hooks.register("search", index.forget)
+    reader = reading(index._path)
+    try:
+        purged = await purge.purge_blob(db, blob_store, sha, hooks=hooks)
+    finally:
+        reader.close()
+    assert (purged.finished, purged.failed_hooks) == (False, ("search",))
+
+    [finished] = await purge.finish_unfinished(db, blob_store, hooks)
+
+    assert finished.finished
+    assert [text for text in MARKER_BYTES if text in cache_bytes(index)] == []
+
+
+async def test_a_purge_that_comes_while_a_batch_indexes_waits_for_it_and_leaves_nothing(default_secure_delete_off, db, blob_store, tmp_path, index, monkeypatch):
+    sha, _ = await extraction(db, blob_store, tmp_path, [(f"{MARKER} 문단", [])])
+    hooks = PurgeHooks()
+    hooks.register("search", index.forget)
+    real = search_index._documents_of
+    read_the_body, go_on = threading.Event(), threading.Event()
+
+    def held_after_reading(*args):
+        documents = real(*args)
+        read_the_body.set()
+        go_on.wait(10)
+        return documents
+
+    monkeypatch.setattr(search_index, "_documents_of", held_after_reading)
+    loop = asyncio.get_running_loop()
+    batch = asyncio.create_task(index.catch_up(db, blob_store))
+    await loop.run_in_executor(None, read_the_body.wait, 10)
+    purging = asyncio.create_task(purge.purge_blob(db, blob_store, sha, hooks=hooks))
+    await asyncio.sleep(0.3)
+    go_on.set()
+    await batch
+    assert (await purging).finished
+
+    assert [text for text in MARKER_BYTES if text in cache_bytes(index)] == []
+    assert await index.documents() == []
+
+
+async def test_a_job_about_an_older_extraction_does_not_make_it_current_again(db, blob_store, tmp_path, index):
+    sha, older = await extraction(db, blob_store, tmp_path, [("옛날추출 문단", [])])
+    newer_body = await store_bytes(blob_store, tmp_path, json.dumps({"v": 1, "blocks": [{"id": "c0", "block_type": "paragraph", "text": "새추출 문단", "refs": []}]}, ensure_ascii=False).encode())
+    job = await db.write(lambda tx: jobs.enqueue(tx, JobSpec("extract.text", f"blob:{sha}", (sha,), {"n": new_id()}), Pipeline("text-2")))
+    newer = await db.write(lambda tx: artifacts.record(tx, job, "extraction", newer_body))
+
+    await db.write(lambda tx: jobs.enqueue(tx, JobSpec("summarize", f"artifact:{older['id']}", (older["content_blob"],), {}), Pipeline("summary-1")))
+    await index.catch_up(db, blob_store)
+
+    assert (await db.read(lambda snap: artifacts.current(snap, f"blob:{sha}", "extraction")))["id"] == newer["id"]
+    assert (await sources(index, "새추출"), await sources(index, "옛날추출")) == ([f"blob:{sha}"], [])
+
+
+async def test_a_core_that_cannot_register_its_index_hook_closes_its_database(tmp_path, monkeypatch):
+    closed = []
+    real = Database.close
+
+    async def close(self):
+        closed.append(self)
+        await real(self)
+
+    monkeypatch.setattr(Database, "close", close)
+    taken = PurgeHooks()
+    taken.register("search", lambda target: None)
+
+    with pytest.raises(ValueError):
+        async with open_core(tmp_path / "root", create=True, sync_roots=[], purge_hooks=taken):
+            pass
+
+    assert len(closed) == 1

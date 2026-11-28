@@ -37,7 +37,7 @@ def test_version_numbers_compare_as_numbers():
 
 
 def test_each_missing_feature_is_named():
-    for missing, name in [("fts5", "fts5"), ("trigram", "trigram"), ("json_extract", "json_extract"), ("GENERATED", "generated column"), ("secure-delete", "fts5 secure-delete")]:
+    for missing, name in [("fts5", "fts5"), ("trigram", "trigram"), ("json_extract", "json_extract"), ("GENERATED", "generated column"), ("secure-delete", "fts5 secure-delete"), ("contentless_delete", "fts5 contentless_delete")]:
         problems = probe(SqliteWithout(missing))
         assert any(name in problem for problem in problems), (missing, problems)
 

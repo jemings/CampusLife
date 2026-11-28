@@ -2,6 +2,8 @@
 
 from test_capture_commit import apply, blob_store, commit, device, new_id, store_bytes
 
+from campuslife_contracts import validate
+
 from campuslife_hub import artifacts, jobs, store
 from campuslife_hub.jobs import JobSpec, Pipeline
 from campuslife_hub.search.scope import holders
@@ -15,10 +17,12 @@ def captured(capture_id, attachments):
 
 
 def web_snapshot(capture_id, sha):
-    """The Artifact #63 records for a link Capture; it has no input Blob, which the contract does not allow yet."""
+    """The Artifact #63 records for a link Capture, as its contract has it; its job is not on main yet."""
     return {
-        "id": new_id(), "artifact_type": "web_snapshot", "subject_ref": f"capture:{capture_id}", "job_key": new_id(),
+        "id": new_id(), "artifact_type": "web_snapshot", "subject_ref": f"capture:{capture_id}",
+        "job_key": jobs.job_key(JobSpec("fetch.web_snapshot", f"capture:{capture_id}", (), {"capture_id": capture_id}), Pipeline("web_snapshot-1")),
         "pipeline_version": "web_snapshot-1", "input_hashes": [], "content_blob": sha, "created_at": "2026-03-02T00:31:00.000Z",
+        "fetched": {"final_url": "https://example.invalid/notice", "media_type": "text/html"},
     }
 
 
@@ -41,6 +45,7 @@ async def test_a_snapshot_blob_is_held_by_the_capture_its_web_snapshot_artifact_
     await apply(db, device, commit(captured(link, [])))
     snapshot = await store_bytes(blob_store, tmp_path, b"<html>synthetic notice page</html>")
     artifact = web_snapshot(link, snapshot)
+    assert validate("artifact/artifact", artifact) == []
     await db.write(lambda tx: store.write(tx, EntityRef(Entity.ARTIFACT, artifact["id"]), artifact))
 
     held = await db.read(lambda snap: holders(snap, snapshot))

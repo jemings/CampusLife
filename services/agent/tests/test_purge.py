@@ -710,3 +710,11 @@ async def test_a_purge_with_a_reader_on_the_wal_does_not_hold_up_the_writer_for_
         reader.execute("ROLLBACK")
         reader.close()
     assert elapsed < 2
+
+
+async def test_a_purge_names_the_hooks_it_runs_so_none_is_left_out_by_a_default(db, blob_store):
+    with pytest.raises(TypeError):
+        await purge.purge_blob(db, blob_store, "0" * 64)
+    with pytest.raises(TypeError):
+        await purge.finish_unfinished(db, blob_store)
+    assert not hasattr(purge, "HOOKS")
