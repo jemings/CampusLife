@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -17,7 +17,7 @@ from campuslife_hub.data_root import Layout
 from campuslife_hub.db import Database
 from campuslife_hub.devices import ensure_hub_device
 from campuslife_hub.extract.extractors import ALL
-from campuslife_hub.extract.limits import Limits
+from campuslife_hub.extract.limits import IDENTIFY_LIMITS, Limits
 from campuslife_hub.identity import ensure_identity
 from campuslife_hub.job_runner import JobContext, JobRunner
 from campuslife_hub.jobs import JobSpec
@@ -109,8 +109,13 @@ class Hub:
         return await self.db.read(lambda snap: media.get(snap, sha256))
 
 
-def hub_with(db, blob_store, device, tmp_path, *extractors, limits=TEST_LIMITS, base=ALL):
-    registry = build_registry((*base, *extractors), limits)
+def hub_with(db, blob_store, device, tmp_path, *extractors, limits=TEST_LIMITS, base=ALL, identify_limits=None):
+    """A Hub reading with base and extractors; limits, unless None, is the table of every reader alike, and with None
+    each keeps its own. identify runs under identify_limits, or else limits, or else IDENTIFY_LIMITS."""
+    readers = (*base, *extractors)
+    if limits is not None:
+        readers = tuple(replace(reader, limits=limits) for reader in readers)
+    registry = build_registry(readers, identify_limits or limits or IDENTIFY_LIMITS)
     clock = Clock()
     runner = JobRunner(JobContext(db, blob_store, registry, tmp_path / "work"), clock=clock)
     return Hub(db, blob_store, device, tmp_path, registry, clock, runner)

@@ -4,7 +4,8 @@ A handler is registered per job type with the Pipeline that goes into its job_ke
 time it may take. It returns how the job finished. An exception, a result that cannot be
 recorded, or running past its time means "try again later", up to MAX_ATTEMPTS.
 Planners are registered by name; the capture.ingest handler, registered in every
-JobRegistry, asks them what to run for each committed Capture. A job queued under a pipeline its
+JobRegistry, asks them what to run for each committed Capture, and the runner, when it starts, asks each planner's
+catch_up for what the Hub's files lack under readers it gained since it last started. A job queued under a pipeline its
 type no longer has is retired when it comes up (S18): it fails without running and the same work
 is queued under the current pipeline.
 
@@ -47,6 +48,8 @@ PIPELINE_RETIRED = "pipeline retired"
 
 type Handler = Callable[[Job, JobContext], Awaitable[Finished]]
 type Planner = Callable[[CaptureView, JobContext], Awaitable[Iterable[JobSpec]]]
+type CatchUp = Callable[[JobContext], Awaitable[int]]
+"""Queues what a planner's jobs lack for the files the Hub holds, and says how many jobs it queued."""
 
 
 class UnknownJobType(LookupError):
@@ -59,6 +62,7 @@ class JobRegistry:
         self._handlers: dict[str, tuple[Pipeline, Handler]] = {}
         self._planners: dict[str, Planner] = {}
         self._statuses: dict[str, FileStatusOf] = {}
+        self._catch_ups: dict[str, CatchUp] = {}
         self.handle(INGEST, INGEST_PIPELINE, run_ingest)
 
     def handle(self, job_type: str, pipeline: Pipeline, handler: Handler, *, timeout: timedelta = HANDLER_TIMEOUT) -> None:
@@ -87,13 +91,16 @@ class JobRegistry:
         self._entry(job_type)
         return self._timeouts[job_type]
 
-    def plan(self, name: str, planner: Planner, *, status: FileStatusOf | None = None) -> None:
-        """status, when given, tells the local UI where each Attachment the planner plans for stands."""
+    def plan(self, name: str, planner: Planner, *, status: FileStatusOf | None = None, catch_up: CatchUp | None = None) -> None:
+        """status, when given, tells the local UI where each Attachment the planner plans for stands; catch_up, when
+        given, runs when the runner starts."""
         if name in self._planners:
             raise ValueError(f"a planner named {name} is already registered")
         self._planners[name] = planner
         if status is not None:
             self._statuses[name] = status
+        if catch_up is not None:
+            self._catch_ups[name] = catch_up
 
     @property
     def planners(self) -> tuple[tuple[str, Planner], ...]:
@@ -104,6 +111,11 @@ class JobRegistry:
     def statuses(self) -> tuple[tuple[str, FileStatusOf], ...]:
         """The planners that report a FileStatus, in the order they were registered."""
         return tuple(self._statuses.items())
+
+    @property
+    def catch_ups(self) -> tuple[tuple[str, CatchUp], ...]:
+        """The planners that catch up when the runner starts, in the order they were registered."""
+        return tuple(self._catch_ups.items())
 
     def enqueue(self, tx: Tx, spec: JobSpec, *, now: datetime | None = None) -> Job:
         """jobs.enqueue under the Pipeline registered for spec's job type."""
@@ -269,6 +281,16 @@ class JobRunner:
             await running.settled.wait()
         return await self.context.db.write(lambda tx: jobs.cancel(tx, job_id, now=self._clock()))
 
+    async def catch_up(self) -> int:
+        """Run each planner's catch_up; the number of jobs they queued."""
+        queued = 0
+        for name, catch_up in self.context.registry.catch_ups:
+            count = await catch_up(self.context)
+            if count:
+                log.info("planner %s queued %d jobs for readers the Hub gained", name, count)
+            queued += count
+        return queued
+
     def wake(self) -> None:
         """Look for due jobs now rather than at the next idle check."""
         self._wake.set()
@@ -280,6 +302,10 @@ class JobRunner:
         recovered = await self.context.db.write(lambda tx: jobs.recover_after_restart(tx, now=now))
         if recovered:
             log.warning("%d jobs were running when the runner last stopped; they wait again or failed", recovered)
+        try:
+            await self.catch_up()
+        except Exception:
+            log.exception("planning the readers the Hub gained failed; jobs run on, and the next start tries again")
         serving = asyncio.create_task(self._serve(idle_s))
         stopping = asyncio.create_task(stop.wait())
         try:

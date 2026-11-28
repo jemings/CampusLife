@@ -4,12 +4,14 @@ import subprocess
 import sys
 import time
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from extract_harness import TEST_LIMITS, hub_with
 from test_capture_commit import blob_store, device
 
+import cfb_writer
 import malicious_files as make
 from campuslife_hub.extract import child
 from campuslife_hub.extract.fakes import fake
@@ -243,7 +245,8 @@ async def test_the_child_runs_in_its_work_directory_with_only_the_env_it_is_give
         "campuslife_hub", "campuslife_hub.extract", "campuslife_hub.extract.child", "campuslife_hub.extract.sniff",
         "campuslife_hub.extract.formats", "campuslife_hub.extract.limits", "campuslife_hub.extract.protocol",
         "campuslife_hub.extract.safe_zip", "campuslife_hub.extract.extracted", "campuslife_hub.extract.fakes",
-        "campuslife_hub.extract.extractors", "campuslife_hub.extract.text",
+        "campuslife_hub.extract.extractors", "campuslife_hub.extract.text", "campuslife_hub.extract.document",
+        "campuslife_hub.extract.cfb",
     }
     assert not {"sqlite3", "socket", "ssl", "http.client", "urllib.request", "campuslife_contracts"} & set(loaded)
     assert same_path(where[0], tmp_path / "work" / job.id)
@@ -390,7 +393,7 @@ def test_a_hub_without_console_streams_still_reads_its_childs_result(tmp_path):
 
 
 async def test_a_blob_larger_than_the_input_limit_is_identified_and_only_its_extract_is_unsafe(db, device, blob_store, tmp_path):
-    limits = Limits(**{**TEST_LIMITS.to_json(), "input_max_bytes": 1 << 20})
+    limits = replace(TEST_LIMITS, input_max_bytes=1 << 20)
     reader = fake("echo", {"text/plain": {}, "application/octet-stream": {}})
     hub = hub_with(db, blob_store, device, tmp_path, reader, base=(), limits=limits)
     large = tmp_path / "lecture.bin"
@@ -428,7 +431,7 @@ def stored_zip(path, member_bytes):
     ids=["member over the member limit", "members over the total limit", "a zip bomb"],
 )
 async def test_an_archive_over_a_byte_limit_is_identified_and_only_reading_its_members_is_unsafe(db, device, blob_store, tmp_path, limits, make_file):
-    limited = Limits(**{**TEST_LIMITS.to_json(), **limits})
+    limited = replace(TEST_LIMITS, **limits)
     hub = hub_with(db, blob_store, device, tmp_path, fake("zip_walk", {"application/zip": {}}), base=(), limits=limited)
     capture = await hub.capture(("lecture.zip", make_file(tmp_path / "input.zip")))
 
@@ -443,12 +446,9 @@ async def test_an_archive_over_a_byte_limit_is_identified_and_only_reading_its_m
 
 
 async def test_an_ole_file_larger_than_the_childs_memory_is_identified(db, device, blob_store, tmp_path):
-    limits = Limits(**{**TEST_LIMITS.to_json(), "mem_bytes": 256 << 20, "input_max_bytes": 64 << 20})
+    limits = replace(TEST_LIMITS, mem_bytes=256 << 20, input_max_bytes=64 << 20)
     hub = hub_with(db, blob_store, device, tmp_path, fake("echo", {"application/x-cfb": {}}), base=(), limits=limits)
-    large = tmp_path / "lecture.ole"
-    with large.open("wb") as handle:
-        handle.write(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
-        handle.truncate(300 << 20)
+    large = cfb_writer.write(tmp_path / "lecture.ole", {"Contents": b"c"}, trailing=300 << 20)
 
     capture = await hub.capture(("lecture.ole", large))
     await hub.settle()

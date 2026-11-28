@@ -14,6 +14,7 @@ from types import MappingProxyType
 
 from . import formats, text
 from .formats import Reader
+from .limits import DEFAULT_LIMITS, RENDITION_LIMITS, Limits
 from .protocol import ENTRY_PREFIX
 
 ID = re.compile(r"[a-z][a-z0-9_]*")
@@ -33,6 +34,9 @@ class Extractor:
     """The params it takes for each media type it reads, as refine returns them."""
     kind: str = "extract"
     """extract makes an extraction Artifact, render a rendition Artifact holding the PDF (S5, S12)."""
+    limits: Limits | None = None
+    """The bounds its jobs run under; DEFAULT_LIMITS for an extractor and RENDITION_LIMITS for a converter when None.
+    Their hash is part of its pipeline version and their timeout_s sets its jobs' timeout."""
 
     def __post_init__(self) -> None:
         if not ID.fullmatch(self.id) or len(self.id) > 64:
@@ -45,6 +49,8 @@ class Extractor:
         if self.kind not in KINDS:
             raise ValueError(f"an extractor's kind is one of {', '.join(KINDS)}, not {self.kind!r}")
         object.__setattr__(self, "accepts", MappingProxyType({media: MappingProxyType(dict(params)) for media, params in self.accepts.items()}))
+        if self.limits is None:
+            object.__setattr__(self, "limits", RENDITION_LIMITS if self.kind == "render" else DEFAULT_LIMITS)
 
     @property
     def job_type(self) -> str:

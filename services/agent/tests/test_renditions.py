@@ -4,6 +4,7 @@ as the content of a rendition Artifact on the original Blob, with no body and no
 import hashlib
 import json
 import sys
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -113,7 +114,7 @@ async def test_a_converter_that_leaves_a_link_for_the_pdf_fails_its_job(db, devi
 
 
 async def test_a_rendition_larger_than_the_limit_fails_its_job_as_unsafe(db, device, blob_store, tmp_path):
-    limits = TEST_LIMITS.__class__(**{**TEST_LIMITS.to_json(), "rendition_max_bytes": len(written(SLIDES)) - 1})
+    limits = replace(TEST_LIMITS, rendition_max_bytes=len(written(SLIDES)) - 1)
     hub = hub_with(db, blob_store, device, tmp_path, converter(), base=(), limits=limits)
     await hub.capture(("slides.txt", SLIDES))
 
@@ -125,7 +126,7 @@ async def test_a_rendition_larger_than_the_limit_fails_its_job_as_unsafe(db, dev
 
 
 async def test_a_rendition_as_large_as_the_limit_is_kept(db, device, blob_store, tmp_path):
-    limits = TEST_LIMITS.__class__(**{**TEST_LIMITS.to_json(), "rendition_max_bytes": len(written(SLIDES))})
+    limits = replace(TEST_LIMITS, rendition_max_bytes=len(written(SLIDES)))
     hub = hub_with(db, blob_store, device, tmp_path, converter(), base=(), limits=limits)
     await hub.capture(("slides.txt", SLIDES))
 

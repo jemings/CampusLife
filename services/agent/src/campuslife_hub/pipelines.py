@@ -11,13 +11,14 @@ from collections.abc import Sequence
 from .extract import extractors
 from .extract.extractors import Extractor
 from .extract.framework import Files
-from .extract.limits import DEFAULT_LIMITS, Limits
+from .extract.limits import IDENTIFY_LIMITS, Limits
 from .job_runner import JobRegistry
 
 
-def build_registry(extractor_list: Sequence[Extractor] = extractors.ALL, limits: Limits = DEFAULT_LIMITS) -> JobRegistry:
+def build_registry(extractor_list: Sequence[Extractor] = extractors.ALL, identify_limits: Limits = IDENTIFY_LIMITS) -> JobRegistry:
+    """Each extractor runs under its descriptor's limits, identify under identify_limits."""
     registry = JobRegistry()
-    Files(extractor_list, limits).register(registry)
+    Files(extractor_list, identify_limits).register(registry)
     return registry
 
 

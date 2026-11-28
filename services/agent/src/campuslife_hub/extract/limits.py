@@ -1,8 +1,13 @@
-"""The limits table (S7): every bound an identify, extract or render job runs under, in one frozen value.
+"""The limits tables (S7): every bound an identify, extract or render job runs under, in one frozen value per reader.
 
-A job carries the table in its request, the child keeps to it, and the Hub checks what comes back against it. Its
-hash is part of the pipeline version, so a change of any bound makes new jobs rather than reusing results made under
-other bounds. Every breach ends the job with outcome unsafe_input (FILE-INGESTION §9).
+Each extractor and converter carries its own table (Extractor.limits), and identify has its own (IDENTIFY_LIMITS):
+the extractor issues' common decision, so that a bound of one format retires that format's pipeline alone, and the
+framework knows no format. A format with bounds of its own (pages, cells, entries) declares a subclass of Limits in
+its module; the table travels as JSON with its type's name, and the child rebuilds that type. A job carries its
+reader's table in its request, the child keeps to it, and the Hub checks what comes back against it. The hash of a
+table's bounds is part of its reader's pipeline version, so a change of any bound makes new jobs of that reader
+rather than reusing results made under other bounds; the timeout of the reader's jobs follows its timeout_s. Every
+breach ends the job with outcome unsafe_input (FILE-INGESTION §9).
 
 Where the defaults come from: local measurements of the real child on synthetic inputs (Linux, CPython 3.12, 2026-11-28;
 generated Korean and English Markdown, generated ZIPs), not on users' files:
@@ -27,7 +32,7 @@ generated Korean and English Markdown, generated ZIPs), not on users' files:
   measures them.
 
 identify does not read a Blob whole into memory: it reads the head, a ZIP's member names (safe_zip names_only, so
-only zip_max_members binds it there; it opens no archive inside one), and an OLE file in chunks. The byte bounds bind
+only zip_max_members binds it there; it opens no archive inside one), and an OLE file's FAT and directory (cfb). The byte bounds bind
 the jobs that read a Blob or its members: the total when an extractor opens an archive, a member's size and ratio
 when it reads the member.
 """
@@ -35,10 +40,15 @@ when it reads the member.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 from dataclasses import asdict, dataclass
 
+from .protocol import ENTRY_PREFIX
+
 MiB = 1 << 20
+TYPE = "type"
+"""The member of a table's JSON naming its type, module:qualname in the extractor package."""
 
 
 @dataclass(frozen=True)
@@ -71,15 +81,35 @@ class Limits:
     """Archives inside archives: 1 opens only the outer one."""
 
     def to_json(self) -> dict:
-        return asdict(self)
+        kind = type(self)
+        return {TYPE: f"{kind.__module__}:{kind.__qualname__}", **asdict(self)}
 
-    @classmethod
-    def from_json(cls, data: dict) -> Limits:
-        return cls(**data)
+    @staticmethod
+    def from_json(data: dict) -> Limits:
+        """The table data holds, of the type it names; ValueError unless that is a Limits type defined, not only
+        imported, in a module of the extractor package that imports."""
+        bounds = dict(data)
+        named = bounds.pop(TYPE, None)
+        module, _, name = str(named).partition(":")
+        kind = None
+        if module.startswith(ENTRY_PREFIX) and name:
+            try:
+                kind = getattr(importlib.import_module(module), name, None)
+            except ImportError:
+                kind = None
+        if not (isinstance(kind, type) and issubclass(kind, Limits) and kind.__module__ == module):
+            raise ValueError(f"a limits table names a Limits type defined in {ENTRY_PREFIX}, not {named!r}")
+        return kind(**bounds)
 
     def hash8(self) -> str:
-        """The first 8 hex digits of the table's SHA-256: the L part of a pipeline version."""
-        return hashlib.sha256(json.dumps(self.to_json(), sort_keys=True).encode()).hexdigest()[:8]
+        """The first 8 hex digits of the SHA-256 of the table's bounds, a format's own included: the L part of a
+        pipeline version. The type is left out, so a plain table hashes as it did before tables had types."""
+        return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()[:8]
 
 
 DEFAULT_LIMITS = Limits()
+"""An extractor's table unless its descriptor names another."""
+IDENTIFY_LIMITS = Limits()
+"""identify's table, apart from every extractor's: identify uses the process bounds and zip_max_members."""
+RENDITION_LIMITS = Limits()
+"""A converter's table unless its descriptor names another: #59 sets the time and memory a conversion needs."""

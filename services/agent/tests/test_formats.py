@@ -4,6 +4,7 @@ import zipfile
 
 import pytest
 
+import cfb_writer
 import malicious_files as make
 from campuslife_hub.extract import formats, sniff
 from campuslife_hub.extract.formats import Reader, extension, refine
@@ -33,9 +34,12 @@ READERS = (TEXT_READER, CSV_READER)
         ("application/pdf", "notes.md", None, "application/pdf", [], True),
         ("text/plain", "report.pdf", None, "text/plain", [("extract.text", {"syntax": "plain"})], True),
         ("text/plain", "notes.md", "application/pdf", "text/markdown", [("extract.text", {"syntax": "markdown"})], True),
-        (formats.CFB, "report.hwp", None, "application/x-hwp", [], False),
-        (formats.CFB, "report.doc", None, "application/msword", [], False),
-        (formats.CFB, "report.docx", None, formats.CFB, [], True),
+        ("application/x-hwp", "report.hwp", None, "application/x-hwp", [], False),
+        ("application/msword", "report.doc", None, "application/msword", [], False),
+        ("application/msword", "report.docx", None, "application/msword", [], True),
+        ("application/msword", "grades.xls", None, "application/msword", [], True),
+        (formats.CFB, "report.doc", None, formats.CFB, [], True),
+        (formats.CFB, "mail.msg", None, formats.CFB, [], False),
         (formats.DOCX, "report.docx", None, formats.DOCX, [], False),
         (formats.DOCX, "report.zip", None, formats.DOCX, [], True),
         (formats.UNKNOWN, "photo.heic", None, formats.UNKNOWN, [], True),
@@ -86,7 +90,18 @@ def write(path, data):
         (make.pptx, formats.PPTX),
         (make.xlsx, formats.XLSX),
         (make.hwpx, formats.HWPX),
-        (make.ole_document, formats.CFB),
+        (make.ole_document, "application/msword"),
+        (lambda path: cfb_writer.write(path, {"Workbook": b"w"}), "application/vnd.ms-excel"),
+        (lambda path: cfb_writer.write(path, {"Book": b"b"}), "application/vnd.ms-excel"),
+        (lambda path: cfb_writer.write(path, {"PowerPoint Document": b"p", "Current User": b"u"}), "application/vnd.ms-powerpoint"),
+        (lambda path: cfb_writer.write(path, {"FileHeader": b"HWP Document File", "BodyText": {"Section0": b"s"}}), "application/x-hwp"),
+        (lambda path: cfb_writer.write(path, {"__substg1.0_0037001F": b"m"}), formats.CFB),
+        (lambda path: write(path, b"\x00" * 1019 + b"%PDF-1.7\n"), formats.PDF),
+        (lambda path: write(path, b"junk before the header\r\n%PDF-1.4\n%\xe2\xe3\xcf\xd3\n" + bytes(range(256))), formats.PDF),
+        (lambda path: write(path, b"junk before the header\r\n%PDF-1.4\n"), formats.TEXT),
+        (lambda path: write(path, codecs.BOM_UTF8 + b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n" + bytes(range(256))), formats.PDF),
+        (lambda path: write(path, codecs.BOM_UTF8 + b"%PDF-1.4 is a header\n"), formats.TEXT),
+        (lambda path: cfb_writer.write(path, {"WordDocument": b"w", "Workbook": b"b"}), "application/msword"),
         (lambda path: write(path, "# 제목\n본문".encode()), formats.TEXT),
         (lambda path: write(path, codecs.BOM_UTF16_LE + "본문".encode("utf-16-le")), formats.TEXT),
         (lambda path: write(path, "한글 문서".encode("cp949")), formats.TEXT),
@@ -110,72 +125,60 @@ def test_identify_reads_the_family_from_the_bytes(tmp_path, make_file, media_typ
     assert sniff.identify(make_file(tmp_path / "input"), Limits()) == media_type
 
 
-@pytest.mark.parametrize(("make_file", "status"), [(make.encrypted_ooxml, Status.PASSWORD_REQUIRED), (make.traversal, Status.UNSAFE_INPUT)])
-def test_identify_refuses_an_encrypted_office_file_and_a_dangerous_archive(tmp_path, make_file, status):
+@pytest.mark.parametrize(
+    ("make_file", "status"),
+    [
+        (make.encrypted_ooxml, Status.PASSWORD_REQUIRED),
+        (lambda path: cfb_writer.write(path, {"\x06DataSpaces": {"Version": b"v"}}), Status.PASSWORD_REQUIRED),
+        (lambda path: cfb_writer.write(path, {"WordDocument": b"w", "\x06DataSpaces": {"Version": b"v"}}), Status.PASSWORD_REQUIRED),
+        (make.traversal, Status.UNSAFE_INPUT),
+        (lambda path: write(path, cfb_writer.MAGIC + bytes(600)), Status.CORRUPT),
+    ],
+    ids=["encrypted_package", "data_spaces", "encrypted_beside_a_word_stream", "traversal", "damaged_cfb"],
+)
+def test_identify_refuses_an_encrypted_office_file_a_dangerous_archive_and_a_damaged_container(tmp_path, make_file, status):
     with pytest.raises(Refused) as refused:
         sniff.identify(make_file(tmp_path / "input"), Limits())
 
     assert refused.value.status is status
 
 
-def ole(path, size, marker_at):
-    """An OLE container of size bytes with EncryptedPackage, in UTF-16, at marker_at (None for none)."""
-    with path.open("wb") as handle:
-        handle.write(sniff.CFB_MAGIC)
-        handle.truncate(size)
-        if marker_at is not None:
-            handle.seek(marker_at)
-            handle.write(sniff.ENCRYPTED_PACKAGE)
-    return path
+def test_a_word_document_whose_text_says_encrypted_package_is_a_word_document(tmp_path):
+    """The #5 PR #52 regression: the word in a stream's bytes is not a root entry."""
+    text = "이 문서는 EncryptedPackage 스트림을 설명합니다".encode("utf-16-le")
+    path = cfb_writer.write(tmp_path / "input", {"WordDocument": text * 300, "1Table": text})
+
+    assert sniff.identify(path, Limits()) == "application/msword"
 
 
 @pytest.mark.parametrize(
-    "marker_at",
-    [
-        lambda: sniff.SCAN_BYTES - len(sniff.ENCRYPTED_PACKAGE) // 2,
-        lambda: sniff.SCAN_BYTES - 1,
-        lambda: sniff.SCAN_BYTES,
-        lambda: 3 * sniff.SCAN_BYTES - len(sniff.ENCRYPTED_PACKAGE),
-    ],
-    ids=["across the first boundary", "one byte before it", "at it", "at the end"],
+    "data",
+    ["# PDF 파일 구조\n\nPDF 파일은 %PDF-1.7 으로 시작합니다.\n".encode(), b"def is_pdf(data):\n    return data.startswith(b'%PDF-')\n"],
+    ids=["markdown_note", "python_code"],
 )
-def test_an_encrypted_package_marker_anywhere_in_an_ole_file_is_found(tmp_path, marker_at):
-    path = ole(tmp_path / "input", 3 * sniff.SCAN_BYTES, marker_at())
-
-    with pytest.raises(Refused) as refused:
-        sniff.identify(path, Limits())
-
-    assert refused.value.status is Status.PASSWORD_REQUIRED
+def test_text_that_mentions_the_pdf_header_is_text(tmp_path, data):
+    """A PDF header after other bytes counts only when those bytes are no text: a note or code about PDF is text."""
+    assert sniff.identify(write(tmp_path / "input", data), Limits()) == formats.TEXT
 
 
-def test_an_ole_file_without_the_marker_is_cfb_whatever_its_chunks(tmp_path):
-    assert sniff.identify(ole(tmp_path / "input", 3 * sniff.SCAN_BYTES + 7, None), Limits()) == formats.CFB
+@pytest.mark.parametrize("offset", [1020, 4000])
+def test_a_pdf_header_past_the_first_1024_bytes_is_not_a_pdf(tmp_path, offset):
+    path = write(tmp_path / "input", b" " * offset + b"%PDF-1.7\n")
+
+    assert sniff.identify(path, Limits()) == formats.TEXT
+
+
+def test_a_signature_at_the_start_comes_before_a_pdf_header_inside_the_head(tmp_path):
+    """A ZIP that stores a PDF uncompressed shows %PDF- in its first bytes; it is still a ZIP."""
+    path = tmp_path / "input"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr("a.pdf", b"%PDF-1.7\n")
+
+    assert sniff.identify(path, Limits()) == formats.ZIP
 
 
 def test_identify_names_a_zip_bomb_an_archive_and_leaves_its_bytes_to_the_extractor(tmp_path):
     assert sniff.identify(make.bomb(tmp_path / "input"), Limits()) == formats.ZIP
-
-
-@pytest.mark.parametrize("scan", [7, 31, 32, 33, 64])
-@pytest.mark.parametrize("pad", range(0, 70))
-def test_the_scan_finds_a_marker_at_any_offset_whatever_its_chunk_size(tmp_path, monkeypatch, scan, pad):
-    monkeypatch.setattr(sniff, "SCAN_BYTES", scan)
-    marker, path = sniff.ENCRYPTED_PACKAGE, tmp_path / "input"
-
-    path.write_bytes(b"x" * pad + marker)
-    assert sniff._holds(path, marker)
-    path.write_bytes(b"x" * pad + marker + b"y" * 5)
-    assert sniff._holds(path, marker)
-    path.write_bytes(b"x" * pad + marker[:-1] + b"y" * 40)
-    assert not sniff._holds(path, marker)
-
-
-@pytest.mark.parametrize("data", [b"", b"x", sniff.ENCRYPTED_PACKAGE[:-1]])
-def test_the_scan_of_a_file_shorter_than_the_marker_finds_nothing(tmp_path, data):
-    path = tmp_path / "input"
-    path.write_bytes(data)
-
-    assert not sniff._holds(path, sniff.ENCRYPTED_PACKAGE)
 
 
 def hwpx_with_mimetype(path, mimetype):
