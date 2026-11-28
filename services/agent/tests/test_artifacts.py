@@ -60,6 +60,15 @@ async def test_a_job_that_used_no_model_records_no_model_columns(db, blob_store,
     assert artifact["pipeline_version"] == "extract-1"
 
 
+async def test_a_job_that_reads_no_blob_records_no_input_hashes(db, blob_store, tmp_path):
+    job = await queued(db, inputs=(), pipeline=Pipeline("outline-1"), job_type="outline")
+
+    artifact = await record(db, job, "outline", await stored(blob_store, tmp_path, b"outline"))
+
+    assert artifact["input_hashes"] == []
+    assert [data for _, _, data in await artifact_rows(db)] == [artifact]
+
+
 async def test_the_same_job_recording_its_type_again_gets_the_first_artifact_back(db, blob_store, tmp_path):
     job = await queued(db)
     first = await record(db, job, "summary", await stored(blob_store, tmp_path, b"first run"))
@@ -85,8 +94,8 @@ async def test_another_type_from_the_same_job_or_the_same_type_from_another_job_
 
 @pytest.mark.parametrize(
     ("artifact_type", "content", "inputs"),
-    [("Summary", b"x", (PDF,)), ("summary", None, (PDF,)), ("summary", b"x", ())],
-    ids=["type outside the contract", "content not stored", "no inputs"],
+    [("Summary", b"x", (PDF,)), ("summary", None, (PDF,)), ("web_snapshot", b"<html>", ())],
+    ids=["type outside the contract", "content not stored", "web snapshot without what was fetched"],
 )
 async def test_an_artifact_the_contract_or_the_blob_store_cannot_hold_is_refused_and_nothing_is_written(
     db, blob_store, tmp_path, artifact_type, content, inputs

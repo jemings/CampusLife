@@ -1,0 +1,10 @@
+{
+  "id": "4a7d1c2e-8b3f-4e6a-9c5d-2f1e0d9c8b7a",
+  "artifact_type": "identify",
+  "subject_ref": "blob:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "job_key": "abababababababababababababababababababababababababababababababab",
+  "pipeline_version": "identify-1+R5f6e7d8c",
+  "input_hashes": [],
+  "content_blob": "baa5a0964d3320fbc0c6a922140453c8513ea24ab8fd0577034804a967248096",
+  "created_at": "2026-03-02T01:10:00.000Z"
+}
