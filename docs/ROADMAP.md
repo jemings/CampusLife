@@ -108,8 +108,8 @@ README와 Epic #1의 MVP 기준은 이 목록을 따릅니다.
 ## Phase 6 — Unified Inbox
 
 - PDF/이미지/문서/URL/텍스트/음성 메모 분류
-- event / announcement / opportunity / organization / note `create_item` Suggestion 생성, 기각 fingerprint 기억
-- 태그와 관계 편집, Suggestion 검토 화면(수락 시 수정 가능)
+- event / announcement / opportunity / organization / note `create_item` Suggestion 생성, 기각 fingerprint 기억 — kind 넷과 fingerprint·수락 판정은 완료(#9, D28). 제안을 만드는 producer는 #8
+- 태그와 관계 편집, Suggestion 검토 화면(수락 시 수정 가능) — Hub 로컬 UI의 Inbox·검토·Item 화면 완료(#9, D28). Android 검토 화면은 #64, iPad는 #16
 - 공지에서 마감일/장소/대상 조건 추출
 
 완료 기준: 강의와 비강의 데이터가 같은 Capture/Attachment/Artifact pipeline을 공유하고, AI 분류는 사용자가 수락하기 전에는 Item이 되지 않습니다.

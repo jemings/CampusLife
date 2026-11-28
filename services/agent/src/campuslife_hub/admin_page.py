@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 def page(title: str, body: str, *, status: int = 200, signed_in: bool = True) -> HTMLResponse:
     """A local UI page: body is HTML the caller has escaped; title is escaped here."""
     nav = (
-        '<nav><a href="/">Captures</a><a href="/import">Import</a><a href="/jobs">Jobs</a><a href="/backup">Backup</a><a href="/devices">Devices</a>'
+        '<nav><a href="/">Captures</a><a href="/inbox">Inbox</a><a href="/import">Import</a><a href="/jobs">Jobs</a><a href="/backup">Backup</a><a href="/devices">Devices</a>'
         '<form method="post" action="/logout"><button>Log out</button></form></nav>'
         if signed_in
         else ""

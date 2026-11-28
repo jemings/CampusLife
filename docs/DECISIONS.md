@@ -293,8 +293,8 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **LectureSession 생성:** 사용자가 녹음을 시작할 때 생깁니다. Android가 (course, 날짜)로 기존 세션을 찾고, 없으면 create Mutation을 보냅니다. 두 장치가 같은 강의에 세션을 각각 만들면 Item 병합 액션(Relation 이전 + 하나 삭제)으로 정리합니다.
 - **Suggestion:** `Suggestion{id, source_artifact_id, action: create_item|patch_item|add_relation, proposed{…}, evidence[](Locator), fingerprint, state: open|accepted|dismissed|superseded}`. *(D20으로 대체됨: `action`은 열린 값이고 알려진 값이 `create_item|patch_item|add_relation`(E21))*
   - 수락은 `suggestion.accept{id, edits?}` Mutation입니다. *(D20으로 대체됨: `{mutation_id, op: suggestion.accept, suggestion_id, edits?}`(E11))* Hub가 한 트랜잭션으로 Item을 만들고 근거를 Relation으로 복사합니다.
-  - `fingerprint = hash(action, kind, 정규화한 핵심 필드)`입니다. 기각된 fingerprint는 재처리해도 다시 열리지 않습니다.
-  - 상충하는 날짜·지시는 서로 `conflicts_with`로 참조하는 Suggestion 쌍이며, 사용자가 하나를 고릅니다.
+  - `fingerprint = hash(action, kind, 정규화한 핵심 필드)`입니다. 기각된 fingerprint는 재처리해도 다시 열리지 않습니다. *(D28로 대체됨: Hub의 `propose`가 action마다 정한 키로 계산합니다)*
+  - 상충하는 날짜·지시는 서로 `conflicts_with`로 참조하는 Suggestion 쌍이며, 사용자가 하나를 고릅니다. *(D28: Hub는 쌍을 추론하지 않고, UI가 짝이 수락된 것을 보여 줍니다)*
 - **클라이언트 호환 규칙:** 모르는 kind는 제목·날짜·본문만으로 일반 렌더링합니다. patch는 바꾼 필드만 보내므로, 모르는 필드를 보존할 필요가 없습니다.
 
 **결과:**
@@ -532,7 +532,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
   - `capture.commit {capture}`, `create {entity, id, data}`, `patch {entity, id, set:{key: {from, to} | {from_hash, to}}}`, `delete`·`restore {entity, id}`, `suggestion.accept {suggestion_id, edits?}`, `suggestion.dismiss {suggestion_id}`. MVP op는 이 일곱 개이고, 뒤의 op(`layer.adopt`은 #17, ConflictRecord 해소는 #18)는 갈래로 더합니다.
   - `set`의 키는 공통 열 이름이나 `fields.<key>`(한 단계)입니다. patch는 `x-owner: user` 열만 쓰고, `fields`를 통째로 쓰지 않습니다. 배열은 통째로 비교·교체하고, `from: null`은 없던 열, `to: null`은 선택 열 삭제입니다.
   - `x-text: true` 열은 `from` 대신 `from_hash`(NFC + LF로 정규화한 UTF-8 바이트의 sha256)를 보냅니다. 빈 문자열도 해시하고, `null`은 열이 없었다는 뜻입니다.
-  - `edits`는 patch의 set처럼 키를 쓰고, 값은 제안 대신 쓸 값입니다. 대상은 늘 Item이므로 공통 열 키는 patch처럼 규칙 `owner`·`set_type`으로 검사합니다. `fields.<key>`의 타입과 "제안에 있는 키인가"는 Suggestion을 봐야 하므로 Hub 적용기(#2)가 판정합니다.
+  - `edits`는 patch의 set처럼 키를 쓰고, 값은 제안 대신 쓸 값입니다. 대상은 늘 Item이므로 공통 열 키는 patch처럼 규칙 `owner`·`set_type`으로 검사합니다. `fields.<key>`의 타입과 "제안에 있는 키인가"는 Suggestion을 봐야 하므로 Hub 적용기(#2)가 판정합니다. *(D28로 대체됨: `create_item`의 edits는 제안에 없던 사용자 열과 그 kind의 `fields.<key>`도 받고, 결과를 닫힌 create로 판정합니다. 제안에 있는 키로 제한하는 것은 `patch_item`뿐입니다. `kind`는 edits로 바꿀 수 없습니다(owner))*
   - D7·D10·D18의 봉투를 대체합니다.
 - **E12. Mutation 결과:** `{mutation_id, result: applied|duplicate|conflict|rejected|retry|not_attempted, reason?, applied_fields?, conflicted_fields?, conflict_record_ids?, missing_blobs?, original?}`.
   - `reason`은 `id_reuse, not_canonical, owner, schema, deleted, link_target_missing, unsupported_entity`입니다(A4). `id_reuse`(같은 id, 다른 내용)는 rejected입니다.
@@ -617,7 +617,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **E8. #18 전의 x-text 충돌값:** 제출값을 동기화하지 않는 내부 `conflict_stash`에 보존합니다. #18이 ConflictRecord로 옮깁니다. *(D24로 대체됨: `0011_conflict_records.sql`이 stash를 Mutation당 ConflictRecord 하나로 옮기고 테이블을 지웠습니다)*
 - **CAS가 먼저, schema는 마지막** (2026-11-27, "PR #30 1차"): patch는 키마다 CAS를 먼저 판정합니다. `rejected{schema}`는 모든 키의 `from`이 맞는데 결과 행이 계약을 깰 때만입니다. 행 적합성이 함께 걸린 키 묶음(`all_day`·`starts_at`·`due_at`)은 한 단위로 판정하고, 묶음 밖 키는 각자의 CAS대로 적용합니다. 진 키가 있는 patch에서 묶음 밖의 이긴 키가 혼자 행을 깨면 그 키만 충돌로 돌립니다(구현자 결정 받아들임).
 - **E15. 로컬 import:** NFC 파일명(다르면 `original_filename_raw`), cloud_policy 해석, Hub 자신의 `windows_hub` Device 행으로 payload를 만들고 같은 `apply()`를 부릅니다(#20 A7). import 한 번이 Capture 하나입니다. 파일명이 UTF-8로 인코딩되지 않으면 Blob을 저장하기 전에 그 파일을 거부합니다(2026-11-26, "PR #28 1차").
-- **E22.** `suggestion.accept`·`dismiss`는 이 적용기가 구현합니다(판정 지점 하나). `edits`의 `fields.<key>`가 kind 스키마에 맞는지, 제안에 있는 키인지는 적용기가 Suggestion을 읽고 판정해 `rejected{schema}`로 답합니다.
+- **E22.** `suggestion.accept`·`dismiss`는 이 적용기가 구현합니다(판정 지점 하나). `edits`의 `fields.<key>`가 kind 스키마에 맞는지, 제안에 있는 키인지는 적용기가 Suggestion을 읽고 판정해 `rejected{schema}`로 답합니다. *(D28로 대체됨: 적용기는 `create_item`이면 edits를 얹은 결과를 닫힌 create로, `patch_item`이면 제안한 키인지와 닫힌 patch로 판정합니다. 이 "수락 가능" 판정은 `propose`와 같은 함수 하나입니다)*
 
 **적용기 판정 (받아들인 구현자 결정)** — 클라이언트가 결과로 보는 것
 - Relation의 끝이나 commit `links[]`의 대상이 없거나 tombstone이면 `rejected{link_target_missing}`입니다. soft-delete된 Item은 있는 것으로 봅니다(2026-11-26 "PR #28 1차", Relation create까지 넓힌 것은 2026-11-27 "PR #30 1차").
@@ -1027,6 +1027,56 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 **결과:**
 - 코드는 `services/agent/src/campuslife_hub/search/analyzer.py`, 측정은 `services/agent/tools/search_bench.py`입니다(`uv run python tools/search_bench.py`, 출력 첫 줄이 출처).
 - 미결 O2를 닫습니다.
+
+---
+
+## D28. 통합 Inbox와 Suggestion 검토 (#9, 2026-11-28)
+
+**문제:** Suggestion은 D10부터 있었지만 검토하는 길이 없었습니다(#9).
+- Inbox가 엔터티인지 계산값인지 정하지 않았습니다. Capture에 상태 필드를 둘 수 없습니다(D1).
+- `propose`는 열린 피드 모양으로만 제안을 검사했고, 수락은 닫힌 create로 판정했습니다. 그래서 수락할 수 없는 제안이 open으로 저장되고, 수락하면 늘 `rejected{schema}`였습니다.
+- 수락 결과에도 accepted Suggestion에도 만든 Item의 id가 없었습니다.
+- fingerprint는 producer가 계산하게 되어 있었고, 키가 정해지지 않았습니다(D10).
+- edits는 제안에 있는 키만 받아서(E22), 모델이 빠뜨린 열을 수락하면서 채울 수 없었습니다.
+
+각 결정의 근거와 버린 안은 #9 본문의 "결정" 절에 있습니다.
+
+**결정** (오케스트레이터 결정, 2026-11-28, 사용자가 결정을 위임). 앞 항목에서 이 결정과 어긋나는 문장에는 `D28로 대체됨`을 달았습니다.
+- **Inbox는 계산값입니다(#9 결정 1).** Inbox = {state가 open인 Suggestion} ∪ {미분류 Capture}. 엔터티도 읽음·보관 상태도 없습니다.
+  - 미분류 Capture: `capture:C`, C의 모든 Attachment A의 `attachment:A`, 그 Blob의 `blob:<A.blob_sha256>` 가운데 어느 것도 살아 있는 Relation의 `from`이나 `to`에 없는 Capture입니다. 규범은 DOMAIN-MODEL §4에 있습니다.
+  - Relation type을 가리지 않습니다. 그래서 blob↔blob Relation(`rendition_of`, `supersedes`)도 분류하고, 같은 sha256 Blob을 공유하는 두 Capture는 그 Blob에 Relation이 닿으면 함께 빠집니다(D2).
+  - 미분류에서 빠지는 길은 "항목으로 만들기"입니다. 클라이언트가 [create item, create relation item —evidence→ capture]를 한 배치로 보냅니다.
+  - 버린 안: Inbox 엔터티, 읽음 상태(주인이 둘이 되고 기기 간 동기화가 필요함).
+- **snooze는 두지 않습니다(#9 결정 2).** "나중에"는 open으로 두는 것입니다. `state`는 닫힌 enum이고(D20), Hub는 다시 알릴 수 없습니다(D19).
+- **수정 후 수락(#9 결정 3·4):** `create_item`의 edits는 제안에 없던 사용자 열과 그 kind의 `fields.<key>`도 받고, Hub는 결과를 닫힌 create로 판정합니다. `patch_item`은 제안한 키로 제한합니다(새 키에는 CAS할 `from`이 없음). 수락하면서 kind를 바꾸지 않습니다. 다른 kind로 만들려면 기각하고 수동으로 만든 뒤 evidence Relation을 붙입니다.
+- **`created_item_id`(#9 결정 5):** Suggestion의 Hub 소유 열이고, `create_item` 수락 트랜잭션에서만 씁니다. 다른 기기는 이 열로 수락한 Item을 찾습니다. 버린 안: Item id 유도식 공개(다른 기기는 mutation_id를 모름).
+- **fingerprint는 `propose`가 계산합니다(#9 결정 6, PR2 리뷰).** 시그니처는 `propose(tx, artifact_id, action, proposed, evidence, *, conflicts_with)`이고 producer는 정규화를 모릅니다. 값은 `[action, …키]`의 `canonical_json`을 sha256한 것입니다.
+  - `create_item`: kind, 정렬한 evidence 앵커, 주 날짜(`due_at`, 없으면 `starts_at`), 정규화한 제목(NFC, casefold, 공백·구두점·형식 문자(Cf) 제거).
+  - `patch_item`: item id와 set의 (키, to). `add_relation`: relation id.
+  - 키를 바꾸면 사용자가 결정한 fingerprint가 다시 열리므로 세 action의 값을 시험에 고정합니다.
+  - 받아들이는 단점: 구두점만 다른 제목("C# lab"과 "C lab")은 같은 제안이 되고, 모델이 제목을 흔들면 기각한 것이 다시 열릴 수 있습니다. 실제 producer로 #8이 측정합니다.
+- **"수락 가능" 판정은 하나입니다(#9 결정 12, PR2 리뷰).** `suggestions.accepted_write`가 수락이 쓸 클라이언트 Mutation을 내거나 None을 냅니다. `propose`는 edits 없이 묻고 None이면 저장하지 않고 거부합니다. accept는 edits를 넣어 묻고 None이면 `rejected{schema}`입니다.
+  - 판정: 닫힌 Mutation으로 유효할 것, 이 Hub가 fields를 아는 kind일 것, `patch_item`이 대상 Item의 kind가 정의하지 않은 field에 값을 주지 않을 것(`to: null`은 받음).
+  - `propose`는 이와 따로, purge가 지운 대상(`patch_item`의 Item, `add_relation`의 양 끝)도 evidence 앵커처럼 거부합니다. Hub에 아직 없는 대상과 휴지통의 Item은 저장합니다(올 수 있거나 복원할 수 있음).
+- **새 Item kind 넷(#9 결정 8):** `event`, `announcement`, `opportunity`, `organization`. 분류 값은 닫힌 enum이 아니라 `^[a-z][a-z_]*$`와 examples이고, 날짜는 공통 열(opportunity는 starts_at=접수 시작, due_at=마감), 소속은 `organization_id` field입니다. `person`·`place`는 미룹니다.
+- **producer(#9 결정 7):** 이 이슈는 검토 경로만 냅니다. 첫 실제 producer는 #8입니다. 시험은 Artifact를 기록하고 `propose`를 직접 부르므로 시험 전용 가짜 producer는 만들지 않았습니다.
+- **`conflicts_with`는 Hub가 추론하지 않습니다(#9 결정 9).** UI가 쌍을 보여 주고 짝이 수락된 제안에 그렇다고 적습니다. 사용자는 [accept A, dismiss B]를 고릅니다.
+- **근거 표시(#9 결정 10):** Locator를 글로 씁니다("p.2", "§ 2 › 채점 ¶4", "00:32:10–00:33:05")와 원본 Attachment 내려받기 링크입니다. 인용 문단 미리보기와 재생은 #8 뒤입니다.
+- **검토 화면은 Hub 로컬 UI입니다(#9 결정 11).** Android는 #64, iPad는 #16입니다.
+  - 모든 쓰기는 Hub 자신의 Device로 Mutation 적용기를 거칩니다. 일괄 결정은 원자적이지 않은 배치이고 행마다 결과를 보여 줍니다.
+  - mutation_id와 폼이 만드는 Item·Tag의 id는 페이지를 그릴 때 hidden 필드로 정합니다. 두 번 보내면 `duplicate`입니다.
+  - 폼의 글은 NFC, LF로 정규화합니다. 제안과 파일명은 모델과 파일에서 온 입력이므로 모두 escape합니다.
+  - 미분류 Capture에서 "항목으로 만들기"는 fields가 필수 값을 요구하지 않는 kind(`announcement`, `course`, `event`, `note`, `opportunity`, `organization`)와 제목만 받습니다. 다른 kind는 장치나 수동 create로 만듭니다.
+- **purge와 휴지통의 귀결(PR2 리뷰, PR3에서 정함):** 둘 다 결정 1의 규칙대로이고, UI가 사실을 적습니다.
+  - Blob을 purge하면, 그 Blob의 evidence로 분류됐던 Capture가 Inbox로 돌아옵니다. 파일·url·메모가 모두 없는 Capture는 파일이 purge된 것이므로(commit은 셋 중 하나를 요구함) "파일이 purge되어 가져온 기록만 남았다"고 적습니다. 따로 거르지 않습니다.
+  - Item을 휴지통에 넣어도 그 Relation이 살아 있으므로 Capture는 분류된 채로 남습니다. Item 화면이 그렇다고 적습니다.
+- **Inbox 계산 비용(PR2 리뷰, PR3에서 잼):** `inbox.compute`는 매번 Relation 끝과 Attachment를 모두 읽습니다. 합성 시드로 로컬에서 잰 값은 Capture 1만·Relation 3만·Suggestion 1천에서 약 90 ms, Capture 5만·Relation 15만에서 약 460 ms입니다(`inbox.compute` 한 번, 개발 노트북). 한 사람의 대학 생활 규모에서는 앞쪽이므로 색인을 더하지 않고, 페이지는 각 부분의 앞 200개만 그리고 남은 수를 적습니다.
+
+**결과:**
+- 계약은 `schemas/item/fields/{event,announcement,opportunity,organization}.json`, Suggestion `created_item_id`, mutation `edits` 설명에 있습니다(#9 PR1).
+- 코드는 `services/agent/src/campuslife_hub/`의 `suggestions.py`(`fingerprint`, `accepted_write`, `propose`, `accept`), `inbox.py`, `review_admin.py`(로컬 UI)에 있습니다.
+- 운영 방법은 `services/agent/README.md`의 "Inbox와 Suggestion 검토"에 있습니다.
+- 범위 밖: AI 분류·producer(#8), Android 검토 화면(#64), iPad(#16), 행사 끝 시각·reminders·Item 목록(#10), 검색 색인(#11), 실제 브라우저로 사용자 Hub의 `/inbox` 확인(#14).
 
 ---
 
