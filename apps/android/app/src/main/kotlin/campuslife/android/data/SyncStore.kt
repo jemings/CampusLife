@@ -57,6 +57,13 @@ class SyncStore(
     }
 
     /**
+     * The user confirmed pairing with a Hub other than the one this store synced with (decision B): the meta and the
+     * cache go, and so do the Mutations the previous Hub answered; those it refused go to the new Hub with the unsent.
+     * The next pass takes the new Hub's epoch as the base epoch.
+     */
+    fun changeHub(): Unit = TODO()
+
+    /**
      * Keeps why the sync stopped until the user acts; passes answer with it and ask the Hub nothing until [resume].
      * Before the first GET /v1/hub there is no standing to keep it with, so nothing is kept.
      */

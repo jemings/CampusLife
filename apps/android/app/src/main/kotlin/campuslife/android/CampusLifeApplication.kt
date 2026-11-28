@@ -10,6 +10,7 @@ import androidx.work.WorkManager
 import campuslife.android.data.BlobFiles
 import campuslife.android.data.CampusLifeDatabase
 import campuslife.android.data.SyncStore
+import campuslife.android.link.HubLink
 import campuslife.android.sync.HubClient
 import campuslife.android.sync.HubHttp
 import campuslife.android.sync.SyncEngine
@@ -19,10 +20,6 @@ import campuslife.android.sync.SyncScheduler
 import campuslife.android.sync.SyncWorkerFactory
 import java.io.File
 import java.time.Clock
-import okhttp3.HttpUrl
-
-/** The paired Hub as the sync engine reaches it. */
-data class HubLink(val url: HttpUrl, val hubId: String, val token: String)
 
 /** Where the paired Hub is read from; null while this device is not paired. */
 fun interface HubLinks {

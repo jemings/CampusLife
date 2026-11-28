@@ -7,6 +7,7 @@ import campuslife.wire.ErrorBody
 import campuslife.wire.ErrorCode
 import campuslife.wire.HubInfo
 import campuslife.wire.MutationResults
+import campuslife.wire.PairResponse
 import campuslife.wire.StoredBlob
 import campuslife.wire.UploadRequest
 import campuslife.wire.UploadSession
@@ -60,6 +61,12 @@ class HubClient(
     }
 
     fun hub(): Answer<HubInfo> = send(at("v1/hub").get()) { _, text -> read(HubInfo.serializer(), text) }
+
+    /**
+     * POST /v1/devices/me/token: another token for this Device. The one sent keeps working until the new one is first
+     * used; asking again gives another and ends the one not used yet (D23).
+     */
+    fun reissue(): Answer<PairResponse> = TODO()
 
     fun openUpload(sha256: String, size: Long): Answer<Opened> =
         send(at("v1/blobs/uploads").post(json(UploadRequest.serializer(), UploadRequest(sha256, size)))) { status, text ->

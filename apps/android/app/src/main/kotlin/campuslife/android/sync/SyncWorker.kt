@@ -23,8 +23,14 @@ fun interface SyncRunner {
     fun run(unmetered: Boolean): SyncOutcome
 }
 
-/** What the outcome of a pass asks of the sync work WorkManager keeps. */
+/** What the outcome of a pass, or the user, asks of the sync work WorkManager keeps. */
 interface SyncSchedule {
+    /** A pass soon. */
+    fun requestSync()
+
+    /** Passes run by themselves again, as after the user paired. */
+    fun keepPeriodic()
+
     /** Blobs over [LARGE_BLOB_BYTES] wait: a pass once the device is on an unmetered network (D7). */
     fun requestLarge()
 
@@ -74,13 +80,13 @@ class SyncWorkerFactory(private val runner: () -> SyncRunner, private val schedu
 
 /** The sync work WorkManager keeps: a pass on request, one every 15 minutes, and one for large Blobs on Wi-Fi. */
 class SyncScheduler(private val work: WorkManager) : SyncSchedule {
-    /** A pass soon; queued behind one already running, so a change made during it is not missed. */
-    fun requestSync() {
+    /** Queued behind a pass already running, so a change made during it is not missed. */
+    override fun requestSync() {
         val request = OneTimeWorkRequestBuilder<SyncWorker>().setConstraints(over(NetworkType.CONNECTED)).build()
         work.enqueueUniqueWork(SYNC, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
     }
 
-    fun keepPeriodic() {
+    override fun keepPeriodic() {
         val request = PeriodicWorkRequestBuilder<SyncWorker>(PERIOD_MINUTES, TimeUnit.MINUTES)
             .setConstraints(over(NetworkType.CONNECTED))
             .build()
