@@ -1010,7 +1010,7 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - **근거:**
   - 2음절·조사 결합·합성어 내부·영한 혼합 모두에서 재현율 1.00, 오탐 0입니다(합성 코퍼스 기준, 위 측정).
   - C와 달리 2글자 질의도 색인으로 찾고 bm25로 순위를 매깁니다. 스캔은 1음절 질의만 합니다.
-  - 크기는 contentless 표로 두어 C보다 작습니다(아래 "색인 파일" 절).
+  - 크기는 C(위 표 93 MB)보다 큽니다. 위 표의 64 MB는 contentless FTS와 접은 원문 표만 잰 것이고, 실제 cache 파일은 snippet용 원문 열 등이 더해져 약 125 MB입니다(로컬 합성 100k, 아래 "색인 파일" 절). 실 DB 사본 기준 확인은 [사내] #67입니다.
 - **버린 안:**
   - A·B는 조사와 합성어 내부를 놓칩니다.
   - C는 2글자 질의를 순위 없는 전체 스캔으로 처리합니다.
@@ -1035,26 +1035,26 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - 삭제 뒤 `'optimize'`로 색인 전체를 다시 쓰면 0이 됩니다. 분석문을 저장하는 표와 contentless 표(`content=''`, `contentless_delete=1`) 둘 다 그렇습니다.
 
 **측정:** `services/agent/tools/search_purge_bench.py`가 **로컬 합성** 코퍼스(`search_bench.py`와 같은 100,000블록, 15.9M자)로 쟀습니다.
-- 두 모양 모두 WAL, `secure_delete=ON`, FTS5 `secure-delete` 옵션을 켜고, `fold_original`을 거친 원문 표를 곁에 둡니다. 색인은 follower처럼 256블록씩 넣습니다.
+- 두 모양 모두 WAL, `secure_delete=ON`, FTS5 `secure-delete` 옵션을 켜고, 색인처럼 원문과 `fold_original`을 거친 원문을 함께 담는 docs 표를 곁에 둡니다. 색인은 follower처럼 256블록씩 넣습니다.
 - 블록 300개 끝에 코퍼스가 쓰지 않는 음절로만 된 표식 단어를 붙입니다. 그래서 표식의 bigram이 코퍼스의 항 사이에 끼어 여러 leaf에 흩어집니다.
 - purge는 표식 블록 300개를 한 트랜잭션에 지우고, `'optimize'`를 하고, WAL을 `TRUNCATE`로 비우는 데까지입니다(`forget`과 같음). 남은 표식은 DB·WAL 파일 바이트의 bigram 수와, `fts_idx` 항 가운데 표식 음절을 가진 수로 셉니다.
-- 크기는 purge 전 파일 크기이고, 원문 표가 들어 있습니다.
+- 크기는 purge 전 파일 크기이고, FTS 표와 docs 표(원문 + 접은 원문)를 더한 것입니다. 실제 cache 파일(`SearchIndex`)에는 출처 표, docs의 refs·block_id 열과 그 색인이 더해집니다. 같은 코퍼스를 실제 색인에 넣으면(PR #78 리뷰의 측정 스크립트) 파일 124.9 MB, 그 가운데 docs 표 88.9 MB이고, 300블록 forget은 0.363 s / 0.313 s입니다(로컬 합성, SQLite 3.45.1 / 3.50.4).
 
 | 모양 | 크기 | purge (SQLite 3.45.1 / 3.50.4) | 표식 bigram 전 → 뒤 | `fts_idx`에 남은 표식 항 |
 |---|---|---|---|---|
-| 분석문 저장 | 131.3 MB | 0.603 s / 0.583 s | 1500 → 0 | 0 |
-| 분석문 저장, optimize 없음(대조) | 131.3 MB | 0.404 s / 0.355 s | 1500 → 5 | 171 |
-| contentless | 63.8 MB | 0.345 s / 0.311 s | 1500 → 0 | 0 |
-| contentless, optimize 없음(대조) | 63.8 MB | 0.032 s / 0.027 s | 1500 → 243 | 175 |
+| 분석문 저장 | 175.1 MB | 0.589 s / 0.535 s | 1500 → 0 | 0 |
+| 분석문 저장, optimize 없음(대조) | 175.1 MB | 0.408 s / 0.356 s | 1500 → 5 | 171 |
+| contentless | 107.6 MB | 0.368 s / 0.324 s | 1500 → 0 | 0 |
+| contentless, optimize 없음(대조) | 107.6 MB | 0.028 s / 0.033 s | 1500 → 243 | 175 |
 
 - 실행 환경: WSL2 Linux x86_64. 3.45.1은 Python 3.12.3, 3.50.4는 uv CPython 3.13.13입니다. 크기와 남은 표식 수는 두 빌드가 같습니다.
 - `'optimize'`는 색인 전체를 다시 쓰므로 purge 시간은 색인 크기에 비례해 늘어납니다.
 - 실 DB 사본 기준 확인은 [사내] #67입니다.
 
 **결정:** contentless FTS5 표(`content=''`, `contentless_delete=1`)에 `secure-delete` 옵션을 켜고, `forget`은 문서를 지운 뒤 `'optimize'`와 `wal_checkpoint(TRUNCATE)`를 합니다(오케스트레이터 결정 2026-11-28, PR #78 리뷰).
-- **선택 규칙:** 두 모양 모두 표식이 0이면, purge 시간이 상대의 2배를 넘지 않는 한 파일이 작은 쪽을 고릅니다. contentless는 파일이 절반이고 purge도 더 짧습니다.
+- **선택 규칙:** 두 모양 모두 표식이 0이면, purge 시간이 상대의 2배를 넘지 않는 한 파일이 작은 쪽을 고릅니다. contentless는 파일이 약 60%이고 purge도 더 짧습니다.
 - **버린 안:**
-  - 분석문 저장 표. 파일이 두 배이고, purge도 더 깁니다. 이 PR의 첫 판은 이 모양을 골랐지만, 그 근거였던 "contentless만 optimize가 필요하다"는 여러 leaf에 걸친 색인에서 틀렸습니다.
+  - 분석문 저장 표. 파일이 1.6배이고, purge도 더 깁니다. 이 PR의 첫 판은 이 모양을 골랐지만, 그 근거였던 "contentless만 optimize가 필요하다"는 여러 leaf에 걸친 색인에서 틀렸습니다.
   - 지운 토큰의 접두를 가진 항이 있을 때만 optimize. 판정 규칙이 FTS5 내부 형식에 기대므로 SQLite 버전마다 깨질 수 있습니다.
 - **받아들이는 단점:**
   - purge마다 색인 전체를 다시 씁니다(100,000블록에서 약 0.3 s).
@@ -1066,12 +1066,14 @@ GET  /v1/blobs/{sha}              Range 지원, ETag = sha256
 - 메인 DB와 같은 규칙을 따릅니다(#65).
   - 연결에 `PRAGMA secure_delete=ON`을 켜고, 켜지지 않는 빌드에서는 색인을 쓰지 않습니다(`IndexUnusable`).
   - purge 훅은 문서를 지운 뒤 `'optimize'`를 하고 WAL을 `TRUNCATE`로 비웁니다. 다른 연결이 읽기 트랜잭션을 쥐고 있어 비우지 못하면(250 ms까지 기다림) 훅이 실패하고, purge는 미완료로 남아 훅을 다시 실행합니다.
-  - 훅은 지운 출처의 행을 "잊음"으로 표시해 남깁니다. 그래서 purge의 tombstone이 오면 follower가 그 출처를 다시 계산합니다. 같은 Blob의 새 extraction 본문만 purge하면 옛 extraction이 다시 색인됩니다.
+  - 훅은 지운 출처의 행을 "잊음"으로 표시해 남깁니다. follower는 피드에 무엇이 오든 배치마다 잊음 표시된 출처를 다시 계산합니다. 내용이 없으면 표시를 그대로 두고, 내용이 있으면 색인하고 그 버전을 기록합니다. 같은 Blob의 새 extraction 본문만 purge하면 옛 extraction이 다시 색인됩니다.
+    - 피드만 따르면 안 되는 까닭: 실패한 훅을 다시 실행하는 것은 follower가 purge의 tombstone을 지나고, 같은 바이트가 다시 들어와 새 extraction이 색인된 뒤일 수 있습니다. 그때 훅이 지운 문서를 다시 가져올 피드 행은 남아 있지 않습니다(PR #78 재리뷰).
+    - 비용(로컬 합성, 20,000 Artifact, 피드에 새 행 없음): 잊음 표시가 0, 100, 1,000, 10,000개일 때 `catch_up` 한 번이 7.9, 8.8, 11.7, 46.2 ms(SQLite 3.45.1), 7.0, 7.6, 10.4, 39.6 ms(3.50.4)입니다. 표시는 purge한 출처마다 하나씩 쌓이고, 내용이 없으면 지워지지 않습니다.
 - 문서는 출처(`item:`, `attachment:`, `blob:`)마다 둡니다.
   - Item의 title과 body. soft-delete된 Item은 빼고, restore되면 다시 넣습니다.
   - Attachment의 `original_filename`.
   - Blob의 현재 extraction 블록과 그 refs. "현재"는 `artifacts.current`가 고릅니다. 살아 있는 것 가운데 마지막에 기록된 Artifact이고, 기록 순서는 `artifacts` 행의 rowid입니다. rev로 고르면 touch(그 Artifact를 subject로 하는 job)가 옛 Artifact를 current로 되돌립니다(PR #78 리뷰).
-  - Suggestion, Capture, Relation, Tag, 그리고 모르는 entity(`conflict_record` 등)의 행은 건너뜁니다.
+  - Suggestion, Capture, Relation, Tag, ConflictRecord(진 제출값이라 색인하지 않음), 그리고 이 코드가 모르는 entity의 행은 건너뜁니다.
 - 원문은 `analyze`·`fold_original`과 같은 치환(제어문자, 짝 없는 surrogate → 공백, NFC)을 거쳐 저장합니다.
 
 **follower:**
