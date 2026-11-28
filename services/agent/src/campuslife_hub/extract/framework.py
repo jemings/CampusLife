@@ -8,10 +8,11 @@ asks plan for each Attachment of a Capture, and the end of identify asks it agai
 Blob, so a Capture that comes before, during or after the Blob's identify reaches the same jobs. Jobs carry no
 Attachment: the same Blob read by the same extractor with the same params is one job (D2).
 
-A Hub that starts with readers it lacked (a new extractor or converter, or one that reads a type it did not) plans
-them, once, for the files it already holds (catch_up, D26): for each Attachment whose Blob the current identify
-pipeline read, each reader refine picks that never read the Blob is queued. A reader whose version or limits changed
-and a Blob identified under other identify rules wait for a reprocess, as status says.
+A Hub that starts with readings it lacked (a new extractor or converter, one that reads a type it did not, or a type
+the format table gained) plans them, once, for the files it already holds (catch_up, D26): for each Attachment whose
+Blob the current identify pipeline read, each reader refine picks for a type it did not read before is queued unless
+the Blob was read so already. A reader whose version, limits or params changed for a type it read, and a Blob
+identified under other identify rules, wait for a reprocess, as status says.
 
 A reprocess's nonce goes into identify's params and every extract and render job's, so each runs again; plan treats a
 Blob as identified for the reprocess only once identify ran under its nonce. The nonce never reaches an extractor or
@@ -27,7 +28,6 @@ the rendition Artifact, and no Relation is written (D1; D26).
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import shutil
 from collections.abc import Callable, Mapping, Sequence
@@ -150,23 +150,24 @@ class Files:
         ids = [identifier for (identifier,) in tx.execute("SELECT id FROM attachments WHERE blob_sha256 = ? ORDER BY rowid", (sha256,))]
         enqueue_held(tx, registry, [(PLANNER, spec) for attachment_id in ids for spec in self.plan(tx, attachment_id, reprocess)])
 
-    def rules(self) -> str:
-        """The readers with the params each takes for each type, and the format table refine narrows by, as a hash:
-        what catch_up last looked through the files with."""
-        readers = {job_type: {media: dict(params) for media, params in extractor.accepts.items()} for job_type, extractor in self.extractors.items()}
-        table = [[each.media_type, each.family, list(each.extensions)] for each in formats.FORMATS]
-        return hashlib.sha256(json.dumps([readers, table], sort_keys=True).encode()).hexdigest()
+    def readings(self) -> dict[str, list[str]]:
+        """The types each reader reads that refine can pick, by the format table: what catch_up records."""
+        reachable = {*formats.BY_MEDIA_TYPE, formats.UNKNOWN}
+        return {job_type: sorted(set(extractor.accepts) & reachable) for job_type, extractor in self.extractors.items()}
 
     async def catch_up(self, context: JobContext) -> int:
-        """Queue each reader the Hub gained for the files identified under the current identify pipeline that it
-        never read; nothing when the readers are those catch_up last ran with."""
+        """Queue the readings the Hub gained, a reader of a type refine picks that no reader of it read before, for the
+        files identified under the current identify pipeline; nothing when the readings are those it last recorded.
+        A reader whose params or version changed for a type it read waits for a reprocess (D26 decision 5)."""
         return await context.db.write(lambda tx: self._catch_up(tx, context.registry))
 
     def _catch_up(self, tx: Tx, registry: JobRegistry) -> int:
-        rules = self.rules()
-        last = tx.execute("SELECT fingerprint FROM planner_rules WHERE planner = ?", (PLANNER,)).fetchone()
-        if last is not None and last[0] == rules:
+        readings = self.readings()
+        row = tx.execute("SELECT readings FROM planner_rules WHERE planner = ?", (PLANNER,)).fetchone()
+        last = {} if row is None else json.loads(row[0])
+        if last == readings:
             return 0
+        known = {(job_type, media_type) for job_type, media_types in last.items() for media_type in media_types}
         identified = tx.execute(
             "SELECT attachments.id, attachments.blob_sha256 FROM attachments JOIN blob_media ON blob_media.sha256 = attachments.blob_sha256"
             " WHERE blob_media.pipeline_version = ? ORDER BY attachments.rowid",
@@ -174,13 +175,20 @@ class Files:
         ).fetchall()
         planned = []
         for attachment_id, sha256 in identified:
+            specs = self.plan(tx, attachment_id)
+            if not specs:
+                continue
+            detected = store.get(tx, EntityRef(Entity.ATTACHMENT, attachment_id))["detected_mime"]
             read = {_reading_key(job.job_type, job.params) for job in jobs.of_subject(tx, f"blob:{sha256}")}
-            planned += [(PLANNER, spec) for spec in self.plan(tx, attachment_id) if _reading_key(spec.job_type, spec.params) not in read]
+            planned += [
+                (PLANNER, spec) for spec in specs
+                if (spec.job_type, detected) not in known and _reading_key(spec.job_type, spec.params) not in read
+            ]
         (before,) = tx.execute("SELECT count(*) FROM processing_jobs").fetchone()
         enqueue_held(tx, registry, planned)
         tx.execute(
-            "INSERT INTO planner_rules (planner, fingerprint) VALUES (?, ?) ON CONFLICT (planner) DO UPDATE SET fingerprint = excluded.fingerprint",
-            (PLANNER, rules),
+            "INSERT INTO planner_rules (planner, readings) VALUES (?, ?) ON CONFLICT (planner) DO UPDATE SET readings = excluded.readings",
+            (PLANNER, json.dumps(readings, sort_keys=True)),
         )
         (after,) = tx.execute("SELECT count(*) FROM processing_jobs").fetchone()
         return after - before
