@@ -430,3 +430,49 @@ async def test_a_review_page_without_a_session_is_refused(tmp_path, method, path
         answer = await client.request(method, path, headers=ORIGIN)
 
     assert answer.status_code == 401
+
+
+async def test_an_edit_to_text_stays_text_though_it_reads_as_json(tmp_path):
+    async with hub(tmp_path) as (client, admin):
+        await log_in(client)
+        _, _, artifact_id = await grounds(admin, tmp_path)
+        suggestion = await proposed(admin, artifact_id)
+        path = f"/suggestions/{suggestion['id']}"
+        page = await client.get(path)
+
+        await submitted(client, path, f"{path}/accept", data={"mutation_id": MUTATION_ID.search(page.text).group(1), "edit.title": "2026"})
+        [item] = await items(admin)
+
+    assert item["title"] == "2026"
+
+
+@pytest.mark.parametrize("kind", ["task", "assignment", "club_meeting"])
+async def test_an_item_of_a_capture_takes_only_a_kind_that_needs_no_field(tmp_path, kind):
+    async with hub(tmp_path) as (client, admin):
+        await log_in(client)
+        capture_id, _ = await imported(admin, tmp_path)
+        page = await client.get("/inbox")
+        action = f"/captures/{capture_id}/item"
+        form = dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)"', page.text.split(f'action="{action}"', 1)[1].split("</form>", 1)[0]))
+
+        _, answer = await submitted(client, "/inbox", action, data={**form, "kind": kind, "title": "Handout"})
+
+        assert answer.status_code == 400 and await items(admin) == []
+
+
+async def test_a_suggestion_says_which_it_conflicts_with_and_that_the_user_accepted_that_one(tmp_path):
+    """#9 decision 9: the Hub does not choose between them; the page shows the pair."""
+    async with hub(tmp_path) as (client, admin):
+        await log_in(client)
+        _, _, artifact_id = await grounds(admin, tmp_path)
+        first = await proposed(admin, artifact_id, {**TASK, "title": "Due Monday"})
+        second = await admin.core.db.write(lambda tx: suggestions.propose(
+            tx, artifact_id, "create_item", {**TASK, "title": "Due Tuesday"}, [], conflicts_with=[first["id"]]))
+
+        before = await client.get("/inbox")
+        await mutations.apply(admin.core.db, [{"mutation_id": new_id(), "op": "suggestion.accept", "suggestion_id": first["id"]}],
+                              admin.core.hub_device)
+        after = await client.get(f"/suggestions/{second['id']}")
+
+    assert f'Conflicts with <a href="/suggestions/{first["id"]}">Due Monday</a></p>' in before.text
+    assert f'Conflicts with <a href="/suggestions/{first["id"]}">Due Monday</a> You accepted it.' in after.text
