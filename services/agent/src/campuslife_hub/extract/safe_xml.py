@@ -89,7 +89,6 @@ def events(source: BinaryIO) -> Iterator[Event]:
     """The events of the XML document source holds, read CHUNK_BYTES at a time. Refused with unsafe_input or
     corrupt as the module says; the events of a chunk come out only once the whole chunk parsed."""
     parser = expat.ParserCreate(namespace_separator=NAMESPACE_SEPARATOR)
-    parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
     parser.buffer_text = True
     pending = _Events()
     parser.StartDoctypeDeclHandler = _refuse_doctype

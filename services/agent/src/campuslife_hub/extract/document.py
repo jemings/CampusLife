@@ -32,7 +32,6 @@ class Outline:
         self._headings: list[tuple[int, str]] = []
         self._counts = [0]
         """_counts[0]: blocks before the first heading; _counts[i + 1]: blocks under _headings[i]."""
-        self.stopped = False
 
     def heading(self, level: int, text: str) -> bool:
         """A heading of level (1 the outermost) and its text, whole: it is not cut into pieces. False once reading
@@ -53,8 +52,6 @@ class Outline:
         return all(self._add(block_type, piece, payload, ref) for piece in pieces)
 
     def _add(self, block_type: str, text: str | None, payload: Mapping[str, object] | None, ref: Mapping[str, object] | None) -> bool:
-        if self.stopped:
-            return False
         if len(self.result.blocks) == self._limits.max_blocks or self._left == 0:
             return self._stop()
         cut = text is not None and len(text) > self._left
@@ -73,7 +70,6 @@ class Outline:
         return not cut or self._stop()
 
     def _stop(self) -> bool:
-        self.stopped = True
         self.result.partial = True
         self.result.warn(LIMIT_REACHED)
         return False
