@@ -67,6 +67,16 @@ class SyncStoreTest {
     }
 
     @Test
+    fun `a stop stays with the standing until the user acts`() {
+        sync.stop("device_revoked")
+        val stopped = sync.standing()
+        sync.resume()
+
+        assertEquals(SyncMeta(hubId = HUB_ID, epoch = EPOCH, cursor = 0, stopped = "device_revoked"), stopped)
+        assertEquals(SyncMeta(hubId = HUB_ID, epoch = EPOCH, cursor = 0), sync.standing())
+    }
+
+    @Test
     fun `a changed epoch sends what the Hub answered again ahead of what it never saw, each in its first order`() {
         val settled = create("settled")
         val held = sealedCapture(ABC)
@@ -87,19 +97,23 @@ class SyncStoreTest {
     }
 
     @Test
-    fun `a changed epoch leaves aside what the Hub never judged`() {
+    fun `a changed epoch sends every rejected Mutation again, whether or not the Hub judged it`() {
         val gone = sealedCapture(ABC)
+        val lost = sealedCapture(NIST_448)
         storeBlob(ABC_SHA)
         assertEquals(listOf(commitOf(gone)), sync.nextBatch().map { it.mutationId })
         File(blobDir, ABC_SHA).delete()
         sync.onResults(listOf(MutationResult(commitOf(gone), MutationOutcome.RETRY, missingBlobs = listOf(ABC_SHA))))
+        File(blobDir, NIST_448_SHA).delete()
+        sync.onUpload(NIST_448_SHA, BlobEvent.COPY_LOST)
         val unreadable = create("unreadable")
         sync.refuse(unreadable)
+        assertEquals(3L, sync.backlog().rejectedMutations)
 
         sync.epochChanged(EPOCH_2)
 
-        assertEquals(emptyList<SyncStore.Outgoing>(), sync.nextBatch())
-        assertEquals(2L, sync.backlog().rejectedMutations)
+        assertEquals(listOf(commitOf(gone), commitOf(lost), unreadable), sync.nextBatch().map { it.mutationId })
+        assertEquals(0L, sync.backlog().rejectedMutations)
     }
 
     @Test
@@ -207,5 +221,7 @@ class SyncStoreTest {
         const val EPOCH_2 = "1e2d3c4b-5a69-4788-9a0b-c1d2e3f4a5b6"
         const val ABC = "abc"
         const val ABC_SHA = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        const val NIST_448 = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+        const val NIST_448_SHA = "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
     }
 }

@@ -30,10 +30,12 @@ import kotlin.concurrent.thread
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.After
@@ -305,6 +307,121 @@ class SyncEngineTest {
     }
 
     @Test
+    fun `a commit refused by a Hub restored without its Blob goes again to a Hub restored with it`() {
+        val withoutBlob = hub.backup()
+        val id = sealedCapture(ABC)
+        hub.once({ it.path == "/v1/mutations" }, FakeHub.cut)
+        assertEquals(SyncOutcome.HubNotReached, engine().run(false))
+        val withBlob = hub.backup()
+        assertEquals(SyncOutcome.Synced(), engine().run(false))
+        assertTrue(File(blobDir, ABC_SHA).delete())
+        hub.restore(withoutBlob, EPOCH_2)
+        assertEquals(SyncOutcome.Synced(), engine().run(false))
+        assertEquals(CaptureTransfer.NEEDS_ATTENTION, transferOf(id))
+        hub.restore(withBlob, EPOCH_3)
+
+        assertEquals(SyncOutcome.Synced(), engine().run(false))
+
+        assertNotNull(hub.row("capture", id))
+        assertEquals(CaptureTransfer.COMMITTED, transferOf(id))
+    }
+
+    @Test
+    fun `a Hub epoch that is not a UUID is not kept as the base epoch`() {
+        hub.epoch = FakeHub.EPOCH.uppercase()
+        items.create(course("A"))
+
+        assertEquals(SyncOutcome.HubFailed, engine().run(false))
+
+        assertNull(store.standing())
+        assertEquals(1, store.nextBatch().size)
+    }
+
+    @Test
+    fun `a 409 whose epoch is not a UUID leaves the base epoch and the Outbox as they were`() {
+        engine().run(false)
+        val course = items.create(course("A"))
+        hub.once({ it.path == "/v1/mutations" }) { request ->
+            hub.refusal(request, 409, "epoch_changed", buildJsonObject { put("epoch", "not-an-epoch") })
+        }
+
+        assertEquals(SyncOutcome.HubFailed, engine().run(false))
+
+        assertEquals(FakeHub.EPOCH, store.standing()?.epoch)
+        assertEquals(TransferState.PENDING.column, db.outbox().overlayOf("item", course).single().state)
+        assertNull(hub.row("item", course))
+    }
+
+    @Test
+    fun `a Blob the Hub refuses waits, and the other Blobs, the Outbox and the pull go on`() {
+        val unfinished = sealedCapture(ABC)
+        val unopened = sealedCapture(DEFG)
+        val other = sealedCapture(NIST_448)
+        val course = items.create(course("A"))
+        hub.once({ it.path == "/v1/blobs/uploads/$ABC_SHA/finalize" }) { hub.refusal(it, 500, "internal_error") }
+        hub.once({ it.path == "/v1/blobs/uploads" && it.text().contains(FakeHub.digestOf(DEFG.toByteArray())) }) {
+            hub.refusal(it, 400, "invalid_request")
+        }
+
+        assertEquals(SyncOutcome.Synced(deferred = true), engine().run(false))
+
+        assertEquals(listOf(TransferState.RETRY_WAIT, TransferState.RETRY_WAIT), store.uploads().map { it.state })
+        assertEquals(CaptureTransfer.RETRY_WAIT, transferOf(unfinished))
+        assertEquals(CaptureTransfer.RETRY_WAIT, transferOf(unopened))
+        assertEquals(CaptureTransfer.COMMITTED, transferOf(other))
+        assertNotNull(hub.row("item", course))
+        assertNotNull(db.cache().get("item", course))
+        assertNotNull(hub.statuses.single()["last_error"])
+    }
+
+    @Test
+    fun `a refused token on an upload still stops the whole pass`() {
+        engine().run(false)
+        sealedCapture(ABC)
+        hub.refuseToken = "device_revoked"
+
+        assertEquals(SyncOutcome.Revoked, engine().run(false))
+
+        assertEquals(TransferState.WAITING, store.uploads().single().state)
+    }
+
+    @Test
+    fun `each outcome only the user can mend is kept, and the next pass asks the Hub nothing`() {
+        engine().run(false)
+        val stops = listOf<Pair<() -> Unit, SyncOutcome>>(
+            { hub.refuseToken = "unauthorized" } to SyncOutcome.Unauthorized,
+            { hub.refuseToken = "device_revoked" } to SyncOutcome.Revoked,
+            { hub.once({ it.path == "/v1/changes" }) { hub.refusal(it, 400, "contract_too_old") } } to SyncOutcome.ContractTooOld,
+            { hub.once({ it.path == "/v1/changes" }) { hub.response(it, 200, "{}", hub = OTHER_HUB_ID) } } to SyncOutcome.WrongHub,
+        )
+
+        for ((cause, outcome) in stops) {
+            cause()
+            assertEquals(outcome, engine().run(false))
+            hub.refuseToken = null
+            hub.requests.clear()
+            assertEquals(outcome, engine().run(false))
+            assertEquals("$outcome", emptyList<FakeHub.Asked>(), hub.requests)
+            store.resume()
+        }
+
+        assertEquals(SyncOutcome.Synced(), engine().run(false))
+    }
+
+    @Test
+    fun `a dormant device asks the Hub again on its next pass`() {
+        engine().run(false)
+        hub.refuseToken = "device_dormant"
+        assertEquals(SyncOutcome.Dormant, engine().run(false))
+        hub.refuseToken = null
+        hub.requests.clear()
+
+        assertEquals(SyncOutcome.Synced(), engine().run(false))
+
+        assertTrue(hub.requests.isNotEmpty())
+    }
+
+    @Test
     fun `a Hub that no longer takes this contract version stops the sync`() {
         hub.minContractVersion = 2
 
@@ -460,9 +577,11 @@ class SyncEngineTest {
     private companion object {
         val URL = "http://hub.test/".toHttpUrl()
         const val EPOCH_2 = "1e2d3c4b-5a69-4788-9a0b-c1d2e3f4a5b6"
+        const val EPOCH_3 = "2f3e4d5c-6b7a-4899-8a1b-d2e3f4a5b6c7"
         const val OTHER_HUB_ID = "9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a"
         const val ABC = "abc"
         const val ABC_SHA = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        const val DEFG = "defg"
         const val NIST_448 = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
         const val NIST_448_SHA = "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
     }

@@ -25,20 +25,20 @@ import org.junit.runner.RunWith
 class SyncWorkerTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private val asked: MutableList<Boolean> = Collections.synchronizedList(mutableListOf())
-    private var largeRequests = 0
+    private val schedule = RecordedSchedule()
 
     @Test
     fun `a pass that synced succeeds, and one that left Blobs to retry runs again later`() {
         assertEquals("Success", resultOf(SyncOutcome.Synced()))
         assertEquals("Retry", resultOf(SyncOutcome.Synced(deferred = true)))
-        assertEquals(0, largeRequests)
+        assertEquals(RecordedSchedule(), schedule)
     }
 
     @Test
     fun `a pass that left Blobs for an unmetered network asks for a pass that waits for one`() {
         assertEquals("Success", resultOf(SyncOutcome.Synced(largeWaiting = true)))
 
-        assertEquals(1, largeRequests)
+        assertEquals(RecordedSchedule(large = 1), schedule)
     }
 
     @Test
@@ -46,13 +46,17 @@ class SyncWorkerTest {
         for (outcome in listOf(SyncOutcome.HubNotReached, SyncOutcome.HubFailed, SyncOutcome.Dormant)) {
             assertEquals("$outcome", "Retry", resultOf(outcome))
         }
+
+        assertEquals(RecordedSchedule(), schedule)
     }
 
     @Test
-    fun `a pass only the user can mend fails, and so does not run again by itself`() {
-        for (outcome in listOf(SyncOutcome.Unauthorized, SyncOutcome.Revoked, SyncOutcome.WrongHub, SyncOutcome.ContractTooOld)) {
-            assertEquals("$outcome", "Failure", resultOf(outcome))
-        }
+    fun `a pass only the user can mend fails and stops the passes that would run by themselves`() {
+        val stops = listOf(SyncOutcome.Unauthorized, SyncOutcome.Revoked, SyncOutcome.WrongHub, SyncOutcome.ContractTooOld)
+
+        for (outcome in stops) assertEquals("$outcome", "Failure", resultOf(outcome))
+
+        assertEquals(RecordedSchedule(stops = stops.size), schedule)
     }
 
     @Test
@@ -95,6 +99,19 @@ class SyncWorkerTest {
     }
 
     @Test
+    fun `stopping until the user acts cancels the periodic and the large pass`() {
+        val work = testWorkManager()
+        SyncScheduler(work).keepPeriodic()
+        SyncScheduler(work).requestLarge()
+
+        SyncScheduler(work).stopUntilUserActs()
+
+        for (name in listOf(SyncScheduler.PERIODIC, SyncScheduler.LARGE)) {
+            assertEquals(name, WorkInfo.State.CANCELLED, work.getWorkInfosForUniqueWork(name).get().single().state)
+        }
+    }
+
+    @Test
     fun `a pass runs every 15 minutes while the device is online, and asking again keeps the one there is`() {
         val work = testWorkManager()
 
@@ -107,10 +124,7 @@ class SyncWorkerTest {
         assertEquals(NetworkType.CONNECTED, first.constraints.requiredNetworkType)
     }
 
-    private fun factory(outcome: SyncOutcome) = SyncWorkerFactory(
-        { SyncRunner { unmetered -> asked += unmetered; outcome } },
-        { largeRequests++ },
-    )
+    private fun factory(outcome: SyncOutcome) = SyncWorkerFactory({ SyncRunner { unmetered -> asked += unmetered; outcome } }, { schedule })
 
     private fun resultOf(outcome: SyncOutcome, unmetered: Boolean = false): String {
         val worker = TestListenableWorkerBuilder<SyncWorker>(context)
@@ -131,5 +145,15 @@ class SyncWorkerTest {
 
     private fun finished(work: WorkManager, info: WorkInfo): WorkInfo.State = runBlocking {
         withTimeout(10_000) { work.getWorkInfoByIdFlow(info.id).first { it?.state?.isFinished == true } }!!.state
+    }
+
+    private data class RecordedSchedule(var large: Int = 0, var stops: Int = 0) : SyncSchedule {
+        override fun requestLarge() {
+            large++
+        }
+
+        override fun stopUntilUserActs() {
+            stops++
+        }
     }
 }

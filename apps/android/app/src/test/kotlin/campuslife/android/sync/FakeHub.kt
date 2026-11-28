@@ -129,7 +129,8 @@ class FakeHub(
         refuseToken?.let { return refusal(request, 401, it) }
         if (asked.headers["Authorization"] != "Bearer $token") return refusal(request, 401, "unauthorized")
         if (asked.path == "/v1/changes" || asked.path == "/v1/mutations") {
-            val base = asked.headers["CampusLife-Epoch"] ?: return refusal(request, 400, "invalid_request")
+            val base = asked.headers["CampusLife-Epoch"]
+            if (base == null || !EPOCH_FORM.matches(base)) return refusal(request, 400, "invalid_request")
             if (base != epoch) return refusal(request, 409, "epoch_changed", buildJsonObject { put("epoch", epoch) })
         }
         val parts = asked.path.removePrefix("/").split("/")
@@ -334,6 +335,9 @@ class FakeHub(
         const val SECRET = "00000000000000000000000000000000"
         const val DEVICE_ID = "5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d"
         private val JSON = "application/json".toMediaType()
+
+        /** The Hub's envelope refuses a CampusLife-Epoch that is not a lowercase UUIDv4 with 400 before the body. */
+        private val EPOCH_FORM = Regex("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 
         fun digestOf(bytes: ByteArray): String =
             MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
