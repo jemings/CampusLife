@@ -54,13 +54,15 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 
 | Entity | 주요 필드 |
 |---|---|
-| Artifact | id, artifact_type(transcript\|ocr\|summary\|rendition\|overlay\|identify\|extraction, 열린 값), subject_ref, job_key, provider?, model?, prompt_version?, pipeline_version, input_hashes[], content_blob, created_at |
+| Artifact | id, artifact_type(transcript\|ocr\|summary\|rendition\|overlay\|identify\|extraction\|web_snapshot, 열린 값), subject_ref, job_key, provider?, model?, prompt_version?, pipeline_version, input_hashes[](입력 Blob이 없는 job은 빈 배열, extraction·rendition·identify는 1개 이상), content_blob, created_at, fetched?{final_url, media_type}(web_snapshot에 필수) |
 | Suggestion | id, source_artifact_id, action: create_item\|patch_item\|add_relation(열린 값), proposed{…}, evidence[](Locator), fingerprint, state, conflicts_with[]?(자기 id 제외) |
 | ProcessingJob | id, job_key, job_type, subject_ref, state, outcome_code?, attempts, next_attempt_at, error (상세는 동기화하지 않고 `processing_summary`만 노출) |
 
 - Artifact의 provider·model·prompt_version은 모델을 쓴 job에만 있습니다(렌디션에는 없음). `processing_summary`의 모양은 #8이 정합니다(E20). 유효 `cloud_policy`는 저장하지 않고 호출 때 계산합니다(D8).
 - ContentBlock은 테이블이 아니라 extraction Artifact 본문의 block입니다(D26). `id = sha256(canonical_json([blob, extractor.id, extractor.version, extractor.params, ordinal]))`, block_type, text 또는 payload, refs(Locator)를 가집니다. 같은 Blob을 같은 추출기·버전·params로 읽으면 id가 같습니다.
+- 알려진 block_type은 `heading`(payload `{level}`), `paragraph`, `page`(PDF 쪽, 텍스트 층이 없으면 text 없음), `table`(문서 안 표, payload 없음), `table_row`(시트·CSV의 행, payload `{formulas?}`), `table_header`, `notes`(슬라이드 노트)입니다(#6). 각 블록의 text·ref·payload 규칙은 `packages/api-contracts/HARNESS.md`의 "Artifact 본문"에 있습니다. extraction warning은 `no_text_layer`, `limit_reached`, `replaced_characters`, `objects_skipped`입니다.
 - 본문이 있는 Artifact의 `content_blob`은 공통 envelope `artifact/body` `{v, blocks:[{id, block_type, text?, payload?, refs}]}`이고 type마다 스키마가 좁힙니다(`extraction`, `identify`). `rendition`은 본문이 없고 `content_blob`이 렌디션 PDF 자체입니다. 파이프라인은 렌디션을 Relation으로 잇지 않습니다(D26).
+- `web_snapshot` Artifact는 Hub가 링크 Capture의 `url`을 가져온 결과입니다(#63). subject는 `capture:<id>`, `content_blob`은 받은 응답 본문 바이트 그대로(envelope 없음), `input_hashes`는 빈 배열, 가져온 시각은 `created_at`입니다. `fetched`에 리다이렉트 뒤 최종 URL과 매개변수를 뺀 media type을 둡니다. 200 응답만 저장하므로 상태 코드는 없고, 사용자가 준 URL은 Capture `url`에 그대로 남습니다.
 - Suggestion `proposed`의 모양은 action을 따릅니다. create_item은 Item create의 data, patch_item은 `{entity: item, id, set}`, add_relation은 Relation이며, Hub가 보내는 모양이라 안쪽도 열려 있습니다. 다만 patch_item의 `set` 키는 같은 계약의 열 이름이라 열려 있지 않습니다(새 열을 제안하는 patch는 계약 버전이 같은 Hub만 보냅니다). 모르는 action은 표시만 하고 수락할 수 없습니다.
 - `suggestion.accept`의 `edits`는 patch의 set처럼 키를 쓰고, 값은 제안 대신 쓸 값입니다. 공통 열 키는 계약 검증기가 owner·set_type으로 검사하고, `fields.<key>`와 제안에 있는 키인지는 Hub 적용기(#2)가 판정합니다.
 - create_item·patch_item을 수락하면 Hub가 evidence의 anchor마다 evidence Relation을 하나씩 만들고 locators를 합집합으로 모읍니다. patch_item은 결과가 키를 하나라도 적용할 때만 이 근거 Relation을 만듭니다.
@@ -75,6 +77,14 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 
 - Hub는 토큰과 pairing secret의 SHA-256만 저장합니다(`device_tokens`, `pairing_secrets`). 이 값(예전 표의 `token_hash`)은 Hub DB에만 있고 wire에 나가지 않습니다(D6). 장치마다 current 토큰 하나와, 재발급한 뒤 아직 쓰이지 않은 pending 토큰 하나까지 있습니다. 계약의 Device 모양은 pairing offer(QR), pair 요청·응답, status heartbeat뿐입니다(E20, D23).
 - `windows_hub`는 Hub 자신의 Device 행이고 로컬 import가 씁니다. pair하는 장치는 `android`·`ipados`입니다.
+
+### 용어
+
+- **링크 Capture:** `url`이 있는 Capture.
+- **`web_snapshot`:** 세 곳에 쓰며 뜻이 다릅니다.
+  - Attachment `role`: 클라이언트가 Capture에 담아 올린 페이지 사본입니다.
+  - `artifact_type`: Hub가 링크 Capture의 `url`을 가져온 결과입니다. Attachment가 아니며 Capture에 덧붙지 않습니다.
+  - Locator `kind`: 스냅샷 Blob 안의 근거 위치입니다(D13). 만드는 쪽은 #8입니다.
 
 ## 3. Item kind
 
@@ -100,7 +110,7 @@ ID는 생성한 쪽이 만드는 UUIDv4이며 그 ID가 곧 멱등 키입니다(
 
 - 강의 녹음 + 판서 사진 → Capture 1개(녹음 세그먼트 + 사진 Attachment). 녹음 화면에서 고른 과목·강의는 `links[]`로 즉시 확정 Relation이 됩니다.
 - 학교 행사 공지 PDF → Capture → 추출 Artifact → `create_item(kind=event)` Suggestion → 사용자가 수락하면 Item과 근거 Relation이 생깁니다.
-- 장학금 웹 링크 → Capture(URL + 스냅샷 Blob) → `opportunity` Suggestion
+- 장학금 웹 링크 → `url`이 있는 Capture → `web_snapshot` Artifact → 추출 Artifact → `opportunity` Suggestion
 - 개인 음성 메모 → Capture → `note`·`task` Suggestion
 - 교수자 자료 v2 재배포 → 새 Capture·새 Blob → `supersedes` Relation Suggestion
 
@@ -137,7 +147,7 @@ Capture와 Attachment에는 처리 상태 필드가 없습니다. `unsafe_input`
 ## 7. 출처 (D13)
 
 - 본문이 있는 Artifact는 `artifact/body` envelope `{v, blocks:[{id, block_type, text?, payload?, refs}]}`이고, ref는 공통 Locator를 가리킵니다. #5가 envelope과 extraction·identify 본문을 정했고 #8이 additive로 넓힙니다(D26). `rendition`처럼 PDF 등 파일 자체가 내용인 Artifact는 envelope을 쓰지 않습니다.
-- Locator(`locator/locator`)의 kind는 `pdf_page, slide, doc_path, sheet_range, media_time, image_region, web_snapshot, document`입니다. kind는 Hub가 보내는 쪽에서 열린 값이고, 모르는 kind는 `blob`이 있으면 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. 이 계약의 `v`는 1이고, page·slide·shape는 1부터, `block_index`는 0부터 셉니다. `box`는 표시 방향 기준 `[x, y, w, h]`입니다(E17). `annotation` kind는 #17이 추가합니다. 모르는 kind도 `blob`(sha256), `capture`(UUID), `box`(정규화 `[x, y, w, h]`(D12·E17), `box_extent` 규칙도 적용)는 타입을 지킵니다. 시트 이름의 31자 한도는 코드 포인트 기준이고, 스프레드시트의 한도는 UTF-16 31단위입니다.
+- Locator(`locator/locator`)의 kind는 `pdf_page, slide, doc_path, sheet_range, media_time, image_region, web_snapshot, document`입니다. kind는 Hub가 보내는 쪽에서 열린 값이고, 모르는 kind는 `blob`이 있으면 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. 이 계약의 `v`는 1이고, page·slide·shape는 1부터, `block_index`는 0부터 셉니다. `box`는 표시 방향 기준 `[x, y, w, h]`입니다(E17). `annotation` kind는 #17이 추가합니다. 모르는 kind도 `blob`(sha256), `capture`(UUID), `box`(정규화 `[x, y, w, h]`(D12·E17), `box_extent` 규칙도 적용)는 타입을 지킵니다. 시트 이름의 31자 한도는 코드 포인트 기준이고, 스프레드시트의 한도는 UTF-16 31단위입니다. `sheet_range`의 `sheet`는 선택이고, 없으면 이름 없는 시트 하나뿐인 구분자 파일(CSV·TSV)의 범위입니다(#6).
 - 앵커는 Blob 해시입니다(녹음은 Capture 타임라인, 필기는 레이어 revision).
 - LLM은 입력 ContentBlock id(extraction 본문의 block id)로만 인용하고, Hub가 그 id를 검증해 Locator로 치환합니다.
 - 정확한 위치가 없으면 `document`를 쓰고 추정하지 않습니다.

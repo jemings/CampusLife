@@ -34,18 +34,7 @@
     {
       "id": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
       "block_type": "table",
-      "payload": {
-        "rows": [
-          [
-            "주차",
-            "범위"
-          ],
-          [
-            "1",
-            "서론"
-          ]
-        ]
-      },
+      "text": "주차\t범위\n1\t서론",
       "refs": [
         {
           "v": 1,

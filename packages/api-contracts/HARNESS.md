@@ -34,7 +34,7 @@ Kotlin(#3)·Swift(#16) 앱 모델이 계약과 같은 JSON을 읽고 쓰는지 �
 | 모르는 Item kind | `item/item`의 `kind`는 닫힌 enum이 아닙니다. 모르는 kind는 공통 열(title, 날짜, body)만 읽고 `fields`는 해석하지 않습니다(forward `item/item/unknown_kind`). |
 | Hub가 보내는 열린 값 | Relation `type`, Attachment `role`, Capture `origin.type`, changes의 `entity`, Artifact `artifact_type`, Artifact 본문 block의 `block_type`, extraction 본문 warning의 `code`, Locator `kind`, Suggestion `action`, 오류 본문(`common/error`)의 `code`는 Hub가 보내는 쪽에서 닫힌 enum이 아닙니다. 스키마에 `x-open: true`로 표시되어 있고 알려진 값은 그 옆 `examples`에 있습니다. 열린 enum의 값은 모두 같은 모양 `^[a-z][a-z_]*$`(소문자로 시작하고 소문자와 `_`만, 숫자 없음)이므로 디코더는 이 규칙 하나로 모르는 값을 받습니다. 모르는 값도 디코드해 그대로 보존하고, 모르는 `entity`의 행은 건너뛰며, 모르는 오류 `code`는 일반 실패로 다룹니다(forward fixture). 클라이언트가 보내는 `capture.commit`·`create`·`patch`에서는 알려진 값만 씁니다. 다른 곳의 `examples`는 설명일 뿐입니다. |
 | Mutation 결과 | 멤버마다 나타나는 `result`가 정해져 있습니다: `reason`은 rejected, `original`은 duplicate, `missing_blobs`는 retry, `conflicted_fields`는 conflict, `applied_fields`는 applied·conflict, `conflict_record_ids`는 conflict와 rejected{deleted}. 없는 멤버를 `null`로 쓰면 다른 값이 됩니다. |
-| Locator·Suggestion | Locator(`locator/locator`)의 `kind`와 Suggestion의 `action`은 Hub가 보내는 열린 값입니다. 알려진 값은 갈래(`$defs/known`의 판별 union)로 검사하고, `^[a-z][a-z_]*$`인 모르는 값은 멤버째 보존합니다(forward fixture `kind_unknown`, `action_unknown`). Locator `v`는 1 이상이고 늘 수 있습니다. 모르는 kind도 `blob`(sha256 문자열), `capture`(UUID 문자열), `box`(정규화 `[x, y, w, h]`(D12·E17), `box_extent` 규칙도 적용)는 타입을 지키므로 `blob`을 문자열로 읽어도 됩니다. 클라이언트 규칙: 모르는 kind는 `blob`이 있으면 그 원본의 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. 모르는 action은 표시만 하고 수락할 수 없게 합니다. Suggestion `proposed`는 action에 따라 Item create의 data, `{entity, id, set}`, Relation 모양이며 안쪽도 열려 있습니다. 예외로 patch_item의 `set` 키는 같은 계약의 열 이름이라 열려 있지 않습니다(새 열을 제안하는 patch는 계약 버전이 같은 Hub만 보내며, `tests/test_open_closed.py`의 `FREE_FORM_IN_FEED`가 이 자리를 열림 시험에서 면제합니다). Relation `locators`는 Hub만 쓰고, 규칙 `locator_anchor`는 모르는 Relation type의 locators를 막지 않습니다(알려진 type은 Relation `type`의 `examples`로 판정합니다. `x-open` 필드의 `examples`는 문서용이 아니라 알려진 값 목록(규범)이고 규칙 `locator_anchor`·`set_type`이 읽으며, 목록을 바꾸면 규칙 판정이 함께 바뀌고 fixture와 변이 시험이 고정합니다). 클라이언트가 보내는 쪽에 Locator가 들어가면 닫힌 view `locator/locator#/$defs/input`(알려진 kind, `v` = 1)을 씁니다. 이 view는 `kind`와 `v`만 닫으므로 멤버는 Locator를 싣는 입력 스키마가 닫습니다. |
+| Locator·Suggestion | Locator(`locator/locator`)의 `kind`와 Suggestion의 `action`은 Hub가 보내는 열린 값입니다. 알려진 값은 갈래(`$defs/known`의 판별 union)로 검사하고, `^[a-z][a-z_]*$`인 모르는 값은 멤버째 보존합니다(forward fixture `kind_unknown`, `action_unknown`). Locator `v`는 1 이상이고 늘 수 있습니다. 모르는 kind도 `blob`(sha256 문자열), `capture`(UUID 문자열), `box`(정규화 `[x, y, w, h]`(D12·E17), `box_extent` 규칙도 적용)는 타입을 지키므로 `blob`을 문자열로 읽어도 됩니다. 클라이언트 규칙: 모르는 kind는 `blob`이 있으면 그 원본의 문서 수준 근거로, 없으면 "근거 위치 모름"으로 표시합니다. 모르는 action은 표시만 하고 수락할 수 없게 합니다. Suggestion `proposed`는 action에 따라 Item create의 data, `{entity, id, set}`, Relation 모양이며 안쪽도 열려 있습니다. 예외로 patch_item의 `set` 키는 같은 계약의 열 이름이라 열려 있지 않습니다(새 열을 제안하는 patch는 계약 버전이 같은 Hub만 보내며, `tests/test_open_closed.py`의 `FREE_FORM_IN_FEED`가 이 자리를 열림 시험에서 면제합니다). Relation `locators`는 Hub만 쓰고, 규칙 `locator_anchor`는 모르는 Relation type의 locators를 막지 않습니다(알려진 type은 Relation `type`의 `examples`로 판정합니다. `x-open` 필드의 `examples`는 문서용이 아니라 알려진 값 목록(규범)이고 규칙 `locator_anchor`·`set_type`이 읽으며, 목록을 바꾸면 규칙 판정이 함께 바뀌고 fixture와 변이 시험이 고정합니다). `sheet_range`의 `sheet`는 선택 멤버입니다. 없으면 이름 없는 시트 하나뿐인 구분자 파일(CSV·TSV)의 범위이고, 클라이언트는 시트 이름 없이 `a1`만 보여 줍니다. 있으면 빈 문자열이 아닙니다. 클라이언트가 보내는 쪽에 Locator가 들어가면 닫힌 view `locator/locator#/$defs/input`(알려진 kind, `v` = 1)을 씁니다. 이 view는 `kind`와 `v`만 닫으므로 멤버는 Locator를 싣는 입력 스키마가 닫습니다. |
 | 시각 문자열 | `instant`는 `YYYY-MM-DDTHH:MM:SS.sssZ` 문자열 그대로 돌아와야 합니다. 날짜 타입으로 바꿔 담는다면 밀리초 3자리 형식으로 다시 써야 합니다. |
 | JSON 형식 | 엄격한 JSON: UTF-8, BOM 없음, 중복 멤버 없음, `NaN`/`Infinity` 없음, 짝 없는 서로게이트 이스케이프(`\ud800`) 없음. |
 
@@ -81,9 +81,28 @@ uv run campuslife-contracts compare fixtures/valid <out>
 
 텍스트 계열 Artifact(지금은 `extraction`, 이후 #8의 type)의 `content_blob`은 `artifact/body` envelope JSON `{v, blocks:[{id, block_type, text?, payload?, refs:[Locator]}]}`입니다(D13, #5 결정 8). `artifact_type`마다 본문 스키마가 envelope을 좁히며, 지금은 `extraction`(`artifact/extraction`)이 있습니다. 하네스는 두 스키마를 다른 Hub 송신 모양처럼 왕복하고 forward를 디코드합니다.
 
-`rendition`은 envelope을 쓰지 않습니다. `content_blob`이 렌디션 PDF Blob 그 자체이고, 필기 레이어가 고정되는 Blob도 이것입니다(D12). 무엇의 렌디션인지는 `artifact_type`, `subject_ref`(`blob:<원본>`), `pipeline_version`이 말합니다. 어느 type이 JSON 본문 스키마를 갖는지는 `tests/test_schema_conventions.py`의 `ARTIFACT_BODY_SCHEMAS`가 고정합니다.
+`rendition`은 envelope을 쓰지 않습니다. `content_blob`이 렌디션 PDF Blob 그 자체이고, 필기 레이어가 고정되는 Blob도 이것입니다(D12). 무엇의 렌디션인지는 `artifact_type`, `subject_ref`(`blob:<원본>`), `pipeline_version`이 말합니다.
+
+`web_snapshot`도 envelope을 쓰지 않습니다. `content_blob`은 Hub가 `url`이 있는 Capture(subject `capture:<id>`)의 페이지를 가져와 받은 응답 본문 바이트 그대로이고, `web_snapshot` Locator가 가리키는 Blob도 이것입니다(D13). 입력 Blob이 없으므로 `input_hashes`는 빈 배열입니다. Blob에서 파생하는 `extraction`·`rendition`·`identify`는 `input_hashes`가 1개 이상이어야 합니다. purge가 파생 Artifact를 `input_hashes`와 `content_blob`으로 찾기 때문입니다(D2). 유효 정책은 입력이 없으므로 subject Capture의 것을 씁니다(#8). 가져온 시각은 `created_at`, 리다이렉트 뒤 최종 URL과 매개변수를 뺀 media type은 Hub 소유 멤버 `fetched{final_url, media_type}`에 있고, 200 응답만 저장하므로 상태 코드는 없습니다. `artifact_type`이 `web_snapshot`이면 `fetched`가 필수입니다. 다른 객체처럼 `fetched`도 열려 있어 모르는 멤버를 무시합니다.
+
+어느 type이 JSON 본문 스키마를 갖는지는 `tests/test_schema_conventions.py`의 `ARTIFACT_BODY_SCHEMAS`가 고정하고, 바이트 자체가 본문인 type(`rendition`, `web_snapshot`)은 `BYTES_AS_BODY`가 고정합니다.
 
 - `blocks`의 순서가 ordinal(0부터)입니다. `refs`는 블록의 근거 위치이고, 비어 있으면 근거 없는 블록으로 표시합니다. 모르는 `block_type`은 `text`만으로 표시하고 `payload`는 해석하지 않습니다.
+- 알려진 `block_type`은 `block_type`의 `examples`입니다(D20: 규범 목록). 문서 추출기(#6)가 정한 어휘는 다음과 같고, #7·#13이 자기 블록을 더합니다. `tests/test_open_closed.py`의 `KNOWN_BLOCK_TYPES`가 목록을 고정합니다.
+
+  | `block_type` | 뜻 | `payload` |
+  |---|---|---|
+  | `heading` | 제목 | `{level}`: 개요 깊이, 가장 바깥이 1인 정수. payload가 있으면 `level`이 있어야 합니다. |
+  | `paragraph` | 본문 문단 | 없음 |
+  | `page` | PDF 쪽 하나, ref는 보통 그 쪽(`pdf_page`). 텍스트 층이 없는 쪽은 `text`가 없고 본문에 `no_text_layer` warning이 붙습니다. | 없음 |
+  | `table` | 문서 안의 표. `text`는 행을 LF로, 칸을 탭으로 잇고, 칸 안의 탭·줄바꿈은 공백으로 씁니다. 병합 칸은 왼쪽 위 칸에 한 번만 씁니다. 긴 표는 행 사이에서 여러 블록으로 나뉩니다. | v1에는 없음 |
+  | `table_row` | 시트나 구분자 파일(CSV·TSV)의 행 하나. ref는 보통 그 행에서 값이 있는 첫 칸부터 마지막 칸까지의 `sheet_range` 하나입니다. `text`는 그 범위의 칸을 탭으로 잇습니다. 빈 칸은 빈 문자열로 자리를 지키고, 칸 안의 탭·줄바꿈은 공백 하나로 씁니다. 그래서 n번째(0부터) 탭 필드는 범위의 첫 열 + n번째 열이고 `formulas` 키와 대응합니다. | `{formulas?}`: 수식이 있는 칸만 담습니다. 키는 칸 하나의 절대 주소입니다(A1, 대문자, `$` 없음). 값은 통합 문서에 저장된 수식 문자열이고 `=`로 시작하지 않습니다(스키마가 막음). `text`에는 캐시값이 들어갑니다. 수식이 없으면 `formulas`가 없고, 빈 map은 쓰지 않습니다. 키가 그 블록의 행 안에 있는 칸인지는 계약이 보지 않고, Hub 추출기 시험(#6 PR3)이 확인합니다. |
+  | `table_header` | 아래 열들의 머리글 행. payload가 없는 것 말고는 `table_row`와 같습니다. | 없음 |
+  | `notes` | 슬라이드의 발표자 노트, ref는 보통 그 슬라이드(`slide`). | 없음 |
+
+  - 추출기가 위치를 확신할 수 없는 블록은 `document`를 인용합니다(#6 결정 9, D13). 그리드(1,048,576행, XFD열)를 넘는 구분자 파일의 행, 읽지 못한 시트 이름이 그런 경우입니다. 이때 행의 탭 필드는 열과 대응하지 않지만 `formulas` 키는 여전히 절대 주소입니다(valid `rows_without_a_place`). 스키마는 block_type별로 ref kind를 강제하지 않습니다.
+
+  - payload는 열려 있습니다. 알려진 payload의 모르는 멤버, payload를 정의하지 않은 type의 payload(새 Hub가 `table`에 더한 멤버 등)는 무시합니다(forward `known_payload_unknown_members`). 예외로 `formulas`의 이름은 멤버가 아니라 칸 주소라서 열림 시험에서 면제됩니다(`KEYED_BY_CELL`).
 - 본문 Blob의 바이트는 `canonical_json(body)`입니다(비교기와 같은 함수). 그래서 같은 본문은 같은 Blob이고, 그 Blob을 입력으로 받는 job(#8)의 job_key가 흔들리지 않습니다. Hub가 쓸 때 지킵니다(#5 PR2).
 - block `id`는 Hub가 만드는 소문자 hex SHA-256이고 본문 안에서 하나뿐입니다. LLM은 이 id로만 인용합니다(D13). 클라이언트는 id를 다시 계산하지 않고 그대로 보존합니다.
 - extraction 본문은 추출기 하나의 한 버전이 한 params로 Blob 하나(`blob`, Artifact의 `subject_ref`는 `blob:<blob>`)에서 읽은 블록입니다. `extractor.params`는 필수이고, params가 없는 추출기는 `{}`입니다. 규칙 두 개는 Hub 검증기만 봅니다.
@@ -92,7 +111,7 @@ uv run campuslife-contracts compare fixtures/valid <out>
   - `block_anchor`: 모든 ref는 kind와 상관없이 `blob`이 본문의 `blob`과 같고 `capture`가 없습니다. 모르는 kind도 예외가 아닙니다. 추출기 출력은 신뢰할 수 없는 입력이고 이 규칙은 Hub 검증기만 읽기 때문입니다. 정확한 위치를 모르는 블록은 `document`를 씁니다.
 - 본문·블록 크기(블록 수, `text` 길이 등) 상한은 계약에 두지 않습니다. #5 PR2의 상한 표(S7)가 Hub에서 강제합니다.
 - identify 본문(`artifact/identify`)은 Blob 바이트가 보여 주는 형식(`media_type`, 바이트로 더 가를 수 없으면 `text/plain` 같은 계열)과 판별기 `identifier`만 담고 `blocks`는 비어 있습니다. 파일 이름·신고 MIME으로 좁힌 값은 Attachment마다 Hub가 계산해 `detected_mime`에 씁니다. 이름과 바이트가 어긋난다는 사실은 저장하지 않습니다.
-- extraction `warnings[].code`는 읽지 못했거나 일부만 읽은 이유입니다(`no_text_layer`, `limit_reached`, `replaced_characters`). 처리 결과(`outcome_code`)는 ProcessingJob이 가지며 본문에 싣지 않습니다(D1).
+- extraction `warnings[].code`는 읽지 못했거나 일부만 읽은 이유입니다(`no_text_layer`, `limit_reached`, `replaced_characters`, `objects_skipped`: 그림·도형·포함 객체를 블록 없이 건너뜀). warning은 성공하거나 일부만 읽은 본문에만 붙습니다. 처리 결과(`outcome_code`)는 ProcessingJob이 가지며 본문에 싣지 않습니다(D1).
 
 ## ConflictRecord
 

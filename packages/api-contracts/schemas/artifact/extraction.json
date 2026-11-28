@@ -37,10 +37,10 @@
       "required": ["code"],
       "properties": {
         "code": {
-          "description": "no_text_layer: pages without text, left to OCR; limit_reached: reading stopped at a limit, the rest is missing; replaced_characters: bytes that were not text in the detected encoding were replaced. Known codes are the examples; a newer Hub may send others.",
+          "description": "no_text_layer: pages without text, left to OCR; limit_reached: reading stopped at a limit, the rest is missing; replaced_characters: bytes that were not text in the detected encoding were replaced; objects_skipped: images, drawings or embedded objects were left out without a block. Known codes are the examples; a newer Hub may send others.",
           "type": "string",
           "pattern": "^[a-z][a-z_]*$",
-          "examples": ["no_text_layer", "limit_reached", "replaced_characters"],
+          "examples": ["no_text_layer", "limit_reached", "replaced_characters", "objects_skipped"],
           "x-open": true
         }
       }

@@ -1,0 +1,15 @@
+{
+  "mutation_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  "op": "patch",
+  "entity": "artifact",
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "set": {
+    "fetched": {
+      "from": null,
+      "to": {
+        "final_url": "https://example.invalid/",
+        "media_type": "text/html"
+      }
+    }
+  }
+}
