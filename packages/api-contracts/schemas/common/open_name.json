@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/common/open_name.json",
+  "title": "Open name",
+  "description": "A name from a list that may grow, such as the category of an event: lowercase letters and underscores, starting with a letter. A client keeps a name it does not know. Where it is used, examples lists the names clients offer.",
+  "type": "string",
+  "pattern": "^[a-z][a-z_]*$"
+}

@@ -1,0 +1,17 @@
+{
+  "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+  "kind": "announcement",
+  "schema_version": 1,
+  "title": "수강신청 정정 안내",
+  "body": "정정 기간은 3월 9일까지입니다.",
+  "fields": {
+    "category": "academic",
+    "organization_id": "9b2c1f4e-3a5d-4c6b-8e7f-1a2b3c4d5e6f"
+  },
+  "rev": 17,
+  "all_day": true,
+  "due_at": {
+    "date": "2026-03-09",
+    "tz": "Asia/Seoul"
+  }
+}
