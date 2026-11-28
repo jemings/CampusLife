@@ -48,7 +48,9 @@ INDEX_VERSION = f"{SCHEMA}:{ANALYZER.id}:{','.join(INDEXED_ARTIFACT_TYPES)}"
 BATCH = 256
 """Feed rows a batch reads; a batch holds the lock, so a purge hook waits for at most one."""
 FORGOTTEN = ""
-"""The version of a source whose documents a purge dropped; no source holds it, so the next change rewrites it."""
+"""The version of a source whose documents a purge dropped. Every batch works such a source out again, whatever the
+feed says, and keeps the mark while it holds nothing: a forget retried after the follower passed the purge's
+tombstones may come after the same bytes came back, with no feed row left to say so."""
 
 _DDL = (
     "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -146,18 +148,18 @@ def _changed(snap: Snapshot, entity: str, identifier: str, deleted: bool, indexe
     return [artifact["subject_ref"]] if artifact is not None and artifact["artifact_type"] in INDEXED_ARTIFACT_TYPES else []
 
 
-def _read_changes(snap: Snapshot, cursor: int, indexed_from: Callable[[str], list[str]]) -> tuple[int, list[_Source]] | None:
-    """The rev of the last feed row after cursor a batch takes, and what the sources those rows change hold now."""
+def _read_changes(snap: Snapshot, cursor: int, indexed_from: Callable[[str], list[str]], forgotten: list[str]) -> tuple[int, list[_Source]]:
+    """The rev of the last feed row after cursor a batch takes, and what the sources those rows change, and the
+    forgotten ones, hold now."""
     rows = snap.execute("SELECT entity, id, deleted, rev FROM sync_index WHERE rev > ? ORDER BY rev LIMIT ?", (cursor, BATCH)).fetchall()
-    if not rows:
-        return None
-    names = list(dict.fromkeys(name for entity, identifier, deleted, _ in rows for name in _changed(snap, entity, identifier, bool(deleted), indexed_from)))
+    changed = (name for entity, identifier, deleted, _ in rows for name in _changed(snap, entity, identifier, bool(deleted), indexed_from))
+    names = list(dict.fromkeys([*changed, *forgotten]))
     subjects = _subjects(snap, [name for name in names if name.partition(":")[0] not in _READERS])
     sources = []
     for name in names:
         kind, _, identifier = name.partition(":")
         sources.append(_READERS[kind](snap, name, identifier) if kind in _READERS else subjects[name])
-    return rows[-1][3], sources
+    return (rows[-1][3] if rows else cursor), sources
 
 
 def _expected_meta(snap: Snapshot) -> dict[str, str]:
@@ -264,11 +266,16 @@ class SearchIndex:
     def _batch(self, read: Callable[[Callable[[Snapshot], object]], object], blobs: BlobStore) -> int:
         with self._lock:
             conn, cursor = self._for(read(_expected_meta))
-            changes = read(lambda snap: _read_changes(snap, cursor, self._indexed_from(conn)))
-            if changes is None:
+            forgotten = [name for (name,) in conn.execute("SELECT source FROM sources WHERE version = ?", (FORGOTTEN,))]
+            last_rev, sources = read(lambda snap: _read_changes(snap, cursor, self._indexed_from(conn), forgotten))
+            still_gone = set(forgotten)
+            changed = [
+                (source, _documents_of(source, blobs))
+                for source in sources
+                if not self._holds(conn, source) and not (source.name in still_gone and source.artifact is None and not source.documents)
+            ]
+            if not changed and last_rev == cursor:
                 return 0
-            last_rev, sources = changes
-            changed = [(source, _documents_of(source, blobs)) for source in sources if not self._holds(conn, source)]
             with _transaction(conn):
                 for source, documents in changed:
                     self._replace(conn, source, documents)
