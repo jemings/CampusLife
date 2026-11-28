@@ -4,9 +4,11 @@ import campuslife.wire.ChangesPage
 import campuslife.wire.EntityName
 import campuslife.wire.MutationOutcome
 import campuslife.wire.MutationResult
+import campuslife.wire.SENT_RETENTION_DAYS
 import campuslife.wire.wireJson
 import java.io.File
 import java.time.Clock
+import java.time.Duration
 
 /** The side of the Room store the sync engine drives: what to upload and send next, and what the Hub answered. */
 class SyncStore(
@@ -17,6 +19,73 @@ class SyncStore(
     data class Upload(val sha256: String, val size: Long, val state: TransferState, val file: File)
 
     data class Outgoing(val mutationId: String, val body: String)
+
+    /** What the heartbeat reports of this device (device/status). */
+    data class Backlog(
+        val pendingCaptures: Long,
+        val pendingMutations: Long,
+        val rejectedMutations: Long,
+        val cacheBytes: Long,
+        val blobBytes: Long,
+    )
+
+    /** The Hub this store syncs with, its base epoch and the feed cursor; null before the first GET /v1/hub. */
+    fun standing(): SyncMeta? = db.syncMeta().get()
+
+    /** Takes the epoch of the first GET /v1/hub as the base epoch; only [epochChanged] changes it later (D24). */
+    fun knowHub(hubId: String, epoch: String): Unit = db.inTransaction {
+        if (db.syncMeta().get() == null) db.syncMeta().put(SyncMeta(hubId = hubId, epoch = epoch, cursor = 0))
+    }
+
+    /**
+     * The Hub answered 409 epoch_changed, as after a restore (D24): the cache goes, the feed is read from 0 under
+     * [epoch], and every Mutation the Hub answered or that was set aside as rejected goes to it again ahead of the
+     * unsent ones, each group in its first order. The restored Hub then tells which it still has (duplicate) from
+     * those it lost, and may take what an earlier Hub refused, as a commit whose Blob only this backup holds.
+     */
+    fun epochChanged(epoch: String): Unit = db.inTransaction {
+        check(db.syncMeta().restart(epoch) == 1) { "the epoch changed before the Hub is known" }
+        db.cache().clear()
+        val unsent = db.outbox().inStates(UNSENT)
+        for (row in db.outbox().inStates(ANSWERED)) {
+            db.outbox().requeue(row.seq, TransferState.of(row.state).after(OutboxEvent.EPOCH_CHANGED).column)
+        }
+        for (row in unsent) {
+            db.outbox().remove(row.seq)
+            db.outbox().add(row.copy(seq = 0))
+        }
+    }
+
+    /**
+     * Keeps why the sync stopped until the user acts; passes answer with it and ask the Hub nothing until [resume].
+     * Before the first GET /v1/hub there is no standing to keep it with, so nothing is kept.
+     */
+    fun stop(reason: String) {
+        db.syncMeta().setStopped(reason)
+    }
+
+    /** The user acted on a stop, as by pairing again, or the stop no longer holds: the next pass asks the Hub again. */
+    fun resume() {
+        db.syncMeta().setStopped(null)
+    }
+
+    /** Sets a Mutation aside that makes the Hub refuse any batch it is in; the user sees it with the rejected. */
+    fun refuse(mutationId: String): Unit = db.inTransaction {
+        val row = db.outbox().byMutationId(mutationId) ?: return@inTransaction
+        val to = TransferState.of(row.state).after(OutboxEvent.UNSENDABLE)
+        if (to.column != row.state) db.outbox().move(row.seq, to.column)
+    }
+
+    /** Forgets settled Mutations answered more than SENT_RETENTION_DAYS ago (D24). */
+    fun forgetSent(): Int = db.outbox().forget(clock.millis() - Duration.ofDays(SENT_RETENTION_DAYS).toMillis())
+
+    fun backlog(): Backlog = Backlog(
+        pendingCaptures = db.captures().unacknowledged(),
+        pendingMutations = db.outbox().count(UNSENT),
+        rejectedMutations = db.outbox().count(listOf(TransferState.REJECTED.column)),
+        cacheBytes = db.cache().bytes(),
+        blobBytes = db.blobs().bytes(),
+    )
 
     /** Blobs the Hub does not have yet, oldest first. */
     fun uploads(): List<Upload> =
@@ -131,5 +200,14 @@ class SyncStore(
 
     companion object {
         const val MAX_BATCH = 200
+
+        private val UNSENT = listOf(TransferState.HELD.column, TransferState.PENDING.column)
+
+        private val ANSWERED = listOf(
+            TransferState.ACKED.column,
+            TransferState.PULLING.column,
+            TransferState.SETTLED.column,
+            TransferState.REJECTED.column,
+        )
     }
 }

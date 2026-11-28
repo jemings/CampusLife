@@ -46,6 +46,11 @@ def test_meta_holds_the_base_epoch_and_the_cursor_and_the_outbox_holds_the_ack_t
     assert "acked_at_ms" in columns(db, "mutation_outbox")
 
 
+def test_meta_keeps_why_a_sync_stopped_until_the_user_acts(db):
+    stopped = [row for row in db.execute("PRAGMA table_info(meta)") if row[1] == "stopped"]
+    assert [(name, kind, notnull) for _, name, kind, notnull, _, _ in stopped] == [("stopped", "TEXT", 0)]
+
+
 def test_ddl_uses_only_what_room_can_declare(db):
     kinds = {kind for (kind,) in db.execute("SELECT type FROM sqlite_master")}
     assert kinds <= {"table", "index"}

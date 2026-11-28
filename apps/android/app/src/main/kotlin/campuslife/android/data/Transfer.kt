@@ -65,8 +65,14 @@ enum class OutboxEvent : TransferEvent {
 
     /** A Blob of a held capture.commit can no longer be uploaded from this device. */
     BLOB_LOST,
+
+    /** The Hub refused the whole batch for this Mutation alone (400), so no result will ever come for it. */
+    UNSENDABLE,
     PULL_BEGUN,
     PULL_DONE,
+
+    /** The Hub answered 409 epoch_changed: a Mutation it answered before goes to it again (D24). */
+    EPOCH_CHANGED,
 }
 
 /** The one table every transfer row moves by; a pair it does not list leaves the row where it is. */
@@ -90,4 +96,9 @@ val TRANSITIONS: Map<Pair<TransferState, TransferEvent>, TransferState> = mapOf(
     (HELD to OutboxEvent.BLOB_LOST) to REJECTED,
     (ACKED to OutboxEvent.PULL_BEGUN) to PULLING,
     (PULLING to OutboxEvent.PULL_DONE) to SETTLED,
+    (PENDING to OutboxEvent.UNSENDABLE) to REJECTED,
+    (ACKED to OutboxEvent.EPOCH_CHANGED) to PENDING,
+    (PULLING to OutboxEvent.EPOCH_CHANGED) to PENDING,
+    (SETTLED to OutboxEvent.EPOCH_CHANGED) to PENDING,
+    (REJECTED to OutboxEvent.EPOCH_CHANGED) to PENDING,
 )
