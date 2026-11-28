@@ -4,9 +4,11 @@ import campuslife.wire.ChangesPage
 import campuslife.wire.EntityName
 import campuslife.wire.MutationOutcome
 import campuslife.wire.MutationResult
+import campuslife.wire.SENT_RETENTION_DAYS
 import campuslife.wire.wireJson
 import java.io.File
 import java.time.Clock
+import java.time.Duration
 
 /** The side of the Room store the sync engine drives: what to upload and send next, and what the Hub answered. */
 class SyncStore(
@@ -40,15 +42,37 @@ class SyncStore(
      * [epoch], and every Mutation the Hub answered goes to it again ahead of the unsent ones, each group in its
      * first order. The restored Hub then tells which it still has (duplicate) from those it lost.
      */
-    fun epochChanged(epoch: String): Unit = TODO()
+    fun epochChanged(epoch: String): Unit = db.inTransaction {
+        check(db.syncMeta().restart(epoch) == 1) { "the epoch changed before the Hub is known" }
+        db.cache().clear()
+        val unsent = db.outbox().inStates(UNSENT)
+        for (row in db.outbox().inStates(ANSWERED)) {
+            if (row.state == TransferState.REJECTED.column && !refusedByHub(row)) continue
+            db.outbox().requeue(row.seq, TransferState.of(row.state).after(OutboxEvent.EPOCH_CHANGED).column)
+        }
+        for (row in unsent) {
+            db.outbox().remove(row.seq)
+            db.outbox().add(row.copy(seq = 0))
+        }
+    }
 
     /** Sets a Mutation aside that makes the Hub refuse any batch it is in; the user sees it with the rejected. */
-    fun refuse(mutationId: String): Unit = TODO()
+    fun refuse(mutationId: String): Unit = db.inTransaction {
+        val row = db.outbox().byMutationId(mutationId) ?: return@inTransaction
+        val to = TransferState.of(row.state).after(OutboxEvent.UNSENDABLE)
+        if (to.column != row.state) db.outbox().move(row.seq, to.column)
+    }
 
     /** Forgets settled Mutations answered more than SENT_RETENTION_DAYS ago (D24). */
-    fun forgetSent(): Int = TODO()
+    fun forgetSent(): Int = db.outbox().forget(clock.millis() - Duration.ofDays(SENT_RETENTION_DAYS).toMillis())
 
-    fun backlog(): Backlog = TODO()
+    fun backlog(): Backlog = Backlog(
+        pendingCaptures = db.captures().unacknowledged(),
+        pendingMutations = db.outbox().count(UNSENT),
+        rejectedMutations = db.outbox().count(listOf(TransferState.REJECTED.column)),
+        cacheBytes = db.cache().bytes(),
+        blobBytes = db.blobs().bytes(),
+    )
 
     /** Blobs the Hub does not have yet, oldest first. */
     fun uploads(): List<Upload> =
@@ -161,7 +185,20 @@ class SyncStore(
 
     private fun encode(result: MutationResult): String = wireJson.encodeToString(MutationResult.serializer(), result)
 
+    /** A rejected row the Hub refused, as against one set aside here (a lost copy, a batch the Hub could not read). */
+    private fun refusedByHub(row: OutboxRow): Boolean =
+        row.result?.let { wireJson.decodeFromString(MutationResult.serializer(), it).decided().result } == MutationOutcome.REJECTED
+
     companion object {
         const val MAX_BATCH = 200
+
+        private val UNSENT = listOf(TransferState.HELD.column, TransferState.PENDING.column)
+
+        private val ANSWERED = listOf(
+            TransferState.ACKED.column,
+            TransferState.PULLING.column,
+            TransferState.SETTLED.column,
+            TransferState.REJECTED.column,
+        )
     }
 }
