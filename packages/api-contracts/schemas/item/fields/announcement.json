@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/item/fields/announcement.json",
+  "title": "announcement fields",
+  "description": "A notice from the school, a department, a council or a club; its text is the Item's body and a date it sets, such as a deadline, the Item's due_at. Open.",
+  "type": "object",
+  "properties": {
+    "category": { "description": "What sort of notice it is.", "$ref": "../../common/open_name.json", "examples": ["academic", "administrative", "facility", "student_life"] },
+    "organization_id": { "description": "id of the organization Item behind it.", "$ref": "../../common/uuid.json" },
+    "url": { "description": "Where it is published, as a capture url.", "$ref": "../../capture/capture.json#/properties/url" }
+  }
+}

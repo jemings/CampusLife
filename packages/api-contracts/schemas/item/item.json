@@ -8,7 +8,7 @@
   "properties": {
     "id": { "$ref": "../common/uuid.json", "x-owner": "client" },
     "kind": {
-      "description": "MVP kinds are term, course, lecture_session, note, task, assignment and exam; later kinds arrive additively.",
+      "description": "Known kinds are the MVP term, course, lecture_session, note, task, assignment and exam and the later event, announcement, opportunity and organization; more arrive additively.",
       "type": "string",
       "pattern": "^[a-z][a-z_]*$",
       "x-owner": "client"
@@ -19,7 +19,7 @@
     "starts_at": { "description": "local_date when all_day is true, otherwise instant (E13).", "$ref": "#/$defs/date_value", "x-owner": "user" },
     "due_at": { "description": "local_date when all_day is true, otherwise instant (E13).", "$ref": "#/$defs/date_value", "x-owner": "user" },
     "all_day": { "type": "boolean", "x-owner": "user" },
-    "fields": { "description": "Kind-specific members, checked against item/fields/<kind> for the MVP kinds.", "type": "object", "x-owner": "user" },
+    "fields": { "description": "Kind-specific members, checked against item/fields/<kind> for the known kinds.", "type": "object", "x-owner": "user" },
     "rev": { "description": "change_seq of the row's last write (D3).", "$ref": "../common/int64.json#/$defs/non_negative", "x-owner": "hub" },
     "deleted_at": { "$ref": "../common/instant.json", "x-owner": "hub" },
     "evidence_purged_at": { "description": "When a purge (U2) removed the Artifact this note was forked from (fields.forked_from_artifact): the note stays, its evidence links are gone, and the Hub keeps the Artifact id as it was.", "$ref": "../common/instant.json", "x-owner": "hub" },
@@ -48,7 +48,11 @@
         { "if": { "$ref": "#/$defs/kind_is/note" }, "then": { "properties": { "fields": { "$ref": "fields/note.json" } } } },
         { "if": { "$ref": "#/$defs/kind_is/task" }, "then": { "properties": { "fields": { "$ref": "fields/task.json" } } } },
         { "if": { "$ref": "#/$defs/kind_is/assignment" }, "then": { "properties": { "fields": { "$ref": "fields/assignment.json" } } } },
-        { "if": { "$ref": "#/$defs/kind_is/exam" }, "then": { "properties": { "fields": { "$ref": "fields/exam.json" } } } }
+        { "if": { "$ref": "#/$defs/kind_is/exam" }, "then": { "properties": { "fields": { "$ref": "fields/exam.json" } } } },
+        { "if": { "$ref": "#/$defs/kind_is/event" }, "then": { "properties": { "fields": { "$ref": "fields/event.json" } } } },
+        { "if": { "$ref": "#/$defs/kind_is/announcement" }, "then": { "properties": { "fields": { "$ref": "fields/announcement.json" } } } },
+        { "if": { "$ref": "#/$defs/kind_is/opportunity" }, "then": { "properties": { "fields": { "$ref": "fields/opportunity.json" } } } },
+        { "if": { "$ref": "#/$defs/kind_is/organization" }, "then": { "properties": { "fields": { "$ref": "fields/organization.json" } } } }
       ]
     },
     "kind_is": {
@@ -58,7 +62,11 @@
       "note": { "properties": { "kind": { "const": "note" } }, "required": ["kind"] },
       "task": { "properties": { "kind": { "const": "task" } }, "required": ["kind"] },
       "assignment": { "properties": { "kind": { "const": "assignment" } }, "required": ["kind"] },
-      "exam": { "properties": { "kind": { "const": "exam" } }, "required": ["kind"] }
+      "exam": { "properties": { "kind": { "const": "exam" } }, "required": ["kind"] },
+      "event": { "properties": { "kind": { "const": "event" } }, "required": ["kind"] },
+      "announcement": { "properties": { "kind": { "const": "announcement" } }, "required": ["kind"] },
+      "opportunity": { "properties": { "kind": { "const": "opportunity" } }, "required": ["kind"] },
+      "organization": { "properties": { "kind": { "const": "organization" } }, "required": ["kind"] }
     }
   }
 }

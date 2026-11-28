@@ -1,0 +1,10 @@
+{
+  "id": "9b2f0a64-3c1e-4d5a-8f7b-1e2d3c4b5a69",
+  "artifact_type": "extraction",
+  "subject_ref": "blob:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "job_key": "abababababababababababababababababababababababababababababababab",
+  "pipeline_version": "text-1+L0a1b2c3d",
+  "input_hashes": [],
+  "content_blob": "baa5a0964d3320fbc0c6a922140453c8513ea24ab8fd0577034804a967248096",
+  "created_at": "2026-03-02T01:10:00.000Z"
+}

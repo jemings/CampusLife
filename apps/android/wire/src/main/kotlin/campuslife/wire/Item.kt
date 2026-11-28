@@ -60,6 +60,9 @@ sealed interface ItemFields {
     companion object {
         fun read(kind: ItemKind, fields: JsonObject): ItemFields =
             known.firstOrNull { it.kind == kind }?.decode(fields) ?: Unknown(fields)
+
+        /** The kinds this build reads fields of, one per item/fields/<kind> schema. */
+        val knownKinds: List<ItemKind> get() = known.map { it.kind }
     }
 }
 
@@ -78,6 +81,10 @@ private val known = listOf(
     KnownKind(ItemKind.EXAM, ExamFields::class, ExamFields.serializer()),
     KnownKind(ItemKind.TASK, TaskFields::class, TaskFields.serializer()),
     KnownKind(ItemKind.NOTE, NoteFields::class, NoteFields.serializer()),
+    KnownKind(ItemKind.EVENT, EventFields::class, EventFields.serializer()),
+    KnownKind(ItemKind.ANNOUNCEMENT, AnnouncementFields::class, AnnouncementFields.serializer()),
+    KnownKind(ItemKind.OPPORTUNITY, OpportunityFields::class, OpportunityFields.serializer()),
+    KnownKind(ItemKind.ORGANIZATION, OrganizationFields::class, OrganizationFields.serializer()),
 )
 
 @Serializable
@@ -145,4 +152,35 @@ enum class TaskProgress {
 @Serializable
 data class NoteFields(
     @SerialName("forked_from_artifact") val forkedFromArtifact: String? = null,
+) : ItemFields
+
+/** The category of event, announcement, opportunity and organization is an open name (#9 decision 8), so a String. */
+@Serializable
+data class EventFields(
+    val category: String? = null,
+    @SerialName("place_text") val placeText: String? = null,
+    @SerialName("organization_id") val organizationId: String? = null,
+    val url: String? = null,
+) : ItemFields
+
+@Serializable
+data class AnnouncementFields(
+    val category: String? = null,
+    @SerialName("organization_id") val organizationId: String? = null,
+    val url: String? = null,
+) : ItemFields
+
+@Serializable
+data class OpportunityFields(
+    val category: String? = null,
+    @SerialName("eligibility_text") val eligibilityText: String? = null,
+    @SerialName("due_text") val dueText: String? = null,
+    @SerialName("organization_id") val organizationId: String? = null,
+    val url: String? = null,
+) : ItemFields
+
+@Serializable
+data class OrganizationFields(
+    val category: String? = null,
+    val url: String? = null,
 ) : ItemFields

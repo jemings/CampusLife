@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campuslife.invalid/contracts/schemas/common/original_text.json",
+  "title": "Original text",
+  "description": "A value kept as its source worded it, such as a deadline written 23:59까지, beside the typed value read from it (D11). Not empty.",
+  "type": "string",
+  "minLength": 1
+}
