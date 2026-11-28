@@ -17,11 +17,6 @@ def records(changes):
     return {row["id"]: row["data"] for row in rows(changes, "conflict_record").values() if not row["deleted"]}
 
 
-def lost_part(sent, result):
-    """The part of a patch's set a record keeps: its conflicted keys, as the patch sent them."""
-    return {key: sent["set"][key] for key in result["conflicted_fields"]}
-
-
 async def test_every_key_a_patch_loses_is_kept_in_one_record_under_its_mutation_id(db, device):
     """E1: a title and a body lost together are both kept; before D24 the title was kept nowhere."""
     await apply(db, device, task(body="첫 줄"), patch_item(body={"from_hash": text_hash("첫 줄"), "to": "둘째 줄"}, title={"from": "과제 제출", "to": "과제 1"}))
@@ -79,19 +74,23 @@ async def a_body_that_loses_beside_a_title_that_wins(db, device):
 
 
 @pytest.mark.parametrize(
-    "arrange", [scalar_and_converging_body, dates_from_before_all_day, a_lost_date_beside_title_and_body, a_body_that_loses_beside_a_title_that_wins]
+    ("arrange", "applied", "conflicted"),
+    [
+        (scalar_and_converging_body, ["body"], ["title"]),
+        (dates_from_before_all_day, [], ["body", "due_at"]),
+        (a_lost_date_beside_title_and_body, ["title", "body"], ["all_day", "starts_at"]),
+        (a_body_that_loses_beside_a_title_that_wins, ["title"], ["body"]),
+    ],
 )
-async def test_a_record_keeps_exactly_the_keys_that_did_not_win(db, device, arrange):
+async def test_a_record_keeps_exactly_the_keys_that_did_not_win(db, device, arrange, applied, conflicted):
     """The record's set is the conflicted part of what was sent: no key that won or converged, every key held back
     with a date group that lost (D24 decision 1)."""
     late = await arrange(db, device)
 
     [result] = await apply(db, device, late)
 
-    kept = records(await feed(db))[late["mutation_id"]]["set"]
-    assert kept == lost_part(late, result)
-    assert kept.keys() <= late["set"].keys()
-    assert kept.keys().isdisjoint(result["applied_fields"])
+    assert outcome(result) == {"result": "conflict", "applied_fields": applied, "conflicted_fields": conflicted, "conflict_record_ids": [late["mutation_id"]]}
+    assert records(await feed(db))[late["mutation_id"]]["set"] == {key: late["set"][key] for key in conflicted}
 
 
 async def test_a_patch_that_wins_every_key_keeps_no_record(db, device):
@@ -101,15 +100,6 @@ async def test_a_patch_that_wins_every_key_keeps_no_record(db, device):
 
     assert "conflict_record_ids" not in result
     assert records(await feed(db)) == {}
-
-
-async def test_a_body_that_loses_beside_a_title_that_wins_keeps_only_the_body(db, device):
-    late = await a_body_that_loses_beside_a_title_that_wins(db, device)
-
-    [result] = await apply(db, device, late)
-
-    assert outcome(result) == {"result": "conflict", "applied_fields": ["title"], "conflicted_fields": ["body"], "conflict_record_ids": [late["mutation_id"]]}
-    assert records(await feed(db))[late["mutation_id"]]["set"] == {"body": late["set"]["body"]}
 
 
 @pytest.mark.parametrize("gone", ["soft-deleted", "never held"])

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from campuslife_contracts import text_hash
 from test_capture_commit import apply, blob_store, commit, device, feed, new_id, store_bytes
 from waiting import until
 
@@ -689,8 +690,12 @@ def test_a_connection_with_secure_delete_off_leaves_the_deleted_text_in_the_file
 
 
 async def test_a_purge_leaves_no_deleted_text_in_the_database_file_or_its_wal(default_secure_delete_off, db, device, blob_store, tmp_path):
+    """The rows the purge removes: the marker is the purged Note's own body, the file name is the Attachment's."""
     lecture_ = await lecture(db, device, blob_store, tmp_path)
-    await apply(db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": None, "to": SECRET_BODY}}})
+    [written] = await apply(
+        db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": text_hash("스택과 큐\n"), "to": SECRET_BODY}}}
+    )
+    assert written["result"] == "applied"
     held_before = database_file_bytes(Layout(tmp_path).database)
     assert SECRET_BODY.encode() in held_before and SECRET_FILENAME.encode() in held_before
 
@@ -703,6 +708,7 @@ async def test_a_purge_leaves_no_deleted_text_in_the_database_file_or_its_wal(de
 
 
 async def test_a_purge_leaves_no_text_of_the_conflict_records_it_takes_in_the_database_file_or_its_wal(default_secure_delete_off, db, device, blob_store, tmp_path):
+    """The records the purge tombstones: the marker is only in a ConflictRecord, never in the Note's row."""
     lecture_ = await lecture(db, device, blob_store, tmp_path)
     kept_aside = "충돌로남긴비밀문장QWERTY"
     stale = {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": None, "to": kept_aside}}}
@@ -714,6 +720,36 @@ async def test_a_purge_leaves_no_text_of_the_conflict_records_it_takes_in_the_da
 
     assert purged.finished
     assert kept_aside.encode() not in database_file_bytes(Layout(tmp_path).database)
+
+
+async def test_an_edit_made_before_the_purge_and_sent_after_it_is_refused_and_keeps_nothing(default_secure_delete_off, db, device, blob_store, tmp_path):
+    """D24 decision 2: the user destroyed the Note, so another Mutation that reaches the Hub after the purge brings
+    none of its text back, not even in a record no purge could reach."""
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    await purge.purge_blob(db, blob_store, lecture_.pdf, delete_notes=[lecture_.note], hooks=PurgeHooks())
+    before = await feed(db)
+    offline = "퍼지뒤도착한오프라인편집ZXCV"
+
+    [result] = await apply(
+        db, device, {"mutation_id": new_id(), "op": "patch", "entity": "item", "id": lecture_.note, "set": {"body": {"from_hash": text_hash("스택과 큐\n"), "to": offline}}}
+    )
+
+    assert {name: value for name, value in result.items() if name != "mutation_id"} == {"result": "rejected", "reason": "deleted"}
+    assert await feed(db) == before
+    assert offline.encode() not in database_file_bytes(Layout(tmp_path).database)
+
+
+async def test_an_edit_of_a_purged_attachment_sent_after_the_purge_keeps_nothing(db, device, blob_store, tmp_path):
+    lecture_ = await lecture(db, device, blob_store, tmp_path)
+    await purge.purge_blob(db, blob_store, lecture_.pdf, hooks=PurgeHooks())
+    before = await feed(db)
+
+    [result] = await apply(
+        db, device, {"mutation_id": new_id(), "op": "patch", "entity": "attachment", "id": lecture_.pdf_attachment, "set": {"cloud_policy": {"from": "local_only", "to": "blocked"}}}
+    )
+
+    assert {name: value for name, value in result.items() if name != "mutation_id"} == {"result": "rejected", "reason": "deleted"}
+    assert await feed(db) == before
 
 
 def read_holding_the_wal(database):

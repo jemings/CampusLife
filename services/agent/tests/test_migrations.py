@@ -91,7 +91,7 @@ def test_migration_0008_refuses_rows_the_device_code_never_writes(allowed, refus
 
 
 STASHED = "INSERT INTO conflict_stash (id, mutation_id, device_id, entity, entity_id, field, change, theirs_rev, stashed_at) VALUES (?, ?, 'd', ?, ?, ?, ?, NULL, 't')"
-PATCHED = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+PATCHED = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
 TAGGED = "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
 ITEM = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
 TAG = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -106,7 +106,8 @@ def without_repeats(pairs):
 
 def test_migration_0011_turns_the_stash_into_one_conflict_record_per_mutation():
     """D24 decision 8: duplicates of a key a resend stashed again go first (E8), and each record takes its own rev
-    above change_seq in the order its first value was stashed."""
+    above change_seq in the order its first value was stashed. PATCHED sorts after TAGGED and was stashed both
+    before and after it, so neither mutation_id order nor last-stashed order gives these revs."""
     conn = connect()
     migrate(conn, MIGRATIONS[:10])
     conn.execute("INSERT INTO hub_state (singleton, hub_id, epoch, change_seq) VALUES (1, 'h', 'e', 5)")
