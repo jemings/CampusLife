@@ -1,0 +1,3 @@
+# A synthetic pairing code in a test (0123456789abcdef repeated), not a secret. The fingerprint names one commit only,
+# so the same literal anywhere else is still reported.
+118bbbd8a5471f09a31097c4517dc1da5aceb732:apps/android/app/src/test/kotlin/campuslife/android/link/PairingInputTest.kt:generic-api-key:106
