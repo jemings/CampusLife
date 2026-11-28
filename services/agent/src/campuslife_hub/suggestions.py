@@ -192,8 +192,8 @@ def _create_item_write(tx: Tx, proposed: dict, edits: dict, mutation_id: str) ->
 def _patch_item_write(tx: Tx, proposed: dict, edits: dict, mutation_id: str) -> dict | None:
     """The proposed patch, an edit in place of its key's to. Only the members a patch's change has are kept.
 
-    A field the Item's kind does not define can only be left out, never given a value: an Item keeps its kind
-    (decision 4). An Item the Hub does not hold is left to the patch to answer."""
+    A field the Item's kind does not define is never one to patch: an Item keeps its kind (decision 4). An Item the
+    Hub does not hold is left to the patch to answer."""
     if not edits.keys() <= proposed["set"].keys():
         return None
     changes = {
@@ -201,10 +201,8 @@ def _patch_item_write(tx: Tx, proposed: dict, edits: dict, mutation_id: str) -> 
         for key, change in proposed["set"].items()
     }
     item = store.get(tx, EntityRef(Entity.ITEM, proposed["id"]))
-    defined = KIND_FIELDS.get(item["kind"], frozenset()) if item else None
-    if defined is not None and any(
-        key.removeprefix(FIELDS_PREFIX) not in defined for key, change in changes.items() if key.startswith(FIELDS_PREFIX) and change["to"] is not None
-    ):
+    fields = {key.removeprefix(FIELDS_PREFIX) for key in changes if key.startswith(FIELDS_PREFIX)}
+    if item is not None and not fields <= KIND_FIELDS.get(item["kind"], frozenset()):
         return None
     return {"mutation_id": mutation_id, "op": "patch", "entity": "item", "id": proposed["id"], "set": changes}
 
