@@ -16,7 +16,7 @@ from types import MappingProxyType
 PDF = "application/pdf"
 ZIP = "application/zip"
 CFB = "application/x-cfb"
-"""The OLE compound file of .doc, .ppt, .xls and .hwp, which its bytes do not tell apart."""
+"""An OLE compound file whose root entries name none of .doc, .ppt, .xls and .hwp (sniff.CFB_ROOTS)."""
 TEXT = "text/plain"
 UNKNOWN = "application/octet-stream"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -55,10 +55,8 @@ FORMATS: tuple[Format, ...] = (
         (PDF, (".pdf",)), (DOCX, (".docx",)), (PPTX, (".pptx",)), (XLSX, (".xlsx",)), (HWPX, (".hwpx",)), (ZIP, (".zip",)),
         (PNG, (".png",)), (JPEG, (".jpg", ".jpeg")), (WEBP, (".webp",)), (HEIC, (".heic", ".heif")),
         (M4A, (".m4a",)), (MP3, (".mp3",)), (WAV, (".wav",)), (MP4, (".mp4",)), (MOV, (".mov",)),
-    ),
-    *_within(
-        CFB, ("application/msword", (".doc",)), ("application/vnd.ms-powerpoint", (".ppt",)),
-        ("application/vnd.ms-excel", (".xls",)), ("application/x-hwp", (".hwp",)),
+        ("application/msword", (".doc",)), ("application/vnd.ms-powerpoint", (".ppt",)),
+        ("application/vnd.ms-excel", (".xls",)), ("application/x-hwp", (".hwp",)), (CFB, ()),
     ),
     *_within(
         TEXT,
