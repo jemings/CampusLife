@@ -5,6 +5,11 @@ CREATE TABLE conflict_records (
     data TEXT NOT NULL CHECK (json_valid(data))
 );
 
+-- What a patch stashed for an Item or Attachment a purge removed is dropped, not kept: the user destroyed it (D24 decision 2).
+DELETE FROM conflict_stash
+WHERE (entity = 'item' AND entity_id IN (SELECT value FROM purge_journal, json_each(purge_journal.target, '$.items')))
+   OR (entity = 'attachment' AND entity_id IN (SELECT value FROM purge_journal, json_each(purge_journal.target, '$.attachments')));
+
 -- A patch resent after its result was forgotten stashed its values again (E2); the first copy of each key stays.
 DELETE FROM conflict_stash
 WHERE rowid NOT IN (SELECT min(rowid) FROM conflict_stash GROUP BY mutation_id, field);
